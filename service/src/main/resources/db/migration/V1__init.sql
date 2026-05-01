@@ -1,0 +1,16 @@
+create sequence worktree_SEQ start with 1 increment by 50;
+create table ActionConfiguration (created_at timestamp(6) with time zone not null, updated_at timestamp(6) with time zone not null, check_script varchar(4000) not null, execute_script varchar(4000) not null, description varchar(255), id varchar(255) not null, name varchar(255) not null, primary key (id));
+create table feature_flow_phase (order_index integer not null, description varchar(2000), feature_flow_configuration_id varchar(255) not null, id varchar(255) not null, name varchar(255) not null, parent_phase_id varchar(255), primary key (id));
+create table feature_flow_phase_action (sort_order integer not null, action_configuration_id varchar(255) not null, action_type varchar(255) not null check ((action_type in ('PREREQUISITE','QUALITY_GATE'))), id varchar(255) not null, parallel_group varchar(255), step_id varchar(255) not null, primary key (id), unique (step_id, action_configuration_id));
+create table feature_flow_phase_step (sort_order integer not null, id varchar(255) not null, name varchar(255) not null, phase_id varchar(255) not null, primary key (id));
+create table FeatureFlowConfiguration (id varchar(255) not null, name varchar(255) not null, primary key (id));
+create table Project (description varchar(255), id varchar(255) not null, name varchar(255) not null, primary key (id));
+create table Repository (archetype varchar(255) check ((archetype in ('SERVICE','SERVICE_TEMPLATE','FORK'))), id varchar(255) not null, project_id varchar(255), url varchar(255), primary key (id));
+create table worktree (id bigint not null, parent_id varchar(255), repository_id varchar(255) not null, worktree_id varchar(255) not null, primary key (id), unique (repository_id, worktree_id));
+alter table if exists feature_flow_phase add constraint FKi3vf2lk5vo6wyyy3pohvlspco foreign key (feature_flow_configuration_id) references FeatureFlowConfiguration;
+alter table if exists feature_flow_phase add constraint FKn137hdjlrvkg9xnjliqyblgx foreign key (parent_phase_id) references feature_flow_phase;
+alter table if exists feature_flow_phase_action add constraint FKg12ci2q3adnvf2naf8b633634 foreign key (action_configuration_id) references ActionConfiguration;
+alter table if exists feature_flow_phase_action add constraint FKs5engk1b7se87w8jv19wh5hrn foreign key (step_id) references feature_flow_phase_step;
+alter table if exists feature_flow_phase_step add constraint FKf8c79vu1j63umuea0c5tq1xex foreign key (phase_id) references feature_flow_phase;
+alter table if exists Repository add constraint FK3vka9v348oih65ceatr5r08hk foreign key (project_id) references Project;
+alter table if exists worktree add constraint FKc890l7gu3wtfrhmef16ds1fac foreign key (repository_id) references Repository;

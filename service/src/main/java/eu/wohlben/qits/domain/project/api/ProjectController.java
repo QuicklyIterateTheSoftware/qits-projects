@@ -6,6 +6,7 @@ import eu.wohlben.qits.domain.project.mapper.ProjectMapper;
 import eu.wohlben.qits.domain.repository.dto.RepositoryDto;
 import eu.wohlben.qits.domain.repository.mapper.RepositoryMapper;
 import jakarta.inject.Inject;
+import eu.wohlben.qits.validation.NotBlankIfPresent;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.ws.rs.Consumes;
@@ -77,7 +78,7 @@ public class ProjectController {
     }
 
     public static record UpdateProjectRequest(
-        String name,
+        @NotBlankIfPresent String name,
         String description
     ) {
         public record Response(ProjectDto project) {}

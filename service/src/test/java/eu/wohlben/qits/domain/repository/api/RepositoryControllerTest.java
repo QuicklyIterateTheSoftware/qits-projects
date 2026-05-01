@@ -42,7 +42,7 @@ public class RepositoryControllerTest {
             .contentType(ContentType.JSON)
             .body(new RepositoryController.CloneRepositoryRequest(fixtureUrl, null))
         .when()
-            .post("/repositories/myrepo/clone")
+            .post("/api/repositories/myrepo/clone")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("repository.id", equalTo("myrepo"))
@@ -52,7 +52,7 @@ public class RepositoryControllerTest {
             .contentType(ContentType.JSON)
             .body(new RepositoryController.PullRepositoryRequest())
         .when()
-            .post("/repositories/myrepo/pull")
+            .post("/api/repositories/myrepo/pull")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
     }
@@ -63,7 +63,7 @@ public class RepositoryControllerTest {
             .contentType(ContentType.JSON)
             .body(new RepositoryController.CloneRepositoryRequest(fixtureUrl, null))
         .when()
-            .post("/repositories/duprepo/clone")
+            .post("/api/repositories/duprepo/clone")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -71,7 +71,7 @@ public class RepositoryControllerTest {
             .contentType(ContentType.JSON)
             .body(new RepositoryController.CloneRepositoryRequest(fixtureUrl + "2", null))
         .when()
-            .post("/repositories/duprepo/clone")
+            .post("/api/repositories/duprepo/clone")
         .then()
             .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
     }

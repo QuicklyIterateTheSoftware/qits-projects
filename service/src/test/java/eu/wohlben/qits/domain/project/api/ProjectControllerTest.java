@@ -45,7 +45,7 @@ public class ProjectControllerTest {
                 "ctrl-proj", "Ctrl Project", "Desc"
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("project.id", equalTo("ctrl-proj"))
@@ -56,7 +56,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects/ctrl-proj")
+            .get("/api/projects/ctrl-proj")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("project.id", equalTo("ctrl-proj"))
@@ -66,7 +66,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects")
+            .get("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("entries.project.id", hasItem("ctrl-proj"));
@@ -78,7 +78,7 @@ public class ProjectControllerTest {
                 "Updated Name", "Updated Desc"
             ))
         .when()
-            .put("/projects/ctrl-proj")
+            .put("/api/projects/ctrl-proj")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("project.name", equalTo("Updated Name"))
@@ -88,7 +88,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .delete("/projects/ctrl-proj")
+            .delete("/api/projects/ctrl-proj")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("success", equalTo(true));
@@ -97,7 +97,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects/ctrl-proj")
+            .get("/api/projects/ctrl-proj")
         .then()
             .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     }
@@ -110,7 +110,7 @@ public class ProjectControllerTest {
                 "dup-proj-id", "First", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -120,7 +120,7 @@ public class ProjectControllerTest {
                 "dup-proj-id", "Second", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
     }
@@ -133,7 +133,7 @@ public class ProjectControllerTest {
                 "", "", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(anyOf(
                 equalTo(Response.Status.BAD_REQUEST.getStatusCode()),
@@ -149,7 +149,7 @@ public class ProjectControllerTest {
                 "Name", null
             ))
         .when()
-            .put("/projects/non-existent")
+            .put("/api/projects/non-existent")
         .then()
             .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     }
@@ -159,7 +159,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .delete("/projects/non-existent")
+            .delete("/api/projects/non-existent")
         .then()
             .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     }
@@ -173,7 +173,7 @@ public class ProjectControllerTest {
                 "del-proj", "Delete Project", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -184,7 +184,7 @@ public class ProjectControllerTest {
                 "del-repo", fixtureUrl, null
             ))
         .when()
-            .post("/projects/del-proj/repositories")
+            .post("/api/projects/del-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -192,7 +192,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .delete("/projects/del-proj")
+            .delete("/api/projects/del-proj")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("success", equalTo(true));
@@ -201,7 +201,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects/del-proj")
+            .get("/api/projects/del-proj")
         .then()
             .statusCode(Response.Status.NOT_FOUND.getStatusCode());
 
@@ -212,7 +212,7 @@ public class ProjectControllerTest {
                 "del-proj-2", "New Project", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -220,7 +220,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.AssociateRepositoryRequest("del-repo"))
         .when()
-            .put("/projects/del-proj-2/associate")
+            .put("/api/projects/del-proj-2/associate")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("repository.id", equalTo("del-repo"))
@@ -236,7 +236,7 @@ public class ProjectControllerTest {
                 "assoc-proj", "Assoc Project", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -247,7 +247,7 @@ public class ProjectControllerTest {
                 fixtureUrl, null
             ))
         .when()
-            .post("/repositories/assoc-repo/clone")
+            .post("/api/repositories/assoc-repo/clone")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -255,7 +255,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects/assoc-proj/repositories")
+            .get("/api/projects/assoc-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("entries", empty());
@@ -265,7 +265,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.AssociateRepositoryRequest("assoc-repo"))
         .when()
-            .put("/projects/assoc-proj/associate")
+            .put("/api/projects/assoc-proj/associate")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("repository.id", equalTo("assoc-repo"))
@@ -275,7 +275,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects/assoc-proj/repositories")
+            .get("/api/projects/assoc-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("entries.repository.id", hasItem("assoc-repo"));
@@ -284,7 +284,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .delete("/projects/assoc-proj/associate/assoc-repo")
+            .delete("/api/projects/assoc-proj/associate/assoc-repo")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("repository.id", equalTo("assoc-repo"));
@@ -293,7 +293,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects/assoc-proj/repositories")
+            .get("/api/projects/assoc-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("entries", empty());
@@ -308,7 +308,7 @@ public class ProjectControllerTest {
                 "shortcut-proj", "Shortcut Project", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -319,7 +319,7 @@ public class ProjectControllerTest {
                 "shortcut-repo", fixtureUrl, null
             ))
         .when()
-            .post("/projects/shortcut-proj/repositories")
+            .post("/api/projects/shortcut-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("repository.id", equalTo("shortcut-repo"))
@@ -329,7 +329,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
         .when()
-            .get("/projects/shortcut-proj/repositories")
+            .get("/api/projects/shortcut-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("entries.repository.id", hasItem("shortcut-repo"));
@@ -341,7 +341,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.AssociateRepositoryRequest("some-repo"))
         .when()
-            .put("/projects/non-existent/associate")
+            .put("/api/projects/non-existent/associate")
         .then()
             .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     }
@@ -354,7 +354,7 @@ public class ProjectControllerTest {
                 "assoc-missing-repo-proj", "Proj", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
@@ -362,7 +362,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.AssociateRepositoryRequest("non-existent-repo"))
         .when()
-            .put("/projects/assoc-missing-repo-proj/associate")
+            .put("/api/projects/assoc-missing-repo-proj/associate")
         .then()
             .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     }
@@ -375,14 +375,14 @@ public class ProjectControllerTest {
                 "disassoc-proj", "Disassoc", null
             ))
         .when()
-            .post("/projects")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
         given()
             .contentType(ContentType.JSON)
         .when()
-            .delete("/projects/disassoc-proj/associate/non-existent")
+            .delete("/api/projects/disassoc-proj/associate/non-existent")
         .then()
             .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     }

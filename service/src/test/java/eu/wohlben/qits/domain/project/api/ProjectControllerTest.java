@@ -48,9 +48,9 @@ public class ProjectControllerTest {
             .post("/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("ctrl-proj"))
-            .body("name", equalTo("Ctrl Project"))
-            .body("description", equalTo("Desc"));
+            .body("project.id", equalTo("ctrl-proj"))
+            .body("project.name", equalTo("Ctrl Project"))
+            .body("project.description", equalTo("Desc"));
 
         // Get
         given()
@@ -59,8 +59,8 @@ public class ProjectControllerTest {
             .get("/projects/ctrl-proj")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("ctrl-proj"))
-            .body("name", equalTo("Ctrl Project"));
+            .body("project.id", equalTo("ctrl-proj"))
+            .body("project.name", equalTo("Ctrl Project"));
 
         // List
         given()
@@ -69,7 +69,7 @@ public class ProjectControllerTest {
             .get("/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("entries.id", hasItem("ctrl-proj"));
+            .body("entries.project.id", hasItem("ctrl-proj"));
 
         // Update
         given()
@@ -81,8 +81,8 @@ public class ProjectControllerTest {
             .put("/projects/ctrl-proj")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("name", equalTo("Updated Name"))
-            .body("description", equalTo("Updated Desc"));
+            .body("project.name", equalTo("Updated Name"))
+            .body("project.description", equalTo("Updated Desc"));
 
         // Delete
         given()
@@ -223,7 +223,7 @@ public class ProjectControllerTest {
             .put("/projects/del-proj-2/associate")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("del-repo"))
+            .body("repository.id", equalTo("del-repo"))
             .body("projectId", equalTo("del-proj-2"));
     }
 
@@ -268,7 +268,7 @@ public class ProjectControllerTest {
             .put("/projects/assoc-proj/associate")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("assoc-repo"))
+            .body("repository.id", equalTo("assoc-repo"))
             .body("projectId", equalTo("assoc-proj"));
 
         // List repos should contain associated repo
@@ -278,7 +278,7 @@ public class ProjectControllerTest {
             .get("/projects/assoc-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("entries.id", hasItem("assoc-repo"));
+            .body("entries.repository.id", hasItem("assoc-repo"));
 
         // Disassociate
         given()
@@ -287,7 +287,7 @@ public class ProjectControllerTest {
             .delete("/projects/assoc-proj/associate/assoc-repo")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("assoc-repo"));
+            .body("repository.id", equalTo("assoc-repo"));
 
         // List repos should be empty again
         given()
@@ -322,7 +322,7 @@ public class ProjectControllerTest {
             .post("/projects/shortcut-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("shortcut-repo"))
+            .body("repository.id", equalTo("shortcut-repo"))
             .body("projectId", equalTo("shortcut-proj"));
 
         // Verify it's listed under project
@@ -332,7 +332,7 @@ public class ProjectControllerTest {
             .get("/projects/shortcut-proj/repositories")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("entries.id", hasItem("shortcut-repo"));
+            .body("entries.repository.id", hasItem("shortcut-repo"));
     }
 
     @Test

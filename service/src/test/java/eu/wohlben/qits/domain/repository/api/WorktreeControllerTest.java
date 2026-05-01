@@ -55,7 +55,7 @@ public class WorktreeControllerTest {
             .post("/repositories/wtrepo/worktrees")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("step-01"));
+            .body("worktree.worktreeId", equalTo("step-01"));
 
         // merge feature into master
         given()

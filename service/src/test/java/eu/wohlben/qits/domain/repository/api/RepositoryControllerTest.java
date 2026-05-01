@@ -45,8 +45,8 @@ public class RepositoryControllerTest {
             .post("/repositories/myrepo/clone")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("id", equalTo("myrepo"))
-            .body("url", equalTo(fixtureUrl));
+            .body("repository.id", equalTo("myrepo"))
+            .body("repository.url", equalTo(fixtureUrl));
 
         given()
             .contentType(ContentType.JSON)

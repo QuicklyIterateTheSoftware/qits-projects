@@ -1,8 +1,10 @@
 package eu.wohlben.qits.domain.project.api;
 
 import eu.wohlben.qits.domain.project.control.ProjectService;
-import eu.wohlben.qits.domain.project.entity.Project;
-import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.project.dto.ProjectDto;
+import eu.wohlben.qits.domain.project.mapper.ProjectMapper;
+import eu.wohlben.qits.domain.repository.dto.RepositoryDto;
+import eu.wohlben.qits.domain.repository.mapper.RepositoryMapper;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -26,6 +28,12 @@ public class ProjectController {
     @Inject
     ProjectService projectService;
 
+    @Inject
+    ProjectMapper projectMapper;
+
+    @Inject
+    RepositoryMapper repositoryMapper;
+
     // --- Project CRUD ---
 
     public static record CreateProjectRequest(
@@ -33,29 +41,29 @@ public class ProjectController {
         @NotBlank String name,
         String description
     ) {
-        public record Response(String id, String name, String description) {}
+        public record Response(ProjectDto project) {}
     }
 
     @POST
     public CreateProjectRequest.Response create(@Valid CreateProjectRequest request) {
         var project = projectService.create(request.id(), request.name(), request.description());
-        return toResponse(project);
+        return new CreateProjectRequest.Response(projectMapper.toDto(project));
     }
 
     public static record GetProjectRequest() {
-        public record Response(String id, String name, String description) {}
+        public record Response(ProjectDto project) {}
     }
 
     @GET
     @Path("/{id}")
     public GetProjectRequest.Response get(@PathParam("id") String id) {
         var project = projectService.get(id);
-        return toGetResponse(project);
+        return new GetProjectRequest.Response(projectMapper.toDto(project));
     }
 
     public static record ListProjectsRequest() {
         public record Response(List<Entry> entries) {
-            public record Entry(String id, String name, String description) {}
+            public record Entry(ProjectDto project) {}
         }
     }
 
@@ -63,7 +71,7 @@ public class ProjectController {
     public ListProjectsRequest.Response list() {
         var projects = projectService.list();
         var entries = projects.stream()
-            .map(p -> new ListProjectsRequest.Response.Entry(p.id, p.name, p.description))
+            .map(p -> new ListProjectsRequest.Response.Entry(projectMapper.toDto(p)))
             .toList();
         return new ListProjectsRequest.Response(entries);
     }
@@ -72,14 +80,14 @@ public class ProjectController {
         String name,
         String description
     ) {
-        public record Response(String id, String name, String description) {}
+        public record Response(ProjectDto project) {}
     }
 
     @PUT
     @Path("/{id}")
     public UpdateProjectRequest.Response update(@PathParam("id") String id, @Valid UpdateProjectRequest request) {
         var project = projectService.update(id, request.name(), request.description());
-        return toUpdateResponse(project);
+        return new UpdateProjectRequest.Response(projectMapper.toDto(project));
     }
 
     public static record DeleteProjectRequest() {
@@ -97,7 +105,7 @@ public class ProjectController {
 
     public static record ListProjectRepositoriesRequest() {
         public record Response(List<Entry> entries) {
-            public record Entry(String id, String url, RepositoryArchetype archetype) {}
+            public record Entry(RepositoryDto repository) {}
         }
     }
 
@@ -106,7 +114,7 @@ public class ProjectController {
     public ListProjectRepositoriesRequest.Response listRepositories(@PathParam("projectId") String projectId) {
         var repos = projectService.getRepositories(projectId);
         var entries = repos.stream()
-            .map(r -> new ListProjectRepositoriesRequest.Response.Entry(r.id, r.url, r.archetype))
+            .map(r -> new ListProjectRepositoriesRequest.Response.Entry(repositoryMapper.toDto(r)))
             .toList();
         return new ListProjectRepositoriesRequest.Response(entries);
     }
@@ -114,9 +122,9 @@ public class ProjectController {
     public static record CreateProjectRepositoryRequest(
         @NotBlank String id,
         @NotBlank String url,
-        RepositoryArchetype archetype
+        eu.wohlben.qits.domain.repository.entity.RepositoryArchetype archetype
     ) {
-        public record Response(String id, String url, RepositoryArchetype archetype, String projectId) {}
+        public record Response(RepositoryDto repository, String projectId) {}
     }
 
     @POST
@@ -125,13 +133,13 @@ public class ProjectController {
             @PathParam("projectId") String projectId,
             @Valid CreateProjectRepositoryRequest request) {
         var repo = projectService.createRepositoryUnderProject(projectId, request.id(), request.url(), request.archetype());
-        return new CreateProjectRepositoryRequest.Response(repo.id, repo.url, repo.archetype, projectId);
+        return new CreateProjectRepositoryRequest.Response(repositoryMapper.toDto(repo), projectId);
     }
 
     public static record AssociateRepositoryRequest(
         @NotBlank String repositoryId
     ) {
-        public record Response(String id, String url, RepositoryArchetype archetype, String projectId) {}
+        public record Response(RepositoryDto repository, String projectId) {}
     }
 
     @PUT
@@ -140,11 +148,11 @@ public class ProjectController {
             @PathParam("projectId") String projectId,
             @Valid AssociateRepositoryRequest request) {
         var repo = projectService.associateRepository(projectId, request.repositoryId());
-        return new AssociateRepositoryRequest.Response(repo.id, repo.url, repo.archetype, projectId);
+        return new AssociateRepositoryRequest.Response(repositoryMapper.toDto(repo), projectId);
     }
 
     public static record DisassociateRepositoryRequest() {
-        public record Response(String id, String url, RepositoryArchetype archetype) {}
+        public record Response(RepositoryDto repository) {}
     }
 
     @DELETE
@@ -153,20 +161,6 @@ public class ProjectController {
             @PathParam("projectId") String projectId,
             @PathParam("repositoryId") String repositoryId) {
         var repo = projectService.disassociateRepository(projectId, repositoryId);
-        return new DisassociateRepositoryRequest.Response(repo.id, repo.url, repo.archetype);
-    }
-
-    // --- Helpers ---
-
-    private static CreateProjectRequest.Response toResponse(Project project) {
-        return new CreateProjectRequest.Response(project.id, project.name, project.description);
-    }
-
-    private static GetProjectRequest.Response toGetResponse(Project project) {
-        return new GetProjectRequest.Response(project.id, project.name, project.description);
-    }
-
-    private static UpdateProjectRequest.Response toUpdateResponse(Project project) {
-        return new UpdateProjectRequest.Response(project.id, project.name, project.description);
+        return new DisassociateRepositoryRequest.Response(repositoryMapper.toDto(repo));
     }
 }

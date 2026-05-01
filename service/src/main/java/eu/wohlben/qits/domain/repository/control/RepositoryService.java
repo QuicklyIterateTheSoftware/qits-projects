@@ -21,6 +21,9 @@ public class RepositoryService {
     RepositoryRepository repositoryRepository;
 
     @Inject
+    MetadataService metadataService;
+
+    @Inject
     GitExecutor git;
 
     @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
@@ -47,6 +50,8 @@ public class RepositoryService {
         } catch (Exception e) {
             throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
         }
+
+        metadataService.writeRepositoryMetadata(repo);
 
         return repo;
     }

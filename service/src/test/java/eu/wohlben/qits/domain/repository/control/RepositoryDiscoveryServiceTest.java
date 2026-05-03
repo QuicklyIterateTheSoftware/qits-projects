@@ -1,5 +1,7 @@
 package eu.wohlben.qits.domain.repository.control;
 
+import eu.wohlben.qits.domain.project.entity.Project;
+import eu.wohlben.qits.domain.project.persistence.ProjectRepository;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
@@ -8,11 +10,13 @@ import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -44,41 +48,63 @@ public class RepositoryDiscoveryServiceTest {
     @Inject
     MetadataService metadataService;
 
+    @Inject
+    ProjectRepository projectRepository;
+
+    private Project createProject() {
+        Project project = new Project();
+        project.id = UUID.randomUUID().toString();
+        project.name = "Discovery Project";
+        projectRepository.persist(project);
+        return project;
+    }
+
     @Test
-    public void testDiscoverNewRepository() throws Exception {
+    @Transactional
+    public void testDiscoverUpdatesExistingRepository() throws Exception {
         String repoId = "discovered-repo";
         Path repoDir = Path.of(metadataService.getDataDir(), repoId);
         Files.createDirectories(repoDir.resolve("origin"));
 
-        RepositoryMetadata meta = new RepositoryMetadata();
-        meta.id = repoId;
-        meta.url = "https://example.com/discovered.git";
-        meta.archetype = RepositoryArchetype.SERVICE;
+        Project project = createProject();
 
         Repository repo = new Repository();
         repo.id = repoId;
-        repo.url = meta.url;
-        repo.archetype = meta.archetype;
-        metadataService.writeRepositoryMetadata(repo);
+        repo.url = "https://example.com/old.git";
+        repo.archetype = RepositoryArchetype.FORK;
+        repo.project = project;
+        repositoryRepository.persist(repo);
+
+        Repository metaRepo = new Repository();
+        metaRepo.id = repoId;
+        metaRepo.url = "https://example.com/discovered.git";
+        metaRepo.archetype = RepositoryArchetype.SERVICE;
+        metadataService.writeRepositoryMetadata(metaRepo);
 
         discoveryService.discover();
 
         Repository found = repositoryRepository.findByIdOptional(repoId).orElse(null);
         assertNotNull(found);
-        assertEquals(meta.url, found.url);
-        assertEquals(meta.archetype, found.archetype);
+        assertEquals("https://example.com/discovered.git", found.url);
+        assertEquals(RepositoryArchetype.SERVICE, found.archetype);
     }
 
     @Test
+    @Transactional
     public void testDiscoverWithWorktrees() throws Exception {
         String repoId = "repo-with-worktrees";
         Path repoDir = Path.of(metadataService.getDataDir(), repoId);
         Files.createDirectories(repoDir.resolve("origin"));
 
+        Project project = createProject();
+
         Repository repo = new Repository();
         repo.id = repoId;
         repo.url = "https://example.com/wt.git";
         repo.archetype = RepositoryArchetype.SERVICE;
+        repo.project = project;
+        repositoryRepository.persist(repo);
+
         metadataService.writeRepositoryMetadata(repo);
 
         WorktreeMetadata wt = new WorktreeMetadata();
@@ -92,15 +118,21 @@ public class RepositoryDiscoveryServiceTest {
     }
 
     @Test
+    @Transactional
     public void testDiscoverRemovesOrphanedWorktrees() throws Exception {
         String repoId = "repo-orphan";
         Path repoDir = Path.of(metadataService.getDataDir(), repoId);
         Files.createDirectories(repoDir.resolve("origin"));
 
+        Project project = createProject();
+
         Repository repo = new Repository();
         repo.id = repoId;
         repo.url = "https://example.com/orphan.git";
         repo.archetype = RepositoryArchetype.SERVICE;
+        repo.project = project;
+        repositoryRepository.persist(repo);
+
         metadataService.writeRepositoryMetadata(repo);
 
         WorktreeMetadata wt = new WorktreeMetadata();

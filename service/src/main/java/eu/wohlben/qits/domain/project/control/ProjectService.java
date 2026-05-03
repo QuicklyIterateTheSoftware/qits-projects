@@ -1,5 +1,6 @@
 package eu.wohlben.qits.domain.project.control;
 
+import eu.wohlben.qits.domain.featureflow.persistence.FeatureFlowConfigurationRepository;
 import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.project.persistence.ProjectRepository;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
@@ -13,6 +14,7 @@ import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotFoundException;
 
 import java.util.List;
+import java.util.UUID;
 
 @ApplicationScoped
 public class ProjectService {
@@ -24,22 +26,19 @@ public class ProjectService {
     RepositoryRepository repositoryRepository;
 
     @Inject
+    FeatureFlowConfigurationRepository featureFlowConfigurationRepository;
+
+    @Inject
     RepositoryService repositoryService;
 
     @Transactional
-    public Project create(String id, String name, String description) {
-        if (id == null || id.isBlank()) {
-            throw new BadRequestException("id is required");
-        }
+    public Project create(String name, String description) {
         if (name == null || name.isBlank()) {
             throw new BadRequestException("name is required");
         }
-        if (projectRepository.findByIdOptional(id).isPresent()) {
-            throw new BadRequestException("Project already exists: " + id);
-        }
 
         Project project = new Project();
-        project.id = id;
+        project.id = UUID.randomUUID().toString();
         project.name = name;
         project.description = description;
         projectRepository.persist(project);
@@ -73,8 +72,8 @@ public class ProjectService {
     @Transactional
     public void delete(String id) {
         Project project = get(id);
-        repositoryRepository.find("project.id", id).list()
-            .forEach(r -> r.project = null);
+        repositoryRepository.find("project.id", id).list().forEach(repositoryRepository::delete);
+        featureFlowConfigurationRepository.find("project.id", id).list().forEach(featureFlowConfigurationRepository::delete);
         projectRepository.delete(project);
     }
 
@@ -84,38 +83,9 @@ public class ProjectService {
     }
 
     @Transactional
-    public Repository createRepositoryUnderProject(String projectId, String repoId, String url, RepositoryArchetype archetype) {
-        get(projectId); // verify project exists
-
-        Repository repo = repositoryService.cloneRepository(repoId, url, archetype);
-        return associateRepository(projectId, repoId);
-    }
-
-    @Transactional
-    public Repository associateRepository(String projectId, String repositoryId) {
+    public Repository createRepositoryUnderProject(String projectId, String url, RepositoryArchetype archetype) {
         Project project = get(projectId);
-        Repository repo = repositoryRepository.findByIdOptional(repositoryId)
-            .orElseThrow(() -> new NotFoundException("Repository not found: " + repositoryId));
 
-        if (repo.project != null && !repo.project.id.equals(projectId)) {
-            throw new BadRequestException("Repository already associated with another project");
-        }
-
-        repo.project = project;
-        return repo;
-    }
-
-    @Transactional
-    public Repository disassociateRepository(String projectId, String repositoryId) {
-        Project project = get(projectId);
-        Repository repo = repositoryRepository.findByIdOptional(repositoryId)
-            .orElseThrow(() -> new NotFoundException("Repository not found: " + repositoryId));
-
-        if (repo.project == null || !repo.project.id.equals(projectId)) {
-            throw new NotFoundException("Repository not associated with this project");
-        }
-
-        repo.project = null;
-        return repo;
+        return repositoryService.cloneRepository(url, archetype, project);
     }
 }

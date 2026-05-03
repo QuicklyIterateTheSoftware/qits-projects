@@ -5,5 +5,6 @@ import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 public record RepositoryDto(
     String id,
     String url,
-    RepositoryArchetype archetype
+    RepositoryArchetype archetype,
+    String projectId
 ) {}

@@ -5,7 +5,7 @@ create table feature_flow_phase_action (sort_order integer not null, action_conf
 create table feature_flow_phase_step (sort_order integer not null, id varchar(255) not null, name varchar(255) not null, phase_id varchar(255) not null, primary key (id));
 create table FeatureFlowConfiguration (id varchar(255) not null, name varchar(255) not null, primary key (id));
 create table Project (description varchar(255), id varchar(255) not null, name varchar(255) not null, primary key (id));
-create table Repository (archetype varchar(255) check ((archetype in ('SERVICE','SERVICE_TEMPLATE','FORK'))), id varchar(255) not null, project_id varchar(255), url varchar(255), primary key (id));
+create table Repository (archetype varchar(255) check ((archetype in ('SERVICE','SERVICE_TEMPLATE','FORK'))), id varchar(255) not null, project_id varchar(255) not null, url varchar(255), primary key (id));
 create table worktree (id bigint not null, parent_id varchar(255), repository_id varchar(255) not null, worktree_id varchar(255) not null, primary key (id), unique (repository_id, worktree_id));
 alter table if exists feature_flow_phase add constraint FKi3vf2lk5vo6wyyy3pohvlspco foreign key (feature_flow_configuration_id) references FeatureFlowConfiguration;
 alter table if exists feature_flow_phase add constraint FKn137hdjlrvkg9xnjliqyblgx foreign key (parent_phase_id) references feature_flow_phase;

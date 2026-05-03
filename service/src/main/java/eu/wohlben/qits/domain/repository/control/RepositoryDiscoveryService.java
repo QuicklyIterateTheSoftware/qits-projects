@@ -60,18 +60,17 @@ public class RepositoryDiscoveryService {
                 }
 
                 Optional<RepositoryMetadata> metadataOpt = metadataService.readRepositoryMetadata(repoId);
-                Repository repo = repositoryRepository.findByIdOptional(repoId).orElseGet(() -> {
-                    Repository r = new Repository();
-                    r.id = repoId;
-                    return r;
-                });
+                Repository repo = repositoryRepository.findByIdOptional(repoId).orElse(null);
+                if (repo == null) {
+                    LOG.warnf("Discovered repository %s on disk but it has no project association; skipping", repoId);
+                    continue;
+                }
 
                 if (metadataOpt.isPresent()) {
                     RepositoryMetadata metadata = metadataOpt.get();
                     repo.url = metadata.url;
                     repo.archetype = metadata.archetype;
                 }
-                repositoryRepository.persist(repo);
 
                 List<WorktreeMetadata> worktreeMetadataList = metadataService.readAllWorktreeMetadata(repoId);
                 Set<String> metadataWorktreeIds = new HashSet<>();

@@ -1,5 +1,6 @@
 package eu.wohlben.qits.domain.repository.control;
 
+import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
@@ -13,6 +14,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 
 @ApplicationScoped
 public class RepositoryService {
@@ -30,23 +32,22 @@ public class RepositoryService {
     String dataDir;
 
     @Transactional
-    public Repository cloneRepository(String id, String url, RepositoryArchetype archetype) {
+    public Repository cloneRepository(String url, RepositoryArchetype archetype, Project project) {
         if (url == null || url.isBlank()) {
             throw new BadRequestException("url is required");
         }
-        if (repositoryRepository.findByIdOptional(id).isPresent()) {
-            throw new BadRequestException("Repository already exists: " + id);
-        }
+
         Repository repo = new Repository();
-        repo.id = id;
-        repo.url = url;
+        repo.id = UUID.randomUUID().toString();
+        repo.url = url.trim();
         repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
+        repo.project = project;
         repositoryRepository.persist(repo);
 
-        Path originPath = Path.of(dataDir, id, "origin");
+        Path originPath = Path.of(dataDir, repo.id, "origin");
         try {
             Files.createDirectories(originPath.getParent());
-            git.exec(null, "git", "clone", "--mirror", url, originPath.toString());
+            git.exec(null, "git", "clone", "--mirror", repo.url, originPath.toString());
         } catch (Exception e) {
             throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
         }
@@ -86,5 +87,16 @@ public class RepositoryService {
         } catch (Exception e) {
             throw new InternalServerErrorException("Git push failed: " + e.getMessage());
         }
+    }
+
+    public Repository get(String repoId) {
+        return repositoryRepository.findByIdOptional(repoId)
+            .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    }
+
+    @Transactional
+    public void delete(String repoId) {
+        Repository repo = get(repoId);
+        repositoryRepository.delete(repo);
     }
 }

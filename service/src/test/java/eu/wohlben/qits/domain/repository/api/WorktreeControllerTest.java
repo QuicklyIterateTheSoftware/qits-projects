@@ -36,23 +36,36 @@ public class WorktreeControllerTest {
         fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
     }
 
+    private String createProjectAndRepository() {
+        String projectId = given()
+            .contentType(ContentType.JSON)
+            .body(new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest("Worktree Project", null))
+        .when()
+            .post("/api/projects")
+        .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract().path("project.id");
+
+        return given()
+            .contentType(ContentType.JSON)
+            .body(new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null))
+        .when()
+            .post("/api/projects/" + projectId + "/repositories")
+        .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract().path("repository.id");
+    }
+
     @Test
     public void testCreateWorktreeAndMergeAndDiscard() {
-        // clone via RepositoryController
-        given()
-            .contentType(ContentType.JSON)
-            .body(new RepositoryController.CloneRepositoryRequest(fixtureUrl, null))
-        .when()
-            .post("/api/repositories/wtrepo/clone")
-        .then()
-            .statusCode(Response.Status.OK.getStatusCode());
+        String repoId = createProjectAndRepository();
 
         // create worktree from feature branch
         given()
             .contentType(ContentType.JSON)
             .body(new WorktreeController.CreateWorktreeRequest("step-01", null, "feature"))
         .when()
-            .post("/api/repositories/wtrepo/worktrees")
+            .post("/api/repositories/" + repoId + "/worktrees")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("worktree.worktreeId", equalTo("step-01"));
@@ -62,7 +75,7 @@ public class WorktreeControllerTest {
             .contentType(ContentType.JSON)
             .body(new WorktreeController.MergeWorktreeRequest("master"))
         .when()
-            .post("/api/repositories/wtrepo/worktrees/step-01/merge")
+            .post("/api/repositories/" + repoId + "/worktrees/step-01/merge")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("hasConflicts", equalTo(false));
@@ -72,7 +85,7 @@ public class WorktreeControllerTest {
             .contentType(ContentType.JSON)
             .body(new WorktreeController.DiscardWorktreeRequest())
         .when()
-            .post("/api/repositories/wtrepo/worktrees/step-01/discard")
+            .post("/api/repositories/" + repoId + "/worktrees/step-01/discard")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("success", equalTo(true));

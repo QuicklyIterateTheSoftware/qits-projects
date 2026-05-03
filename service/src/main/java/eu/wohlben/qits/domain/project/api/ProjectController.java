@@ -1,5 +1,8 @@
 package eu.wohlben.qits.domain.project.api;
 
+import eu.wohlben.qits.domain.featureflow.control.FeatureFlowConfigurationService;
+import eu.wohlben.qits.domain.featureflow.dto.FeatureFlowConfigurationDto;
+import eu.wohlben.qits.domain.featureflow.mapper.FeatureFlowConfigurationMapper;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.project.dto.ProjectDto;
 import eu.wohlben.qits.domain.project.mapper.ProjectMapper;
@@ -35,10 +38,15 @@ public class ProjectController {
     @Inject
     RepositoryMapper repositoryMapper;
 
+    @Inject
+    FeatureFlowConfigurationService featureFlowConfigurationService;
+
+    @Inject
+    FeatureFlowConfigurationMapper featureFlowConfigurationMapper;
+
     // --- Project CRUD ---
 
     public static record CreateProjectRequest(
-        @NotBlank String id,
         @NotBlank String name,
         String description
     ) {
@@ -47,7 +55,7 @@ public class ProjectController {
 
     @POST
     public CreateProjectRequest.Response create(@Valid CreateProjectRequest request) {
-        var project = projectService.create(request.id(), request.name(), request.description());
+        var project = projectService.create(request.name(), request.description());
         return new CreateProjectRequest.Response(projectMapper.toDto(project));
     }
 
@@ -121,7 +129,6 @@ public class ProjectController {
     }
 
     public static record CreateProjectRepositoryRequest(
-        @NotBlank String id,
         @NotBlank String url,
         eu.wohlben.qits.domain.repository.entity.RepositoryArchetype archetype
     ) {
@@ -133,35 +140,45 @@ public class ProjectController {
     public CreateProjectRepositoryRequest.Response createRepository(
             @PathParam("projectId") String projectId,
             @Valid CreateProjectRepositoryRequest request) {
-        var repo = projectService.createRepositoryUnderProject(projectId, request.id(), request.url(), request.archetype());
+        var repo = projectService.createRepositoryUnderProject(projectId, request.url(), request.archetype());
         return new CreateProjectRepositoryRequest.Response(repositoryMapper.toDto(repo), projectId);
     }
 
-    public static record AssociateRepositoryRequest(
-        @NotBlank String repositoryId
+    // --- Feature Flow Configuration sub-resources ---
+
+    public static record ListProjectFeatureFlowConfigurationsRequest() {
+        public record Response(List<Entry> entries) {
+            public record Entry(FeatureFlowConfigurationDto featureFlowConfiguration) {}
+        }
+    }
+
+    @GET
+    @Path("/{projectId}/feature-flow-configurations")
+    public ListProjectFeatureFlowConfigurationsRequest.Response listFeatureFlowConfigurations(@PathParam("projectId") String projectId) {
+        projectService.get(projectId); // verify project exists
+        var configs = featureFlowConfigurationService.listByProject(projectId);
+        var entries = configs.stream()
+            .map(c -> new ListProjectFeatureFlowConfigurationsRequest.Response.Entry(
+                featureFlowConfigurationMapper.toDto(c)
+            ))
+            .toList();
+        return new ListProjectFeatureFlowConfigurationsRequest.Response(entries);
+    }
+
+    public static record CreateProjectFeatureFlowConfigurationRequest(
+        @NotBlank String name
     ) {
-        public record Response(RepositoryDto repository, String projectId) {}
+        public record Response(FeatureFlowConfigurationDto featureFlowConfiguration) {}
     }
 
-    @PUT
-    @Path("/{projectId}/associate")
-    public AssociateRepositoryRequest.Response associateRepository(
+    @POST
+    @Path("/{projectId}/feature-flow-configurations")
+    public CreateProjectFeatureFlowConfigurationRequest.Response createFeatureFlowConfiguration(
             @PathParam("projectId") String projectId,
-            @Valid AssociateRepositoryRequest request) {
-        var repo = projectService.associateRepository(projectId, request.repositoryId());
-        return new AssociateRepositoryRequest.Response(repositoryMapper.toDto(repo), projectId);
-    }
-
-    public static record DisassociateRepositoryRequest() {
-        public record Response(RepositoryDto repository) {}
-    }
-
-    @DELETE
-    @Path("/{projectId}/associate/{repositoryId}")
-    public DisassociateRepositoryRequest.Response disassociateRepository(
-            @PathParam("projectId") String projectId,
-            @PathParam("repositoryId") String repositoryId) {
-        var repo = projectService.disassociateRepository(projectId, repositoryId);
-        return new DisassociateRepositoryRequest.Response(repositoryMapper.toDto(repo));
+            @Valid CreateProjectFeatureFlowConfigurationRequest request) {
+        var config = featureFlowConfigurationService.createUnderProject(projectId, request.name());
+        return new CreateProjectFeatureFlowConfigurationRequest.Response(
+            featureFlowConfigurationMapper.toDto(config)
+        );
     }
 }

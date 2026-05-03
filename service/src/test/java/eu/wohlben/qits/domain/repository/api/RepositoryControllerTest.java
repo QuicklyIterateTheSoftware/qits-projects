@@ -36,43 +36,65 @@ public class RepositoryControllerTest {
         fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
     }
 
-    @Test
-    public void testCloneAndPull() {
-        given()
+    private String createProjectAndRepository() {
+        String projectId = given()
             .contentType(ContentType.JSON)
-            .body(new RepositoryController.CloneRepositoryRequest(fixtureUrl, null))
+            .body(new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest("Repo Project", null))
         .when()
-            .post("/api/repositories/myrepo/clone")
+            .post("/api/projects")
         .then()
             .statusCode(Response.Status.OK.getStatusCode())
-            .body("repository.id", equalTo("myrepo"))
-            .body("repository.url", equalTo(fixtureUrl));
+            .extract().path("project.id");
+
+        return given()
+            .contentType(ContentType.JSON)
+            .body(new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null))
+        .when()
+            .post("/api/projects/" + projectId + "/repositories")
+        .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract().path("repository.id");
+    }
+
+    @Test
+    public void testGetAndDelete() {
+        String repoId = createProjectAndRepository();
+
+        given()
+            .contentType(ContentType.JSON)
+        .when()
+            .get("/api/repositories/" + repoId)
+        .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .body("repository.id", equalTo(repoId));
+
+        given()
+            .contentType(ContentType.JSON)
+        .when()
+            .delete("/api/repositories/" + repoId)
+        .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .body("success", equalTo(true));
+    }
+
+    @Test
+    public void testPullAndPush() {
+        String repoId = createProjectAndRepository();
 
         given()
             .contentType(ContentType.JSON)
             .body(new RepositoryController.PullRepositoryRequest())
         .when()
-            .post("/api/repositories/myrepo/pull")
-        .then()
-            .statusCode(Response.Status.OK.getStatusCode());
-    }
-
-    @Test
-    public void testCloneDuplicateId() {
-        given()
-            .contentType(ContentType.JSON)
-            .body(new RepositoryController.CloneRepositoryRequest(fixtureUrl, null))
-        .when()
-            .post("/api/repositories/duprepo/clone")
+            .post("/api/repositories/" + repoId + "/pull")
         .then()
             .statusCode(Response.Status.OK.getStatusCode());
 
         given()
             .contentType(ContentType.JSON)
-            .body(new RepositoryController.CloneRepositoryRequest(fixtureUrl + "2", null))
+            .body(new RepositoryController.PushRepositoryRequest())
         .when()
-            .post("/api/repositories/duprepo/clone")
+            .post("/api/repositories/" + repoId + "/push")
         .then()
-            .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+            .statusCode(Response.Status.OK.getStatusCode());
     }
 }

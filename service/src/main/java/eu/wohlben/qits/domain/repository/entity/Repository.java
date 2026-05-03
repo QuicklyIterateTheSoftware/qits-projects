@@ -28,6 +28,6 @@ public class Repository extends PanacheEntityBase {
     public List<Worktree> worktrees;
 
     @ManyToOne
-    @JoinColumn(name = "project_id")
+    @JoinColumn(name = "project_id", nullable = false)
     public Project project;
 }

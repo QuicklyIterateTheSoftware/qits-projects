@@ -78,6 +78,19 @@ public class RepositoryControllerTest {
     }
 
     @Test
+    public void testListBranches() {
+        String repoId = createProjectAndRepository();
+
+        given()
+            .contentType(ContentType.JSON)
+        .when()
+            .get("/api/repositories/" + repoId + "/branches")
+        .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .body("branches", hasItems("master", "feature"));
+    }
+
+    @Test
     public void testPullAndPush() {
         String repoId = createProjectAndRepository();
 

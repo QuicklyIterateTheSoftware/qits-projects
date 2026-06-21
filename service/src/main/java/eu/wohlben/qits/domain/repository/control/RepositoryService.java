@@ -14,6 +14,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 
 @ApplicationScoped
@@ -92,6 +93,26 @@ public class RepositoryService {
     public Repository get(String repoId) {
         return repositoryRepository.findByIdOptional(repoId)
             .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    }
+
+    public List<String> listBranches(String repoId) {
+        repositoryRepository.findByIdOptional(repoId)
+            .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+
+        Path originPath = Path.of(dataDir, repoId, "origin");
+        if (!Files.exists(originPath)) {
+            throw new NotFoundException("Repository origin not found on disk");
+        }
+
+        try {
+            String output = git.exec(originPath.toFile(), "git", "branch", "--format=%(refname:short)");
+            return output.lines()
+                .map(String::trim)
+                .filter(b -> !b.isBlank())
+                .toList();
+        } catch (Exception e) {
+            throw new InternalServerErrorException("Git branch listing failed: " + e.getMessage());
+        }
     }
 
     @Transactional

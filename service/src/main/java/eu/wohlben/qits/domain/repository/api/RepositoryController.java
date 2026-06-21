@@ -13,6 +13,8 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
+import java.util.List;
+
 @Path("/repositories")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -33,6 +35,16 @@ public class RepositoryController {
     public GetRepositoryRequest.Response get(@PathParam("repoId") String repoId) {
         var repo = repositoryService.get(repoId);
         return new GetRepositoryRequest.Response(repositoryMapper.toDto(repo));
+    }
+
+    public static record ListBranchesRequest() {
+        public record Response(List<String> branches) {}
+    }
+
+    @GET
+    @Path("/{repoId}/branches")
+    public ListBranchesRequest.Response branches(@PathParam("repoId") String repoId) {
+        return new ListBranchesRequest.Response(repositoryService.listBranches(repoId));
     }
 
     public static record DeleteRepositoryRequest() {

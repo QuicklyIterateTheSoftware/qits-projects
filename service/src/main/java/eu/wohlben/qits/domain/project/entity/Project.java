@@ -8,23 +8,21 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
-
 import java.util.List;
 
 @Entity
 public class Project extends PanacheEntityBase {
 
-    @Id
-    public String id;
+  @Id public String id;
 
-    @Column(nullable = false)
-    public String name;
+  @Column(nullable = false)
+  public String name;
 
-    public String description;
+  public String description;
 
-    @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true)
-    public List<Repository> repositories;
+  @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true)
+  public List<Repository> repositories;
 
-    @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true)
-    public List<FeatureFlowConfiguration> featureFlowConfigurations;
+  @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true)
+  public List<FeatureFlowConfiguration> featureFlowConfigurations;
 }

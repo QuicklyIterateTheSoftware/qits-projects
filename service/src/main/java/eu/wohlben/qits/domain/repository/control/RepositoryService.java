@@ -10,114 +10,111 @@ import jakarta.transaction.Transactional;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.InternalServerErrorException;
 import jakarta.ws.rs.NotFoundException;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 @ApplicationScoped
 public class RepositoryService {
 
-    @Inject
-    RepositoryRepository repositoryRepository;
+  @Inject RepositoryRepository repositoryRepository;
 
-    @Inject
-    MetadataService metadataService;
+  @Inject MetadataService metadataService;
 
-    @Inject
-    GitExecutor git;
+  @Inject GitExecutor git;
 
-    @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
-    String dataDir;
+  @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
+  String dataDir;
 
-    @Transactional
-    public Repository cloneRepository(String url, RepositoryArchetype archetype, Project project) {
-        if (url == null || url.isBlank()) {
-            throw new BadRequestException("url is required");
-        }
-
-        Repository repo = new Repository();
-        repo.id = UUID.randomUUID().toString();
-        repo.url = url.trim();
-        repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
-        repo.project = project;
-        repositoryRepository.persist(repo);
-
-        Path originPath = Path.of(dataDir, repo.id, "origin");
-        try {
-            Files.createDirectories(originPath.getParent());
-            git.exec(null, "git", "clone", "--mirror", repo.url, originPath.toString());
-        } catch (Exception e) {
-            throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
-        }
-
-        metadataService.writeRepositoryMetadata(repo);
-
-        return repo;
+  @Transactional
+  public Repository cloneRepository(String url, RepositoryArchetype archetype, Project project) {
+    if (url == null || url.isBlank()) {
+      throw new BadRequestException("url is required");
     }
 
-    public String pullRepository(String repoId) {
-        repositoryRepository.findByIdOptional(repoId)
-            .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    Repository repo = new Repository();
+    repo.id = UUID.randomUUID().toString();
+    repo.url = url.trim();
+    repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
+    repo.project = project;
+    repositoryRepository.persist(repo);
 
-        Path originPath = Path.of(dataDir, repoId, "origin");
-        if (!Files.exists(originPath)) {
-            throw new NotFoundException("Repository origin not found on disk");
-        }
-
-        try {
-            return git.exec(originPath.toFile(), "git", "fetch", "--all");
-        } catch (Exception e) {
-            throw new InternalServerErrorException("Git pull failed: " + e.getMessage());
-        }
+    Path originPath = Path.of(dataDir, repo.id, "origin");
+    try {
+      Files.createDirectories(originPath.getParent());
+      git.exec(null, "git", "clone", "--mirror", repo.url, originPath.toString());
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
     }
 
-    public String pushRepository(String repoId) {
-        repositoryRepository.findByIdOptional(repoId)
-            .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    metadataService.writeRepositoryMetadata(repo);
 
-        Path originPath = Path.of(dataDir, repoId, "origin");
-        if (!Files.exists(originPath)) {
-            throw new NotFoundException("Repository origin not found on disk");
-        }
+    return repo;
+  }
 
-        try {
-            return git.exec(originPath.toFile(), "git", "push");
-        } catch (Exception e) {
-            throw new InternalServerErrorException("Git push failed: " + e.getMessage());
-        }
+  public String pullRepository(String repoId) {
+    repositoryRepository
+        .findByIdOptional(repoId)
+        .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+
+    Path originPath = Path.of(dataDir, repoId, "origin");
+    if (!Files.exists(originPath)) {
+      throw new NotFoundException("Repository origin not found on disk");
     }
 
-    public Repository get(String repoId) {
-        return repositoryRepository.findByIdOptional(repoId)
-            .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    try {
+      return git.exec(originPath.toFile(), "git", "fetch", "--all");
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git pull failed: " + e.getMessage());
+    }
+  }
+
+  public String pushRepository(String repoId) {
+    repositoryRepository
+        .findByIdOptional(repoId)
+        .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+
+    Path originPath = Path.of(dataDir, repoId, "origin");
+    if (!Files.exists(originPath)) {
+      throw new NotFoundException("Repository origin not found on disk");
     }
 
-    public List<String> listBranches(String repoId) {
-        repositoryRepository.findByIdOptional(repoId)
-            .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    try {
+      return git.exec(originPath.toFile(), "git", "push");
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git push failed: " + e.getMessage());
+    }
+  }
 
-        Path originPath = Path.of(dataDir, repoId, "origin");
-        if (!Files.exists(originPath)) {
-            throw new NotFoundException("Repository origin not found on disk");
-        }
+  public Repository get(String repoId) {
+    return repositoryRepository
+        .findByIdOptional(repoId)
+        .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+  }
 
-        try {
-            String output = git.exec(originPath.toFile(), "git", "branch", "--format=%(refname:short)");
-            return output.lines()
-                .map(String::trim)
-                .filter(b -> !b.isBlank())
-                .toList();
-        } catch (Exception e) {
-            throw new InternalServerErrorException("Git branch listing failed: " + e.getMessage());
-        }
+  public List<String> listBranches(String repoId) {
+    repositoryRepository
+        .findByIdOptional(repoId)
+        .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+
+    Path originPath = Path.of(dataDir, repoId, "origin");
+    if (!Files.exists(originPath)) {
+      throw new NotFoundException("Repository origin not found on disk");
     }
 
-    @Transactional
-    public void delete(String repoId) {
-        Repository repo = get(repoId);
-        repositoryRepository.delete(repo);
+    try {
+      String output = git.exec(originPath.toFile(), "git", "branch", "--format=%(refname:short)");
+      return output.lines().map(String::trim).filter(b -> !b.isBlank()).toList();
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git branch listing failed: " + e.getMessage());
     }
+  }
+
+  @Transactional
+  public void delete(String repoId) {
+    Repository repo = get(repoId);
+    repositoryRepository.delete(repo);
+  }
 }

@@ -7,5 +7,5 @@ import org.mapstruct.Mapper;
 @Mapper(componentModel = "jakarta")
 public interface ProjectMapper {
 
-    ProjectDto toDto(Project entity);
+  ProjectDto toDto(Project entity);
 }

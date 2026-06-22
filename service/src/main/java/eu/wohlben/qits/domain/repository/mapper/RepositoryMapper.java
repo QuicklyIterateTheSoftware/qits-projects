@@ -8,6 +8,6 @@ import org.mapstruct.Mapping;
 @Mapper(componentModel = "jakarta")
 public interface RepositoryMapper {
 
-    @Mapping(target = "projectId", source = "project.id")
-    RepositoryDto toDto(Repository entity);
+  @Mapping(target = "projectId", source = "project.id")
+  RepositoryDto toDto(Repository entity);
 }

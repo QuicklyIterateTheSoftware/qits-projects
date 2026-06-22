@@ -10,24 +10,22 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
-
 import java.util.List;
 
 @Entity
 public class Repository extends PanacheEntityBase {
 
-    @Id
-    public String id;
+  @Id public String id;
 
-    public String url;
+  public String url;
 
-    @Enumerated(EnumType.STRING)
-    public RepositoryArchetype archetype;
+  @Enumerated(EnumType.STRING)
+  public RepositoryArchetype archetype;
 
-    @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
-    public List<Worktree> worktrees;
+  @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
+  public List<Worktree> worktrees;
 
-    @ManyToOne
-    @JoinColumn(name = "project_id", nullable = false)
-    public Project project;
+  @ManyToOne
+  @JoinColumn(name = "project_id", nullable = false)
+  public Project project;
 }

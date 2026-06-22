@@ -160,6 +160,30 @@ public class WorktreeControllerTest {
   }
 
   @Test
+  public void testListWorktreesReportsCommitsAheadAndBehindParent() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new WorktreeController.CreateWorktreeRequest("ab-wt", "master", "ab-branch"))
+        .when()
+        .post("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    // A worktree freshly forked from its parent has made no commits yet, so it is
+    // neither ahead of nor behind the parent branch.
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("entries.find { it.worktree.worktreeId == 'ab-wt' }.worktree.ahead", equalTo(0))
+        .body("entries.find { it.worktree.worktreeId == 'ab-wt' }.worktree.behind", equalTo(0));
+  }
+
+  @Test
   public void testListWorktreesEmptyForFreshRepository() {
     String repoId = createProjectAndRepository();
 

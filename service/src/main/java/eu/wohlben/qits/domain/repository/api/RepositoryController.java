@@ -1,6 +1,8 @@
 package eu.wohlben.qits.domain.repository.api;
 
+import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
+import eu.wohlben.qits.domain.repository.dto.CommitLogDto;
 import eu.wohlben.qits.domain.repository.dto.RepositoryDto;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
 import eu.wohlben.qits.domain.repository.mapper.RepositoryMapper;
@@ -26,6 +28,8 @@ public class RepositoryController {
 
   @Inject RepositoryService repositoryService;
 
+  @Inject CommitService commitService;
+
   @Inject RepositoryMapper repositoryMapper;
 
   public static record GetRepositoryRequest() {
@@ -47,6 +51,13 @@ public class RepositoryController {
   @Path("/{repoId}/branches")
   public ListBranchesRequest.Response branches(@PathParam("repoId") String repoId) {
     return new ListBranchesRequest.Response(repositoryService.listBranches(repoId));
+  }
+
+  @GET
+  @Path("/{repoId}/commits")
+  public CommitLogDto commits(
+      @PathParam("repoId") String repoId, @QueryParam("branch") @NotBlank String branch) {
+    return commitService.listCommits(repoId, branch);
   }
 
   public static record DeleteBranchRequest() {

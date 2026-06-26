@@ -202,7 +202,16 @@ public class RepositoryService {
     Integer ahead = null;
     Integer behind = null;
     try {
-      git.exec(originPath.toFile(), "git", "fetch", repo.url, branch);
+      // `--end-of-options` forces the URL and refspec to be read as operands, and the
+      // `refs/heads/` prefix means a crafted branch name can never start with `-`, so neither
+      // can smuggle a git flag (e.g. `--upload-pack=<cmd>`) into the fetch.
+      git.exec(
+          originPath.toFile(),
+          "git",
+          "fetch",
+          "--end-of-options",
+          repo.url,
+          "refs/heads/" + branch);
       String counts =
           git.exec(
                   originPath.toFile(),

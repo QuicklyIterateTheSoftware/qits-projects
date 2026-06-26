@@ -36,6 +36,10 @@ public class RepositoryControllerTest {
   }
 
   private String createProjectAndRepository() {
+    return createProjectAndRepository(fixtureUrl);
+  }
+
+  private String createProjectAndRepository(String url) {
     String projectId =
         given()
             .contentType(ContentType.JSON)
@@ -53,7 +57,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(
             new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRepositoryRequest(
-                fixtureUrl, null))
+                url, null))
         .when()
         .post("/api/projects/" + projectId + "/repositories")
         .then()
@@ -242,6 +246,59 @@ public class RepositoryControllerTest {
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branch", equalTo("feature"));
+  }
+
+  @Test
+  public void testSyncStatusReportsBehindWhenRemoteAdvances() throws Exception {
+    // A writable bare remote we can advance (the shared fixture itself must stay immutable).
+    Path remote = Files.createTempDirectory("qits-remote");
+    runGit(null, "git", "clone", "--bare", fixtureUrl, remote.toString());
+
+    String repoId = createProjectAndRepository(remote.toString());
+
+    // After the app has mirrored the remote, push a new commit to it. The mirror is now one
+    // commit behind AND lacks that commit's objects — the condition that previously made the
+    // ahead/behind counts come back null, which the UI rendered as "up to date with remote".
+    Path work = Files.createTempDirectory("qits-work");
+    runGit(null, "git", "clone", remote.toString(), work.toString());
+    runGit(
+        work,
+        "git",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "remote-only commit");
+    runGit(work, "git", "push", "origin", "HEAD:master");
+
+    // sync-status now fetches the missing objects and reports the true count.
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/sync-status")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("remoteReachable", equalTo(true))
+        .body("remoteExists", equalTo(true))
+        .body("ahead", equalTo(0))
+        .body("behind", equalTo(1));
+  }
+
+  private String runGit(Path cwd, String... command) throws Exception {
+    ProcessBuilder pb = new ProcessBuilder(command);
+    if (cwd != null) {
+      pb.directory(cwd.toFile());
+    }
+    pb.redirectErrorStream(true);
+    Process process = pb.start();
+    String output = new String(process.getInputStream().readAllBytes());
+    if (process.waitFor() != 0) {
+      throw new RuntimeException("git failed: " + String.join(" ", command) + "\n" + output);
+    }
+    return output;
   }
 
   @Test

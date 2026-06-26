@@ -194,11 +194,15 @@ public class RepositoryService {
       return new SyncStatusDto(branch, true, true, 0, 0);
     }
 
-    // The histories differ. Exact counts need the remote commits locally, which a read-only
-    // ls-remote doesn't fetch, so they may be null until the next pull.
+    // The histories differ. Counting needs the remote commits in the mirror's object store, so
+    // fetch them first. Fetch by URL rather than via the "origin" remote: origin is a --mirror,
+    // so `git fetch origin` would fast-forward refs/heads/* (a de-facto pull). Fetching the URL
+    // populates the objects and FETCH_HEAD while leaving the mirror's branch refs untouched —
+    // the same reason pushRepository talks to the URL instead of the mirror remote.
     Integer ahead = null;
     Integer behind = null;
     try {
+      git.exec(originPath.toFile(), "git", "fetch", repo.url, branch);
       String counts =
           git.exec(
                   originPath.toFile(),
@@ -214,7 +218,7 @@ public class RepositoryService {
         ahead = Integer.parseInt(parts[1]);
       }
     } catch (Exception ignored) {
-      // Remote commits not present locally — leave counts null.
+      // Fetch failed or counts unavailable — leave them null (the UI shows "unknown", not in-sync).
     }
     return new SyncStatusDto(branch, true, true, ahead, behind);
   }

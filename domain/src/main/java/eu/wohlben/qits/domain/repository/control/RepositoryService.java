@@ -37,10 +37,18 @@ public class RepositoryService {
     if (url == null || url.isBlank()) {
       throw new BadRequestException("url is required");
     }
+    String trimmedUrl = url.trim();
+    // `url` is user-supplied and passed to `git clone`. Reject a dash-leading value so it can't be
+    // smuggled in as a flag (argv flag injection), and the `ext::` transport which lets a remote
+    // run
+    // arbitrary commands. Local paths and https/ssh/git remotes are all still allowed.
+    if (trimmedUrl.startsWith("-") || trimmedUrl.regionMatches(true, 0, "ext::", 0, 5)) {
+      throw new BadRequestException("Invalid repository URL: " + trimmedUrl);
+    }
 
     Repository repo = new Repository();
     repo.id = UUID.randomUUID().toString();
-    repo.url = url.trim();
+    repo.url = trimmedUrl;
     repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
     repo.project = project;
     repositoryRepository.persist(repo);
@@ -48,7 +56,8 @@ public class RepositoryService {
     Path originPath = Path.of(dataDir, repo.id, "origin");
     try {
       Files.createDirectories(originPath.getParent());
-      git.exec(null, "git", "clone", "--mirror", repo.url, originPath.toString());
+      git.exec(
+          null, "git", "clone", "--mirror", "--end-of-options", repo.url, originPath.toString());
     } catch (Exception e) {
       throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
     }

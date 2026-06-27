@@ -278,4 +278,19 @@ public class WorktreeControllerTest {
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", hasSize(0));
   }
+
+  @Test
+  public void testCreateWorktreeRejectsPathTraversalAndFlagIds() {
+    String repoId = createProjectAndRepository();
+    // A worktree id becomes a path segment + git operand; slashes/dots/leading-dash are rejected.
+    for (String badId : new String[] {"../escape", "a/b", "-D", "."}) {
+      given()
+          .contentType(ContentType.JSON)
+          .body(new WorktreeController.CreateWorktreeRequest(badId, "master", "wt-branch"))
+          .when()
+          .post("/api/repositories/" + repoId + "/worktrees")
+          .then()
+          .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+    }
+  }
 }

@@ -1,5 +1,8 @@
 package eu.wohlben.qits.domain.repository.control;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
@@ -37,5 +40,17 @@ public class RepositoryServiceTest {
     System.out.println("FIXTURE URL: " + fixtureUrl);
     var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
     System.out.println("CLONED: " + repo.id);
+  }
+
+  @Test
+  public void testCloneRejectsDangerousUrls() {
+    var project = projectService.create("Reject Project", null);
+    // ext:: transport can run arbitrary commands; a dash-leading value smuggles a git flag.
+    assertThrows(
+        BadRequestException.class,
+        () -> repositoryService.cloneRepository("ext::sh -c id", null, project));
+    assertThrows(
+        BadRequestException.class,
+        () -> repositoryService.cloneRepository("--upload-pack=touch pwned", null, project));
   }
 }

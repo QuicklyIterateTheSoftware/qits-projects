@@ -2,6 +2,7 @@ package eu.wohlben.qits.domain.repository.api;
 
 import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
+import eu.wohlben.qits.domain.repository.control.WorktreeService;
 import eu.wohlben.qits.domain.repository.dto.CommitChangesDto;
 import eu.wohlben.qits.domain.repository.dto.CommitFileDiffDto;
 import eu.wohlben.qits.domain.repository.dto.CommitLogDto;
@@ -31,6 +32,8 @@ public class RepositoryController {
   @Inject RepositoryService repositoryService;
 
   @Inject CommitService commitService;
+
+  @Inject WorktreeService worktreeService;
 
   @Inject RepositoryMapper repositoryMapper;
 
@@ -79,6 +82,19 @@ public class RepositoryController {
       @QueryParam("parent") String parent,
       @QueryParam("path") @NotBlank String path) {
     return commitService.getFileDiff(repoId, commitHash, parent, path);
+  }
+
+  public static record MergeBranchRequest(@NotBlank String source, String target) {
+    public record Response(String commitHash, boolean hasConflicts, String output) {}
+  }
+
+  @POST
+  @Path("/{repoId}/branches/merge")
+  public MergeBranchRequest.Response mergeBranch(
+      @PathParam("repoId") String repoId, @Valid MergeBranchRequest request) {
+    var result = worktreeService.mergeBranch(repoId, request.source(), request.target());
+    return new MergeBranchRequest.Response(
+        result.commitHash(), result.hasConflicts(), result.output());
   }
 
   public static record DeleteBranchRequest() {

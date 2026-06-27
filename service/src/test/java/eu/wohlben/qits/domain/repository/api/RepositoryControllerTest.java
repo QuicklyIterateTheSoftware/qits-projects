@@ -313,4 +313,85 @@ public class RepositoryControllerTest {
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
+
+  @Test
+  public void testIntegrateBranchDefaultsToMainBranch() {
+    String repoId = createProjectAndRepository();
+
+    // No target given → integrate "feature" into the repo's configured main branch (master).
+    // feature only adds feature.txt relative to the merge base, so this is a clean merge.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("feature", null))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("commitHash", not(emptyOrNullString()))
+        .body("hasConflicts", equalTo(false));
+  }
+
+  @Test
+  public void testIntegrateBranchIntoExplicitTarget() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("feature", "master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("commitHash", not(emptyOrNullString()));
+  }
+
+  @Test
+  public void testIntegrateRejectsBranchIntoItself() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("master", "master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testIntegrateRejectsFlagLikeSource() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("-D", "master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testIntegrateRequiresSource() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("", "master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testIntegrateUnknownRepoReturns404() {
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("feature", "master"))
+        .when()
+        .post("/api/repositories/does-not-exist/branches/merge")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
 }

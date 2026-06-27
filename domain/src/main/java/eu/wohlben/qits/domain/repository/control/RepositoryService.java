@@ -1,5 +1,8 @@
 package eu.wohlben.qits.domain.repository.control;
 
+import eu.wohlben.qits.domain.error.BadRequestException;
+import eu.wohlben.qits.domain.error.InternalServerErrorException;
+import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
@@ -9,9 +12,6 @@ import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.InternalServerErrorException;
-import jakarta.ws.rs.NotFoundException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;

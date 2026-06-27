@@ -2,6 +2,8 @@ package eu.wohlben.qits.domain.project.control;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import eu.wohlben.qits.domain.error.BadRequestException;
+import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.project.persistence.ProjectRepository;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
@@ -10,8 +12,6 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.transaction.Transactional;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.NotFoundException;
 import org.junit.jupiter.api.Test;
 
 @QuarkusTest

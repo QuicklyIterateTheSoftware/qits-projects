@@ -1,5 +1,7 @@
 package eu.wohlben.qits.domain.project.control;
 
+import eu.wohlben.qits.domain.error.BadRequestException;
+import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.featureflow.persistence.FeatureFlowConfigurationRepository;
 import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.project.persistence.ProjectRepository;
@@ -10,8 +12,6 @@ import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import java.util.UUID;
 

@@ -3,7 +3,10 @@ package eu.wohlben.qits.domain.repository.control;
 import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
+import eu.wohlben.qits.domain.repository.dto.CommitChangesDto;
 import eu.wohlben.qits.domain.repository.dto.CommitDto;
+import eu.wohlben.qits.domain.repository.dto.CommitFileChangeDto;
+import eu.wohlben.qits.domain.repository.dto.CommitFileDiffDto;
 import eu.wohlben.qits.domain.repository.dto.CommitLogDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.Worktree;
@@ -73,6 +76,150 @@ public class CommitService {
     } catch (Exception e) {
       throw new InternalServerErrorException("Git log failed: " + e.getMessage());
     }
+  }
+
+  /**
+   * Lists the files a commit changed relative to its diff base. The base is the explicit {@code
+   * parent} when given, otherwise the commit's own first parent ({@code --root} so a root commit
+   * still reports its added files). {@code parent} in the result is the resolved base ({@code null}
+   * for a root commit).
+   */
+  public CommitChangesDto listChanges(String repoId, String commit, String parent) {
+    requireRef(commit, "commit");
+    String base = normalizeParent(parent);
+    Path originPath = requireOrigin(repoId);
+
+    List<String> cmd =
+        new ArrayList<>(List.of("git", "diff-tree", "-r", "--no-commit-id", "--name-status", "-M"));
+    if (base != null) {
+      cmd.add(base);
+    } else {
+      cmd.add("--root");
+    }
+    cmd.add(commit);
+    cmd.add("--"); // terminate options so refs/paths can't be read as flags
+
+    try {
+      String output = git.exec(originPath.toFile(), cmd.toArray(String[]::new));
+      return new CommitChangesDto(commit, base, parseChanges(output));
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git diff-tree failed: " + e.getMessage());
+    }
+  }
+
+  /**
+   * The unified diff of a single {@code path} in {@code commit}, relative to the same base as
+   * {@link #listChanges}. The diff text is empty when the file has no textual change (binary or
+   * pure rename).
+   */
+  public CommitFileDiffDto getFileDiff(String repoId, String commit, String parent, String path) {
+    requireRef(commit, "commit");
+    if (path == null || path.isBlank() || path.startsWith("-")) {
+      throw new BadRequestException("Invalid path: " + path);
+    }
+    String base = normalizeParent(parent);
+    Path originPath = requireOrigin(repoId);
+
+    List<String> cmd = new ArrayList<>(List.of("git", "diff-tree", "-p", "-M", "--no-commit-id"));
+    if (base != null) {
+      cmd.add(base);
+    } else {
+      cmd.add("--root");
+    }
+    cmd.add(commit);
+    cmd.add("--");
+    cmd.add(path);
+
+    try {
+      String diff = git.exec(originPath.toFile(), cmd.toArray(String[]::new));
+      return new CommitFileDiffDto(path, changeTypeFromPatch(diff), diff);
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git diff-tree failed: " + e.getMessage());
+    }
+  }
+
+  /**
+   * Rejects null/blank/dash-leading refs so a value like {@code -D} can't be smuggled as a flag.
+   */
+  private void requireRef(String ref, String name) {
+    if (ref == null || ref.isBlank() || ref.startsWith("-")) {
+      throw new BadRequestException("Invalid " + name + ": " + ref);
+    }
+  }
+
+  /** Null/blank parent means "diff against the commit's first parent"; otherwise validate it. */
+  private String normalizeParent(String parent) {
+    if (parent == null || parent.isBlank()) {
+      return null;
+    }
+    if (parent.startsWith("-")) {
+      throw new BadRequestException("Invalid parent: " + parent);
+    }
+    return parent;
+  }
+
+  private Path requireOrigin(String repoId) {
+    repositoryRepository
+        .findByIdOptional(repoId)
+        .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    Path originPath = Path.of(dataDir, repoId, "origin");
+    if (!Files.exists(originPath)) {
+      throw new NotFoundException("Repository origin not found on disk");
+    }
+    return originPath;
+  }
+
+  private List<CommitFileChangeDto> parseChanges(String output) {
+    List<CommitFileChangeDto> files = new ArrayList<>();
+    for (String line : output.split("\n")) {
+      if (line.isBlank()) {
+        continue;
+      }
+      // name-status: "<STATUS>\t<path>" or, for renames/copies, "<STATUS>\t<old>\t<new>".
+      String[] f = line.split("\t");
+      if (f.length < 2) {
+        continue;
+      }
+      char code = f[0].charAt(0);
+      String changeType = changeType(code);
+      if ((code == 'R' || code == 'C') && f.length >= 3) {
+        files.add(new CommitFileChangeDto(f[2], f[1], changeType));
+      } else {
+        files.add(new CommitFileChangeDto(f[1], null, changeType));
+      }
+    }
+    return files;
+  }
+
+  private String changeType(char code) {
+    return switch (code) {
+      case 'A' -> "ADDED";
+      case 'D' -> "DELETED";
+      case 'R' -> "RENAMED";
+      case 'C' -> "COPIED";
+      case 'T' -> "TYPE_CHANGED";
+      default -> "MODIFIED";
+    };
+  }
+
+  /** Derives the change type from the patch header, avoiding a second git call. */
+  private String changeTypeFromPatch(String diff) {
+    if (diff == null || diff.isBlank()) {
+      return "MODIFIED";
+    }
+    if (diff.contains("new file mode")) {
+      return "ADDED";
+    }
+    if (diff.contains("deleted file mode")) {
+      return "DELETED";
+    }
+    if (diff.contains("rename from ")) {
+      return "RENAMED";
+    }
+    if (diff.contains("copy from ")) {
+      return "COPIED";
+    }
+    return "MODIFIED";
   }
 
   /**

@@ -153,4 +153,107 @@ public class CommitControllerTest {
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
+
+  @Test
+  public void testCommitChangesNoParentListsFilesChangedInCommit() {
+    String repoId = createProjectAndRepository();
+
+    // Without a parent the changes are computed against the commit's own first parent: the
+    // "Add feature.txt" commit only added feature.txt. The resolved base is null (no explicit
+    // parent was given).
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/commits/feature/changes")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("commit", equalTo("feature"))
+        .body("parent", nullValue())
+        .body("files.size()", equalTo(1))
+        .body("files[0].path", equalTo("feature.txt"))
+        .body("files[0].changeType", equalTo("ADDED"))
+        .body("files[0].oldPath", nullValue());
+  }
+
+  @Test
+  public void testCommitChangesWithExplicitParentRebasesDiff() {
+    String repoId = createProjectAndRepository();
+
+    // Diffing feature against master surfaces both feature.txt (added) and README.md (modified,
+    // since master advanced the README after feature forked).
+    given()
+        .contentType(ContentType.JSON)
+        .queryParam("parent", "master")
+        .when()
+        .get("/api/repositories/" + repoId + "/commits/feature/changes")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("parent", equalTo("master"))
+        .body("files.size()", equalTo(2))
+        .body("files.path", hasItems("README.md", "feature.txt"));
+  }
+
+  @Test
+  public void testCommitFileDiffReturnsUnifiedPatch() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .queryParam("path", "feature.txt")
+        .when()
+        .get("/api/repositories/" + repoId + "/commits/feature/diff")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("path", equalTo("feature.txt"))
+        .body("changeType", equalTo("ADDED"))
+        .body("diff", containsString("+feature work"))
+        .body("diff", containsString("diff --git"));
+  }
+
+  @Test
+  public void testCommitChangesRejectFlagLikeCommit() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/commits/-D/changes")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testCommitFileDiffRejectFlagLikePath() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .queryParam("path", "-rf")
+        .when()
+        .get("/api/repositories/" + repoId + "/commits/feature/diff")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testCommitFileDiffRequiresPathParam() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/commits/feature/diff")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testCommitChangesUnknownRepoReturns404() {
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/does-not-exist/commits/feature/changes")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
 }

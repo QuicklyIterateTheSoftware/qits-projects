@@ -2,6 +2,8 @@ package eu.wohlben.qits.domain.repository.api;
 
 import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
+import eu.wohlben.qits.domain.repository.dto.CommitChangesDto;
+import eu.wohlben.qits.domain.repository.dto.CommitFileDiffDto;
 import eu.wohlben.qits.domain.repository.dto.CommitLogDto;
 import eu.wohlben.qits.domain.repository.dto.RepositoryDto;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
@@ -58,6 +60,25 @@ public class RepositoryController {
   public CommitLogDto commits(
       @PathParam("repoId") String repoId, @QueryParam("branch") @NotBlank String branch) {
     return commitService.listCommits(repoId, branch);
+  }
+
+  @GET
+  @Path("/{repoId}/commits/{commitHash}/changes")
+  public CommitChangesDto commitChanges(
+      @PathParam("repoId") String repoId,
+      @PathParam("commitHash") String commitHash,
+      @QueryParam("parent") String parent) {
+    return commitService.listChanges(repoId, commitHash, parent);
+  }
+
+  @GET
+  @Path("/{repoId}/commits/{commitHash}/diff")
+  public CommitFileDiffDto commitFileDiff(
+      @PathParam("repoId") String repoId,
+      @PathParam("commitHash") String commitHash,
+      @QueryParam("parent") String parent,
+      @QueryParam("path") @NotBlank String path) {
+    return commitService.getFileDiff(repoId, commitHash, parent, path);
   }
 
   public static record DeleteBranchRequest() {

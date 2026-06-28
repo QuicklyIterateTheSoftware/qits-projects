@@ -16,6 +16,7 @@ import jakarta.transaction.Transactional;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
@@ -70,6 +71,10 @@ public class RepositoryService {
 
     metadataService.writeRepositoryMetadata(repo);
 
+    // Every repository starts with a default worktree checked out on its main branch, so the main
+    // branch is immediately workable and appears as a worktree-backed root in the branch tree.
+    worktreeService.createMainWorktree(repo.id, repo.mainBranch);
+
     return repo;
   }
 
@@ -104,19 +109,36 @@ public class RepositoryService {
     Path originPath = requireOrigin(repoId);
     String branch = resolveMainBranch(repo, originPath);
 
-    try {
-      String fetchOutput = git.exec(originPath.toFile(), "git", "fetch", "origin", branch);
-      String remoteSha = git.exec(originPath.toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
-      String localSha =
-          git.exec(originPath.toFile(), "git", "rev-parse", "refs/heads/" + branch).trim();
+    // The main branch lives in its default worktree, so pull there: git refuses to fetch-update a
+    // ref that is checked out, and updating it behind the worktree's back would desync the working
+    // tree. We fetch by URL (into FETCH_HEAD, not refs/heads/*) and fast-forward the worktree,
+    // which
+    // moves the ref and the checkout together. Fall back to the bare origin for a repo with no main
+    // worktree.
+    Optional<Path> mainWorktree = worktreeService.worktreePathForBranch(repoId, branch);
+    Path workdir = mainWorktree.orElse(originPath);
 
-      if (remoteSha.equals(localSha) || isAncestor(originPath, remoteSha, localSha)) {
+    try {
+      // `--end-of-options`: url and branch are positional, never parsed as flags, so neither a
+      // dash-leading url (already rejected at clone) nor branch can smuggle a git flag.
+      String fetchOutput =
+          git.exec(workdir.toFile(), "git", "fetch", "--end-of-options", repo.url, branch);
+      String remoteSha = git.exec(workdir.toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
+      String localSha =
+          git.exec(workdir.toFile(), "git", "rev-parse", "refs/heads/" + branch).trim();
+
+      if (remoteSha.equals(localSha) || isAncestor(workdir, remoteSha, localSha)) {
         // Already up to date, or local is ahead — nothing to pull.
         return fetchOutput;
       }
-      if (isAncestor(originPath, localSha, remoteSha)) {
-        // Remote is strictly ahead — fast-forward the local branch.
-        git.exec(originPath.toFile(), "git", "update-ref", "refs/heads/" + branch, remoteSha);
+      if (isAncestor(workdir, localSha, remoteSha)) {
+        // Remote is strictly ahead — fast-forward.
+        if (mainWorktree.isPresent()) {
+          // Update the ref and the working tree together (the branch is checked out here).
+          git.exec(workdir.toFile(), "git", "merge", "--ff-only", "--end-of-options", remoteSha);
+        } else {
+          git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + branch, remoteSha);
+        }
         return fetchOutput;
       }
       throw new BadRequestException(

@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
 import com.pty4j.WinSize;
+import eu.wohlben.qits.domain.error.NotFoundException;
+import eu.wohlben.qits.domain.featureflow.control.ActionResolutionService;
+import eu.wohlben.qits.domain.featureflow.control.ActionResolutionService.ResolvedAction;
 import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
 import io.quarkus.websockets.next.OnClose;
 import io.quarkus.websockets.next.OnOpen;
@@ -28,9 +31,12 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
- * Streams an interactive {@code bash} running inside a worktree checkout to the browser. The server
- * attaches bash to a real pseudo-terminal (pty4j) so it behaves like a true TTY — echo, line
- * editing, colors and full-screen apps all work — and the browser renders the stream with xterm.js.
+ * Streams a configurable interactive process running inside a worktree checkout to the browser. The
+ * process to run is a {@link ActionConfiguration} (selected via {@code actionId}): its {@code
+ * executeScript} is run through a login shell ({@code /bin/bash -lc <script>}) with the action's
+ * environment overlaid on the inherited one. The server attaches it to a real pseudo-terminal
+ * (pty4j) so it behaves like a true TTY — echo, line editing, colors and full-screen apps all work
+ * — and the browser renders the stream with xterm.js.
  *
  * <p>The socket is keyed by {@code worktreeId} (a safe id, never containing slashes) rather than
  * the branch name. The worktree dir on disk follows the same convention as {@link
@@ -41,7 +47,7 @@ import org.jboss.logging.Logger;
  * keystrokes and {@code {"type":"resize","cols":N,"rows":M}} for terminal size. The server sends
  * raw PTY output back as text frames (already terminal-encoded; xterm.js writes them verbatim).
  */
-@WebSocket(path = "/api/terminal/{repoId}/{worktreeId}")
+@WebSocket(path = "/api/terminal/{repoId}/{worktreeId}/{actionId}")
 public class TerminalSocket {
 
   private static final Logger LOG = Logger.getLogger(TerminalSocket.class);
@@ -50,6 +56,8 @@ public class TerminalSocket {
   private final Map<String, TerminalSession> sessions = new ConcurrentHashMap<>();
 
   @Inject WorktreeRepository worktreeRepository;
+
+  @Inject ActionResolutionService actionResolutionService;
 
   @Inject ObjectMapper objectMapper;
 
@@ -62,11 +70,23 @@ public class TerminalSocket {
   public void onOpen(
       @PathParam("repoId") String repoId,
       @PathParam("worktreeId") String worktreeId,
+      @PathParam("actionId") String actionId,
       WebSocketConnection connection) {
     // Never build a filesystem path from unvalidated input: the worktree must be a known row for
     // this repo. This also rejects path-traversal attempts in worktreeId.
     if (!worktreeRepository.existsByRepositoryAndWorktreeId(repoId, worktreeId)) {
       connection.sendTextAndAwait("Worktree not found: " + worktreeId + "\r\n");
+      connection.closeAndAwait();
+      return;
+    }
+
+    ResolvedAction action;
+    try {
+      // Resolves against the repo's effective set (global + repository-owned); a repo action from
+      // another repository is rejected here.
+      action = actionResolutionService.resolveForRepository(repoId, actionId);
+    } catch (NotFoundException e) {
+      connection.sendTextAndAwait(e.getMessage() + "\r\n");
       connection.closeAndAwait();
       return;
     }
@@ -81,10 +101,15 @@ public class TerminalSocket {
     try {
       Map<String, String> env = new HashMap<>(System.getenv());
       env.put("TERM", "xterm-256color");
+      // Per-action overrides win over the inherited environment.
+      env.putAll(action.environment());
 
+      // executeScript is a shell line, so run it through a login shell: env expansion, args and
+      // pipes all work. Seeded actions `exec` their target so a single PTY-leader process remains
+      // (the SIGKILL cleanup in TerminalSession.close relies on that).
       PtyProcess process =
           new PtyProcessBuilder()
-              .setCommand(new String[] {"/bin/bash", "-l"})
+              .setCommand(new String[] {"/bin/bash", "-lc", action.executeScript()})
               .setDirectory(worktreePath.toString())
               .setEnvironment(env)
               .setInitialColumns(80)

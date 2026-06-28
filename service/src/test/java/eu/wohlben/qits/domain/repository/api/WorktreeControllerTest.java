@@ -455,16 +455,21 @@ public class WorktreeControllerTest {
   }
 
   @Test
-  public void testListWorktreesEmptyForFreshRepository() {
+  public void testFreshRepositoryHasADefaultMainWorktree() {
     String repoId = createProjectAndRepository();
 
+    // Adding a repository now checks out its main branch in a default worktree (a root with no
+    // parent), so the worktree list is never empty for a fresh repo.
     given()
         .contentType(ContentType.JSON)
         .when()
         .get("/api/repositories/" + repoId + "/worktrees")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries", hasSize(0));
+        .body("entries", hasSize(1))
+        .body("entries[0].worktree.branch", equalTo("master"))
+        .body("entries[0].worktree.worktreeId", equalTo("master"))
+        .body("entries[0].worktree.parent", nullValue());
   }
 
   @Test

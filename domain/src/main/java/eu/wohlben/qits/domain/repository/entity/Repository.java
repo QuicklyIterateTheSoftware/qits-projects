@@ -1,5 +1,6 @@
 package eu.wohlben.qits.domain.repository.entity;
 
+import eu.wohlben.qits.domain.featureflow.entity.RepositoryAction;
 import eu.wohlben.qits.domain.project.entity.Project;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.CascadeType;
@@ -29,6 +30,10 @@ public class Repository extends PanacheEntityBase {
 
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
   public List<Worktree> worktrees;
+
+  /** Actions owned by (and only available in) this repository; cascade-deleted with it. */
+  @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
+  public List<RepositoryAction> actions;
 
   @ManyToOne
   @JoinColumn(name = "project_id", nullable = false)

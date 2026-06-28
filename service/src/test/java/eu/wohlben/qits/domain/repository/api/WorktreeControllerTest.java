@@ -388,6 +388,42 @@ public class WorktreeControllerTest {
             "entries.find { it.worktree.worktreeId == 'uc-child' }.worktree.ahead", greaterThan(0));
   }
 
+  @Test
+  public void testIncomingCommitsListsParentCommitsNotInBranch() throws Exception {
+    String repoId = createProjectAndRepository();
+
+    createWorktree(repoId, "in-parent", "master", "in-parent-branch");
+    createWorktree(repoId, "in-child", "in-parent-branch", "in-child-branch");
+
+    // Advance the parent branch by one commit; the child forked before it, so it's now behind by 1.
+    commitFile(repoId, "in-parent", "p.txt", "p\n", "incoming parent commit");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/in-child/incoming-commits")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("branch", equalTo("in-child-branch"))
+        .body("parent", equalTo("in-parent-branch"))
+        // the commit waiting on the parent that a fast-forward/merge would pull in
+        .body("commits.message", hasItem("incoming parent commit"));
+  }
+
+  @Test
+  public void testIncomingCommitsEmptyWhenUpToDate() {
+    String repoId = createProjectAndRepository();
+    createWorktree(repoId, "ut-wt", "master", "ut-branch");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/ut-wt/incoming-commits")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("commits", hasSize(0));
+  }
+
   /** Writes a file inside the worktree on disk and commits it on the worktree's branch. */
   private void commitFile(String repoId, String worktreeId, String file, String content, String msg)
       throws Exception {

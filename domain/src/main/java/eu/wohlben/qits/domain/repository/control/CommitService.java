@@ -79,6 +79,55 @@ public class CommitService {
   }
 
   /**
+   * Lists the commits a fast-forward or merge would bring into a worktree's branch from its parent
+   * — the commits the parent has that the branch doesn't yet ({@code git log branch..parent}),
+   * newest first. Returns an empty list when the worktree has no resolvable parent, is already up
+   * to date, or the refs can't be read. Used for the "commits about to be pulled in" hover popover.
+   */
+  public CommitLogDto listIncomingCommits(String repoId, String worktreeId) {
+    repositoryRepository
+        .findByIdOptional(repoId)
+        .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    Worktree worktree =
+        worktreeRepository
+            .findByRepositoryAndWorktreeId(repoId, worktreeId)
+            .orElseThrow(() -> new NotFoundException("Worktree not found: " + worktreeId));
+
+    Path originPath = requireOrigin(repoId);
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", worktreeId);
+
+    String branch;
+    try {
+      branch = git.getCurrentBranch(worktreePath);
+    } catch (Exception e) {
+      branch = null;
+    }
+    String parent = worktree.parent;
+    boolean usable =
+        branch != null
+            && !branch.isBlank()
+            && !branch.startsWith("-")
+            && parent != null
+            && !parent.isBlank()
+            && !parent.startsWith("-")
+            && !parent.equals(branch);
+    if (!usable) {
+      return new CommitLogDto(branch, null, List.of());
+    }
+
+    // `branch..parent` = commits reachable from the parent but not the branch — exactly what a
+    // fast-forward (or merge) would add. `--` terminates options so the range can't be read as
+    // flag.
+    String range = branch + ".." + parent;
+    try {
+      String output = git.exec(originPath.toFile(), "git", "log", LOG_FORMAT, range, "--");
+      return new CommitLogDto(branch, parent, parseCommits(output));
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git log failed: " + e.getMessage());
+    }
+  }
+
+  /**
    * Lists the files a commit changed relative to its diff base. The base is the explicit {@code
    * parent} when given, otherwise the commit's own first parent ({@code --root} so a root commit
    * still reports its added files). {@code parent} in the result is the resolved base ({@code null}

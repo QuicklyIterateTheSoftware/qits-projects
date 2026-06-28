@@ -325,7 +325,7 @@ public class RepositoryMcpToolsTest {
     // a repository-owned action (seeded directly via the service — there is no global REST for it)
     var action =
         repositoryActionService.create(
-            repoId, "Repo Echo", null, "echo REPO_ACTION_RAN", null, false, null);
+            repoId, "Repo Echo", null, "echo REPO_ACTION_RAN", null, false, null, null);
 
     client(project)
         .when()

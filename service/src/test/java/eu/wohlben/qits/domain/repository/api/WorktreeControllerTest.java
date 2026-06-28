@@ -29,6 +29,10 @@ public class WorktreeControllerTest {
     }
   }
 
+  // The effective data dir the app uses, so tests can commit directly inside a worktree on disk.
+  @org.eclipse.microprofile.config.inject.ConfigProperty(name = "qits.repositories.data-dir")
+  String dataDir;
+
   private final String fixtureUrl;
 
   public WorktreeControllerTest() throws Exception {
@@ -264,6 +268,93 @@ public class WorktreeControllerTest {
         .post("/api/repositories/" + repoId + "/worktrees/dv-child/fast-forward")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testDivergedButCleanWorktreeReportsNoConflict() throws Exception {
+    String repoId = createProjectAndRepository();
+
+    createWorktree(repoId, "clean-parent", "master", "clean-parent-branch");
+    createWorktree(repoId, "clean-child", "clean-parent-branch", "clean-child-branch");
+
+    // Both branches add their own distinct file, so each is ahead of and behind the other, yet
+    // merging the parent in applies cleanly — divergence without a conflict.
+    commitFile(repoId, "clean-parent", "parent-only.txt", "from parent\n", "parent commit");
+    commitFile(repoId, "clean-child", "child-only.txt", "from child\n", "child commit");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body(
+            "entries.find { it.worktree.worktreeId == 'clean-child' }.worktree.ahead",
+            greaterThan(0))
+        .body(
+            "entries.find { it.worktree.worktreeId == 'clean-child' }.worktree.behind",
+            greaterThan(0))
+        // diverged but a merge would apply cleanly → no conflict warning
+        .body(
+            "entries.find { it.worktree.worktreeId == 'clean-child' }.worktree.conflictsWithParent",
+            equalTo(false));
+  }
+
+  @Test
+  public void testDivergedConflictingWorktreeReportsConflict() throws Exception {
+    String repoId = createProjectAndRepository();
+
+    createWorktree(repoId, "cf-parent", "master", "cf-parent-branch");
+    createWorktree(repoId, "cf-child", "cf-parent-branch", "cf-child-branch");
+
+    // Both branches change the same line of the same file to different values, so a merge of the
+    // parent into the child can't apply without manual resolution.
+    commitFile(repoId, "cf-parent", "conflict.txt", "parent version\n", "parent edit");
+    commitFile(repoId, "cf-child", "conflict.txt", "child version\n", "child edit");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body(
+            "entries.find { it.worktree.worktreeId == 'cf-child' }.worktree.ahead", greaterThan(0))
+        .body(
+            "entries.find { it.worktree.worktreeId == 'cf-child' }.worktree.behind", greaterThan(0))
+        .body(
+            "entries.find { it.worktree.worktreeId == 'cf-child' }.worktree.conflictsWithParent",
+            equalTo(true));
+  }
+
+  /** Writes a file inside the worktree on disk and commits it on the worktree's branch. */
+  private void commitFile(String repoId, String worktreeId, String file, String content, String msg)
+      throws Exception {
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", worktreeId);
+    Files.writeString(worktreePath.resolve(file), content);
+    runGit(worktreePath, "git", "add", file);
+    runGit(
+        worktreePath,
+        "git",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test",
+        "commit",
+        "-m",
+        msg);
+  }
+
+  private void runGit(Path cwd, String... command) throws Exception {
+    ProcessBuilder pb = new ProcessBuilder(command);
+    pb.directory(cwd.toFile());
+    pb.redirectErrorStream(true);
+    Process p = pb.start();
+    int exit = p.waitFor();
+    if (exit != 0) {
+      String out = new String(p.getInputStream().readAllBytes());
+      throw new RuntimeException("git " + String.join(" ", command) + " failed: " + out);
+    }
   }
 
   @Test

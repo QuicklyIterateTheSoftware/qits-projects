@@ -301,9 +301,15 @@ public class RepositoryService {
     Path originPath = Path.of(dataDir, repoId, "origin");
     return listBranches(repoId).stream()
         .map(
-            b ->
-                new BranchDto(
-                    b, worktreeService.canCleanupBranch(repoId, originPath, b, repo.mainBranch)))
+            b -> {
+              var summary = worktreeService.summarize(repoId, originPath, b, repo.mainBranch);
+              return new BranchDto(
+                  b,
+                  worktreeService.canCleanupBranch(repoId, originPath, b, repo.mainBranch),
+                  summary.parent(),
+                  summary.ahead(),
+                  summary.behind());
+            })
         .toList();
   }
 

@@ -97,7 +97,7 @@ public class RepositoryControllerTest {
         .get("/api/repositories/" + repoId + "/branches")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("branches", hasItems("master", "feature"));
+        .body("branches.name", hasItems("master", "feature"));
   }
 
   @Test
@@ -120,7 +120,7 @@ public class RepositoryControllerTest {
         .get("/api/repositories/" + repoId + "/branches")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("branches", not(hasItem("feature")));
+        .body("branches.name", not(hasItem("feature")));
   }
 
   @Test
@@ -393,5 +393,194 @@ public class RepositoryControllerTest {
         .post("/api/repositories/does-not-exist/branches/merge")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  private void createWorktree(String repoId, String id, String parent, String branch) {
+    given()
+        .contentType(ContentType.JSON)
+        .body(new WorktreeController.CreateWorktreeRequest(id, parent, branch))
+        .when()
+        .post("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+  }
+
+  @Test
+  public void testIntegrateAutoCleansUpEligibleWorktree() {
+    String repoId = createProjectAndRepository();
+    createWorktree(repoId, "auto-wt", "master", "auto-b");
+
+    // Integrating a clean, dependent-free worktree into its parent removes it afterwards.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("auto-b", "master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("hasConflicts", equalTo(false))
+        .body("cleanedUp", equalTo(true));
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("entries.worktree.worktreeId", not(hasItem("auto-wt")));
+  }
+
+  @Test
+  public void testIntegrateKeepsWorktreeWithChildren() {
+    String repoId = createProjectAndRepository();
+    createWorktree(repoId, "pwt", "master", "pb");
+    createWorktree(repoId, "cwt", "pb", "cb");
+
+    // pb still has a dependent worktree (cwt), so it must not be cleaned up after integration.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("pb", "master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("cleanedUp", equalTo(false));
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("entries.worktree.worktreeId", hasItem("pwt"));
+  }
+
+  @Test
+  public void testIntegratePlainBranchAutoCleansUp() {
+    String repoId = createProjectAndRepository();
+
+    // "feature" is a plain branch (no worktree). Integrating it into master leaves it fully merged
+    // with no dependents, so it is deleted afterwards — the same behaviour as a worktree branch.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("feature", "master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("hasConflicts", equalTo(false))
+        .body("cleanedUp", equalTo(true));
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/branches")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("branches.name", not(hasItem("feature")));
+  }
+
+  @Test
+  public void testBranchesReportCanCleanup() {
+    String repoId = createProjectAndRepository();
+    createWorktree(repoId, "cc-wt", "master", "cc-b");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/branches")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        // a fresh fork is fully merged, clean and dependent-free → cleanable
+        .body("branches.find { it.name == 'cc-b' }.canCleanup", equalTo(true))
+        // the main branch is never cleanable, and feature has unmerged commits
+        .body("branches.find { it.name == 'master' }.canCleanup", equalTo(false))
+        .body("branches.find { it.name == 'feature' }.canCleanup", equalTo(false));
+  }
+
+  @Test
+  public void testCleanupBranchRemovesEligibleWorktree() {
+    String repoId = createProjectAndRepository();
+    createWorktree(repoId, "elig-wt", "master", "elig-b");
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.CleanupBranchRequest("elig-b"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/cleanup")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("success", equalTo(true));
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("entries.worktree.worktreeId", not(hasItem("elig-wt")));
+  }
+
+  @Test
+  public void testCleanupBranchRejectsUnmergedCommits() {
+    String repoId = createProjectAndRepository();
+    createWorktree(repoId, "ahead-wt", "master", "ahead-b");
+    // Advance ahead-b past master by integrating the diverged feature branch into it.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.MergeBranchRequest("feature", "ahead-b"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/merge")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.CleanupBranchRequest("ahead-b"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/cleanup")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testCleanupBranchRejectsBranchWithChildren() {
+    String repoId = createProjectAndRepository();
+    createWorktree(repoId, "par-wt", "master", "par-b");
+    createWorktree(repoId, "chi-wt", "par-b", "chi-b");
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.CleanupBranchRequest("par-b"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/cleanup")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testCleanupBranchRejectsMainBranch() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.CleanupBranchRequest("master"))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/cleanup")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testCleanupBranchRequiresBranch() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.CleanupBranchRequest(""))
+        .when()
+        .post("/api/repositories/" + repoId + "/branches/cleanup")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
 }

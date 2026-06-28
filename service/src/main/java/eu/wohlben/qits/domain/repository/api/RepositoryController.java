@@ -3,6 +3,7 @@ package eu.wohlben.qits.domain.repository.api;
 import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
 import eu.wohlben.qits.domain.repository.control.WorktreeService;
+import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.CommitChangesDto;
 import eu.wohlben.qits.domain.repository.dto.CommitFileDiffDto;
 import eu.wohlben.qits.domain.repository.dto.CommitLogDto;
@@ -49,13 +50,13 @@ public class RepositoryController {
   }
 
   public static record ListBranchesRequest() {
-    public record Response(List<String> branches) {}
+    public record Response(List<BranchDto> branches) {}
   }
 
   @GET
   @Path("/{repoId}/branches")
   public ListBranchesRequest.Response branches(@PathParam("repoId") String repoId) {
-    return new ListBranchesRequest.Response(repositoryService.listBranches(repoId));
+    return new ListBranchesRequest.Response(repositoryService.listBranchesWithCleanup(repoId));
   }
 
   @GET
@@ -85,7 +86,12 @@ public class RepositoryController {
   }
 
   public static record MergeBranchRequest(@NotBlank String source, String target) {
-    public record Response(String commitHash, boolean hasConflicts, String output) {}
+    /**
+     * @param cleanedUp whether the integrated source worktree+branch was removed afterwards (it was
+     *     fully merged with no dependents)
+     */
+    public record Response(
+        String commitHash, boolean hasConflicts, String output, boolean cleanedUp) {}
   }
 
   @POST
@@ -94,7 +100,19 @@ public class RepositoryController {
       @PathParam("repoId") String repoId, @Valid MergeBranchRequest request) {
     var result = worktreeService.mergeBranch(repoId, request.source(), request.target());
     return new MergeBranchRequest.Response(
-        result.commitHash(), result.hasConflicts(), result.output());
+        result.commitHash(), result.hasConflicts(), result.output(), result.cleanedUp());
+  }
+
+  public static record CleanupBranchRequest(@NotBlank String branch) {
+    public record Response(boolean success) {}
+  }
+
+  @POST
+  @Path("/{repoId}/branches/cleanup")
+  public CleanupBranchRequest.Response cleanupBranch(
+      @PathParam("repoId") String repoId, @Valid CleanupBranchRequest request) {
+    worktreeService.cleanupBranch(repoId, request.branch());
+    return new CleanupBranchRequest.Response(true);
   }
 
   public static record DeleteBranchRequest() {

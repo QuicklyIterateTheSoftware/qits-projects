@@ -4,6 +4,7 @@ import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.project.entity.Project;
+import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
@@ -26,6 +27,8 @@ public class RepositoryService {
   @Inject WorktreeRepository worktreeRepository;
 
   @Inject MetadataService metadataService;
+
+  @Inject WorktreeService worktreeService;
 
   @Inject GitExecutor git;
 
@@ -282,6 +285,26 @@ public class RepositoryService {
     } catch (Exception e) {
       throw new InternalServerErrorException("Git branch listing failed: " + e.getMessage());
     }
+  }
+
+  /**
+   * The repository's branches, each tagged with whether it can be safely cleaned up (see {@link
+   * WorktreeService#canCleanupBranch}). Used by the branch list UI to offer cleanup in place of
+   * integrate once a branch is fully merged.
+   */
+  public List<BranchDto> listBranchesWithCleanup(String repoId) {
+    Repository repo =
+        repositoryRepository
+            .findByIdOptional(repoId)
+            .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+
+    Path originPath = Path.of(dataDir, repoId, "origin");
+    return listBranches(repoId).stream()
+        .map(
+            b ->
+                new BranchDto(
+                    b, worktreeService.canCleanupBranch(repoId, originPath, b, repo.mainBranch)))
+        .toList();
   }
 
   /**

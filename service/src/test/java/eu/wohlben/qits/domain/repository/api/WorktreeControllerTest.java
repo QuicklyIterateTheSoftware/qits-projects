@@ -327,6 +327,67 @@ public class WorktreeControllerTest {
             equalTo(true));
   }
 
+  @Test
+  public void testUpdateFromParentMergesDivergedBranch() throws Exception {
+    String repoId = createProjectAndRepository();
+
+    createWorktree(repoId, "up-parent", "master", "up-parent-branch");
+    createWorktree(repoId, "up-child", "up-parent-branch", "up-child-branch");
+
+    // Diverge cleanly: each branch adds its own distinct file.
+    commitFile(repoId, "up-parent", "parent-only.txt", "from parent\n", "parent commit");
+    commitFile(repoId, "up-child", "child-only.txt", "from child\n", "child commit");
+
+    // A fast-forward can't apply (the child has its own commit), but a merge can.
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/api/repositories/" + repoId + "/worktrees/up-child/update-from-parent")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    // After merging the parent in, the child contains the parent's commit, so it's no longer
+    // behind.
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("entries.find { it.worktree.worktreeId == 'up-child' }.worktree.behind", equalTo(0));
+  }
+
+  @Test
+  public void testUpdateFromParentRejectsConflictAndLeavesWorktreeUsable() throws Exception {
+    String repoId = createProjectAndRepository();
+
+    createWorktree(repoId, "uc-parent", "master", "uc-parent-branch");
+    createWorktree(repoId, "uc-child", "uc-parent-branch", "uc-child-branch");
+
+    // Both edit the same line: a merge of the parent into the child would conflict.
+    commitFile(repoId, "uc-parent", "conflict.txt", "parent version\n", "parent edit");
+    commitFile(repoId, "uc-child", "conflict.txt", "child version\n", "child edit");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/api/repositories/" + repoId + "/worktrees/uc-child/update-from-parent")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+
+    // The aborted merge must leave the worktree exactly as it was: still diverged, not mid-merge.
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body(
+            "entries.find { it.worktree.worktreeId == 'uc-child' }.worktree.behind", greaterThan(0))
+        .body(
+            "entries.find { it.worktree.worktreeId == 'uc-child' }.worktree.ahead", greaterThan(0));
+  }
+
   /** Writes a file inside the worktree on disk and commits it on the worktree's branch. */
   private void commitFile(String repoId, String worktreeId, String file, String content, String msg)
       throws Exception {

@@ -82,7 +82,9 @@ public class CommitControllerTest {
         .body("commits[0].hash", not(emptyOrNullString()))
         .body("commits[0].shortHash", not(emptyOrNullString()))
         .body("commits[0].author", not(emptyOrNullString()))
-        .body("commits[0].date", not(emptyOrNullString()));
+        .body("commits[0].date", not(emptyOrNullString()))
+        // the paths the commit changed, parsed from `git log --name-only`
+        .body("commits[0].files", hasItem("feature.txt"));
   }
 
   @Test

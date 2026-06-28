@@ -31,7 +31,13 @@ public class CommitService {
   /** Field separator between log fields ({@code %x1f}); never appears in any single field. */
   private static final String FIELD_SEP = "\u001f";
 
-  private static final String LOG_FORMAT = "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%cI%x1f%s";
+  /**
+   * Record separator ({@code %x1e}) prefixing each commit, so the per-commit file lists that {@code
+   * --name-only} appends (each on its own line) can be split back apart.
+   */
+  private static final String RECORD_SEP = "\u001e";
+
+  private static final String LOG_FORMAT = "--format=%x1e%H%x1f%h%x1f%an%x1f%ae%x1f%cI%x1f%s";
 
   @Inject RepositoryRepository repositoryRepository;
 
@@ -71,7 +77,8 @@ public class CommitService {
 
     try {
       // `--` terminates option parsing so the refspec is never read as a flag.
-      String output = git.exec(originPath.toFile(), "git", "log", LOG_FORMAT, range, "--");
+      String output =
+          git.exec(originPath.toFile(), "git", "log", "--name-only", LOG_FORMAT, range, "--");
       return new CommitLogDto(branch, usableParent ? parent : null, parseCommits(output));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git log failed: " + e.getMessage());
@@ -120,7 +127,8 @@ public class CommitService {
     // flag.
     String range = branch + ".." + parent;
     try {
-      String output = git.exec(originPath.toFile(), "git", "log", LOG_FORMAT, range, "--");
+      String output =
+          git.exec(originPath.toFile(), "git", "log", "--name-only", LOG_FORMAT, range, "--");
       return new CommitLogDto(branch, parent, parseCommits(output));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git log failed: " + e.getMessage());
@@ -293,18 +301,30 @@ public class CommitService {
     return repo.mainBranch;
   }
 
+  /**
+   * Parses {@code git log --name-only} output: each commit is prefixed with {@link #RECORD_SEP},
+   * its first line holds the {@link #FIELD_SEP}-separated fields, and the remaining non-blank lines
+   * are the paths it changed (absent for merge commits).
+   */
   private List<CommitDto> parseCommits(String output) {
     List<CommitDto> commits = new ArrayList<>();
-    for (String line : output.split("\n")) {
-      if (line.isBlank()) {
+    for (String block : output.split(RECORD_SEP)) {
+      if (block.isBlank()) {
         continue;
       }
+      String[] lines = block.split("\n", -1);
       // Keep trailing empties (-1) so an empty commit message still yields a 6th field.
-      String[] f = line.split(FIELD_SEP, -1);
+      String[] f = lines[0].split(FIELD_SEP, -1);
       if (f.length != 6) {
         continue;
       }
-      commits.add(new CommitDto(f[0], f[1], f[2], f[3], f[4], f[5]));
+      List<String> files = new ArrayList<>();
+      for (int i = 1; i < lines.length; i++) {
+        if (!lines[i].isBlank()) {
+          files.add(lines[i]);
+        }
+      }
+      commits.add(new CommitDto(f[0], f[1], f[2], f[3], f[4], f[5], files));
     }
     return commits;
   }

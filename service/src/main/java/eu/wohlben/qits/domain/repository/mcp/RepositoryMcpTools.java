@@ -39,9 +39,11 @@ import java.util.List;
  * {@code runAction} and {@code listActions} here only ever read and use the library.
  *
  * <p>Each session is scoped to a single project via {@link ProjectScope} (the {@code
- * X-QITS-Project} header). Tools take a {@code repoId} but never a project id, and {@link
- * #requireRepoInProject} rejects any repository that does not belong to the scoped project — so the
- * model cannot reach across project boundaries.
+ * X-QITS-Project} header), and may be further narrowed to one repository within it (the optional
+ * {@code X-QITS-Repository} header). Tools take a {@code repoId} but never a project id, and {@link
+ * #requireRepoInProject} rejects any repository that does not belong to the scoped project — or,
+ * when the session is narrowed, any repository other than the scoped one — so the model cannot
+ * reach across project boundaries or out of its repository.
  *
  * <p>{@link WrapBusinessError} turns any exception a tool throws — the scoping guards here and the
  * domain {@code NotFoundException}/{@code BadRequestException}s from the services — into a tool
@@ -78,7 +80,9 @@ public class RepositoryMcpTools {
               + " to obtain a repoId for the other tools.")
   @Transactional
   public List<RepositorySummary> listRepositories() {
+    var scopedRepo = scope.repositoryId();
     return projectService.getRepositories(scope.requireProjectId()).stream()
+        .filter(r -> scopedRepo.isEmpty() || scopedRepo.get().equals(r.id))
         .map(
             r ->
                 new RepositorySummary(
@@ -269,10 +273,15 @@ public class RepositoryMcpTools {
 
   /**
    * Ensures {@code repoId} names a repository inside the project this session is scoped to, so no
-   * tool can operate on a repository from another project. Throws {@link NotFoundException}
+   * tool can operate on a repository from another project. When the session is narrowed to a single
+   * repository, also rejects any other repository in the project. Throws {@link NotFoundException}
    * otherwise (also covering a non-existent repository).
    */
   private Repository requireRepoInProject(String repoId) {
+    var scopedRepo = scope.repositoryId();
+    if (scopedRepo.isPresent() && !scopedRepo.get().equals(repoId)) {
+      throw new NotFoundException("Repository not in this session's scope: " + repoId);
+    }
     return projectService.getRepositories(scope.requireProjectId()).stream()
         .filter(r -> r.id.equals(repoId))
         .findFirst()

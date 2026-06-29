@@ -91,6 +91,14 @@ public class RepositoryMcpToolsTest {
 
   /** A streamable client on the repository server, scoped to {@code projectId} (or none). */
   private McpStreamableTestClient client(String projectId) {
+    return client(projectId, null);
+  }
+
+  /**
+   * A streamable client on the repository server, scoped to {@code projectId} and optionally
+   * narrowed to {@code repositoryId} (pass null to leave the whole project in scope).
+   */
+  private McpStreamableTestClient client(String projectId, String repositoryId) {
     return McpAssured.newStreamableClient()
         .setMcpPath("/mcp/repository")
         .setAdditionalHeaders(
@@ -98,6 +106,9 @@ public class RepositoryMcpToolsTest {
               MultiMap headers = MultiMap.caseInsensitiveMultiMap();
               if (projectId != null) {
                 headers.add(ProjectScope.PROJECT_HEADER, projectId);
+              }
+              if (repositoryId != null) {
+                headers.add(ProjectScope.REPOSITORY_HEADER, repositoryId);
               }
               return headers;
             })
@@ -152,6 +163,46 @@ public class RepositoryMcpToolsTest {
             response -> {
               assertTrue(response.isError(), "cross-project access must be refused");
               assertTrue(text(response).contains("not found in this project"));
+            })
+        .thenAssertResults();
+  }
+
+  @Test
+  public void narrowsToTheScopedRepositoryWhenRepositoryHeaderIsSet() {
+    String project = createProject("Narrowed");
+    String repoA = createRepository(project);
+    String repoB = createRepository(project);
+
+    // listRepositories returns only the narrowed repo, even though both belong to the project.
+    client(project, repoA)
+        .when()
+        .toolsCall(
+            "listRepositories",
+            Map.of(),
+            response -> {
+              assertFalse(response.isError());
+              String text = text(response);
+              assertTrue(text.contains(repoA), "should list the scoped repo: " + text);
+              assertFalse(text.contains(repoB), "must hide the sibling repo: " + text);
+            })
+        .thenAssertResults();
+  }
+
+  @Test
+  public void refusesSiblingRepositoriesWhenNarrowed() {
+    String project = createProject("NarrowedGuard");
+    String repoA = createRepository(project);
+    String repoB = createRepository(project);
+
+    // A session narrowed to repoA may not touch repoB, even though it is in the same project.
+    client(project, repoA)
+        .when()
+        .toolsCall(
+            "listBranches",
+            Map.of("repoId", repoB),
+            response -> {
+              assertTrue(response.isError(), "out-of-scope repo access must be refused");
+              assertTrue(text(response).contains("not in this session's scope"), text(response));
             })
         .thenAssertResults();
   }

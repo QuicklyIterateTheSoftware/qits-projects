@@ -147,17 +147,20 @@ public class ResolveConflictService {
     List<CommitDto> outgoing = commitService.listCommits(repoId, branch).commits();
 
     // Fork the resolution worktree off the conflicting branch (so it carries our work); Claude then
-    // merges the original parent into it.
+    // merges the original parent into it. The composed prompt doubles as the worktree's preamble,
+    // so
+    // the history records why this resolution worktree exists.
+    String prompt = composePrompt(branch, parent, incoming, outgoing);
     String resolutionId = uniqueWorktreeId(repoId, worktreeId);
     Worktree resolution =
-        worktreeService.createWorktree(repoId, resolutionId, branch, resolutionId);
+        worktreeService.createWorktree(repoId, resolutionId, branch, resolutionId, prompt);
 
     // Re-point the resolution at the ORIGINAL parent (not the branch it forked from). Integrating
     // the resolved branch then lands the work in the parent and leaves the original branch fully
     // merged — so it becomes cleanable — instead of merging back into itself.
     retargetParent(repoId, resolution, parent);
 
-    writePromptFile(repoId, resolutionId, composePrompt(branch, parent, incoming, outgoing));
+    writePromptFile(repoId, resolutionId, prompt);
 
     RepositoryAction action = findOrCreateResolveAction(repoId);
     // The resolution worktree owns the branch named after its id (see createWorktree).
@@ -309,13 +312,13 @@ public class ResolveConflictService {
     if (base.length() > 64) {
       base = base.substring(0, 64);
     }
-    if (!worktreeRepository.existsByRepositoryAndWorktreeId(repoId, base)) {
+    if (!worktreeRepository.existsActiveByRepositoryAndWorktreeId(repoId, base)) {
       return base;
     }
     for (int n = 2; n < 1000; n++) {
       String candidate = base + "-" + n;
       if (candidate.length() <= 64
-          && !worktreeRepository.existsByRepositoryAndWorktreeId(repoId, candidate)) {
+          && !worktreeRepository.existsActiveByRepositoryAndWorktreeId(repoId, candidate)) {
         return candidate;
       }
     }
@@ -324,7 +327,7 @@ public class ResolveConflictService {
 
   private Worktree requireWorktree(String repoId, String worktreeId) {
     return worktreeRepository
-        .findByRepositoryAndWorktreeId(repoId, worktreeId)
+        .findActiveByRepositoryAndWorktreeId(repoId, worktreeId)
         .orElseThrow(() -> new NotFoundException("Worktree not found: " + worktreeId));
   }
 

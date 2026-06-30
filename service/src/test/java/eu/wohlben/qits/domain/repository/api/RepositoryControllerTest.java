@@ -130,7 +130,9 @@ public class RepositoryControllerTest {
     // Fork a worktree from "feature": now a worktree's parent points at "feature".
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("child-wt", "feature", "child-branch"))
+        .body(
+            new WorktreeController.CreateWorktreeRequest(
+                "child-wt", "feature", "child-branch", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -322,7 +324,7 @@ public class RepositoryControllerTest {
     // feature only adds feature.txt relative to the merge base, so this is a clean merge.
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", null))
+        .body(new RepositoryController.MergeBranchRequest("feature", null, null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -337,7 +339,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "master"))
+        .body(new RepositoryController.MergeBranchRequest("feature", "master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -351,7 +353,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("master", "master"))
+        .body(new RepositoryController.MergeBranchRequest("master", "master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -364,7 +366,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("-D", "master"))
+        .body(new RepositoryController.MergeBranchRequest("-D", "master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -377,7 +379,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("", "master"))
+        .body(new RepositoryController.MergeBranchRequest("", "master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -388,7 +390,7 @@ public class RepositoryControllerTest {
   public void testIntegrateUnknownRepoReturns404() {
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "master"))
+        .body(new RepositoryController.MergeBranchRequest("feature", "master", null))
         .when()
         .post("/api/repositories/does-not-exist/branches/merge")
         .then()
@@ -398,7 +400,7 @@ public class RepositoryControllerTest {
   private void createWorktree(String repoId, String id, String parent, String branch) {
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest(id, parent, branch))
+        .body(new WorktreeController.CreateWorktreeRequest(id, parent, branch, null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -413,7 +415,7 @@ public class RepositoryControllerTest {
     // Integrating a clean, dependent-free worktree into its parent removes it afterwards.
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("auto-b", "master"))
+        .body(new RepositoryController.MergeBranchRequest("auto-b", "master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -439,7 +441,7 @@ public class RepositoryControllerTest {
     // pb still has a dependent worktree (cwt), so it must not be cleaned up after integration.
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("pb", "master"))
+        .body(new RepositoryController.MergeBranchRequest("pb", "master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -463,7 +465,7 @@ public class RepositoryControllerTest {
     // with no dependents, so it is deleted afterwards — the same behaviour as a worktree branch.
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "master"))
+        .body(new RepositoryController.MergeBranchRequest("feature", "master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -505,7 +507,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("elig-b"))
+        .body(new RepositoryController.CleanupBranchRequest("elig-b", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/cleanup")
         .then()
@@ -528,7 +530,7 @@ public class RepositoryControllerTest {
     // Advance ahead-b past master by integrating the diverged feature branch into it.
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "ahead-b"))
+        .body(new RepositoryController.MergeBranchRequest("feature", "ahead-b", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/merge")
         .then()
@@ -536,7 +538,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("ahead-b"))
+        .body(new RepositoryController.CleanupBranchRequest("ahead-b", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/cleanup")
         .then()
@@ -551,7 +553,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("par-b"))
+        .body(new RepositoryController.CleanupBranchRequest("par-b", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/cleanup")
         .then()
@@ -564,7 +566,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("master"))
+        .body(new RepositoryController.CleanupBranchRequest("master", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/cleanup")
         .then()
@@ -577,7 +579,7 @@ public class RepositoryControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest(""))
+        .body(new RepositoryController.CleanupBranchRequest("", null))
         .when()
         .post("/api/repositories/" + repoId + "/branches/cleanup")
         .then()

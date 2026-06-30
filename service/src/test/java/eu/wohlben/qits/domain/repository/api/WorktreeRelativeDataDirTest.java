@@ -72,7 +72,7 @@ public class WorktreeRelativeDataDirTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("rel-01", "master", "rel-branch"))
+        .body(new WorktreeController.CreateWorktreeRequest("rel-01", "master", "rel-branch", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -102,7 +102,7 @@ public class WorktreeRelativeDataDirTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.DiscardWorktreeRequest())
+        .body(new WorktreeController.DiscardWorktreeRequest(null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees/rel-01/discard")
         .then()

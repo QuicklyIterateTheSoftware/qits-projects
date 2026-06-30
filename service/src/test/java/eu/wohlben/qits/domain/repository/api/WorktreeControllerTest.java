@@ -73,7 +73,7 @@ public class WorktreeControllerTest {
     // fork a new branch "step-work" from the feature branch
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("step-01", "feature", "step-work"))
+        .body(new WorktreeController.CreateWorktreeRequest("step-01", "feature", "step-work", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -93,7 +93,7 @@ public class WorktreeControllerTest {
     // discard
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.DiscardWorktreeRequest())
+        .body(new WorktreeController.DiscardWorktreeRequest(null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees/step-01/discard")
         .then()
@@ -107,7 +107,7 @@ public class WorktreeControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("wt-list", "master", "wt-branch"))
+        .body(new WorktreeController.CreateWorktreeRequest("wt-list", "master", "wt-branch", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -135,7 +135,7 @@ public class WorktreeControllerTest {
     // the old behaviour (checking out an existing branch) made this impossible.
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("fork-a", "master", "branch-a"))
+        .body(new WorktreeController.CreateWorktreeRequest("fork-a", "master", "branch-a", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -143,7 +143,7 @@ public class WorktreeControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("fork-b", "master", "branch-b"))
+        .body(new WorktreeController.CreateWorktreeRequest("fork-b", "master", "branch-b", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -169,7 +169,7 @@ public class WorktreeControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("ab-wt", "master", "ab-branch"))
+        .body(new WorktreeController.CreateWorktreeRequest("ab-wt", "master", "ab-branch", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -190,7 +190,7 @@ public class WorktreeControllerTest {
   private void createWorktree(String repoId, String id, String parent, String branch) {
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest(id, parent, branch))
+        .body(new WorktreeController.CreateWorktreeRequest(id, parent, branch, null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()
@@ -479,7 +479,7 @@ public class WorktreeControllerTest {
     for (String badId : new String[] {"../escape", "a/b", "-D", "."}) {
       given()
           .contentType(ContentType.JSON)
-          .body(new WorktreeController.CreateWorktreeRequest(badId, "master", "wt-branch"))
+          .body(new WorktreeController.CreateWorktreeRequest(badId, "master", "wt-branch", null))
           .when()
           .post("/api/repositories/" + repoId + "/worktrees")
           .then()

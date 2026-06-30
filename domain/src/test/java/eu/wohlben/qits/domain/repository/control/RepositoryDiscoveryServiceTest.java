@@ -6,6 +6,7 @@ import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.project.persistence.ProjectRepository;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.repository.entity.WorktreeStatus;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
 import io.quarkus.test.junit.QuarkusTest;
@@ -108,12 +109,12 @@ public class RepositoryDiscoveryServiceTest {
 
     discoveryService.discover();
 
-    assertTrue(worktreeRepository.findByRepositoryAndWorktreeId(repoId, "wt-01").isPresent());
+    assertTrue(worktreeRepository.findActiveByRepositoryAndWorktreeId(repoId, "wt-01").isPresent());
   }
 
   @Test
   @Transactional
-  public void testDiscoverRemovesOrphanedWorktrees() throws Exception {
+  public void testDiscoverAbandonsOrphanedWorktrees() throws Exception {
     String repoId = "repo-orphan";
     Path repoDir = Path.of(metadataService.getDataDir(), repoId);
     Files.createDirectories(repoDir.resolve("origin"));
@@ -135,11 +136,20 @@ public class RepositoryDiscoveryServiceTest {
     metadataService.writeWorktreeMetadata(repoId, wt);
 
     discoveryService.discover();
-    assertTrue(worktreeRepository.findByRepositoryAndWorktreeId(repoId, "orphan-wt").isPresent());
+    assertTrue(
+        worktreeRepository.findActiveByRepositoryAndWorktreeId(repoId, "orphan-wt").isPresent());
 
     metadataService.deleteWorktreeMetadata(repoId, "orphan-wt");
 
     discoveryService.discover();
-    assertTrue(worktreeRepository.findByRepositoryAndWorktreeId(repoId, "orphan-wt").isEmpty());
+    // Soft-delete: the worktree is no longer ACTIVE, but its row survives as history (marked
+    // ABANDONED) rather than being removed.
+    assertTrue(
+        worktreeRepository.findActiveByRepositoryAndWorktreeId(repoId, "orphan-wt").isEmpty());
+    assertTrue(
+        worktreeRepository.findByRepositoryId(repoId).stream()
+            .anyMatch(
+                w -> "orphan-wt".equals(w.worktreeId) && w.status == WorktreeStatus.ABANDONED),
+        "orphaned worktree should be kept as ABANDONED history");
   }
 }

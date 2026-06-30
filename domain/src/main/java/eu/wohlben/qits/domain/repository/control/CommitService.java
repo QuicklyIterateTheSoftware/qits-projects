@@ -97,7 +97,7 @@ public class CommitService {
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
     Worktree worktree =
         worktreeRepository
-            .findByRepositoryAndWorktreeId(repoId, worktreeId)
+            .findActiveByRepositoryAndWorktreeId(repoId, worktreeId)
             .orElseThrow(() -> new NotFoundException("Worktree not found: " + worktreeId));
 
     Path originPath = requireOrigin(repoId);
@@ -285,7 +285,7 @@ public class CommitService {
    * matching how {@link WorktreeService} reports it.
    */
   private String resolveParent(String repoId, Repository repo, String branch) {
-    for (Worktree wt : worktreeRepository.findByRepositoryId(repoId)) {
+    for (Worktree wt : worktreeRepository.findActiveByRepositoryId(repoId)) {
       Path worktreePath = Path.of(dataDir, repoId, "worktrees", wt.worktreeId);
       if (!Files.exists(worktreePath)) {
         continue;

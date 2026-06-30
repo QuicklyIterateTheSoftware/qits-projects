@@ -352,7 +352,7 @@ public class RepositoryService {
     }
 
     boolean hasChildren =
-        worktreeRepository.findByRepositoryId(repoId).stream()
+        worktreeRepository.findActiveByRepositoryId(repoId).stream()
             .anyMatch(wt -> branch.equals(wt.parent));
     if (hasChildren) {
       throw new BadRequestException("Branch has child worktrees: " + branch);

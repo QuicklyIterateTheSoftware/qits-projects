@@ -85,7 +85,7 @@ public class RepositoryController {
     return commitService.getFileDiff(repoId, commitHash, parent, path);
   }
 
-  public static record MergeBranchRequest(@NotBlank String source, String target) {
+  public static record MergeBranchRequest(@NotBlank String source, String target, String result) {
     /**
      * @param cleanedUp whether the integrated source worktree+branch was removed afterwards (it was
      *     fully merged with no dependents)
@@ -98,12 +98,13 @@ public class RepositoryController {
   @Path("/{repoId}/branches/merge")
   public MergeBranchRequest.Response mergeBranch(
       @PathParam("repoId") String repoId, @Valid MergeBranchRequest request) {
-    var result = worktreeService.mergeBranch(repoId, request.source(), request.target());
+    var result =
+        worktreeService.mergeBranch(repoId, request.source(), request.target(), request.result());
     return new MergeBranchRequest.Response(
         result.commitHash(), result.hasConflicts(), result.output(), result.cleanedUp());
   }
 
-  public static record CleanupBranchRequest(@NotBlank String branch) {
+  public static record CleanupBranchRequest(@NotBlank String branch, String result) {
     public record Response(boolean success) {}
   }
 
@@ -111,7 +112,7 @@ public class RepositoryController {
   @Path("/{repoId}/branches/cleanup")
   public CleanupBranchRequest.Response cleanupBranch(
       @PathParam("repoId") String repoId, @Valid CleanupBranchRequest request) {
-    worktreeService.cleanupBranch(repoId, request.branch());
+    worktreeService.cleanupBranch(repoId, request.branch(), request.result());
     return new CleanupBranchRequest.Response(true);
   }
 

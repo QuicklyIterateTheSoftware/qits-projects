@@ -111,7 +111,9 @@ public class CommitControllerTest {
     // Fork a worktree off "feature": its new branch's parent is "feature".
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("child-wt", "feature", "child-branch"))
+        .body(
+            new WorktreeController.CreateWorktreeRequest(
+                "child-wt", "feature", "child-branch", null))
         .when()
         .post("/api/repositories/" + repoId + "/worktrees")
         .then()

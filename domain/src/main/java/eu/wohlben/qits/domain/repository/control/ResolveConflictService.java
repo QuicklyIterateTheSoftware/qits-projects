@@ -1,21 +1,17 @@
 package eu.wohlben.qits.domain.repository.control;
 
+import eu.wohlben.qits.domain.agent.control.AgentLaunchService;
+import eu.wohlben.qits.domain.command.dto.CommandDto;
 import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
-import eu.wohlben.qits.domain.featureflow.control.RepositoryActionService;
-import eu.wohlben.qits.domain.featureflow.entity.ActionVariant;
-import eu.wohlben.qits.domain.featureflow.entity.RepositoryAction;
-import eu.wohlben.qits.domain.featureflow.persistence.RepositoryActionRepository;
 import eu.wohlben.qits.domain.repository.dto.CommitDto;
 import eu.wohlben.qits.domain.repository.entity.Worktree;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -23,33 +19,21 @@ import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * The "resolve merge conflict" composed action. When a worktree has diverged from its parent with
- * real conflicts, this forks a throwaway resolution worktree off the conflicting branch and hands a
- * headless Claude session the job of merging the parent in and resolving the conflicts — leaving
+ * The "resolve merge conflict" composed flow. When a worktree has diverged from its parent with
+ * real conflicts, this forks a throwaway resolution worktree off the conflicting branch and
+ * launches an autonomous Claude agent to merge the parent in and resolve the conflicts — leaving
  * the original worktree untouched until the human reviews the result.
  *
- * <p>It is deliberately <em>not</em> a standard pickable action: the launch command is a fixed
- * script that reads a per-worktree prompt file ({@code .qits/resolve-prompt.md}) the backend writes
- * into the resolution worktree, so the dynamic prompt (the branch names and the diverging commit
- * lists) never has to be escaped into a shell command. The script is exposed as one
- * repository-owned action (find-or-create by name) so it stays out of the global Run… picker.
+ * <p>The composed prompt (branch names and diverging commit lists) is handed to {@link
+ * AgentLaunchService#launchAutonomous} as a plain string, which embeds it in the launch command via
+ * the coding-agent builder — so there is no bespoke {@code claude} script or per-worktree prompt
+ * file here; it goes through the same agent path as every other Claude launch.
  */
 @ApplicationScoped
 public class ResolveConflictService {
 
-  /** The repository action that runs Claude over the prompt file; one per repository, reused. */
-  private static final String ACTION_NAME = "Resolve merge conflict";
-
-  /**
-   * The prompt is read from a file rather than embedded, so arbitrary commit-message text can never
-   * break out of the shell. {@code "$(cat …)"} substitutes the file content as a single argument
-   * with no re-evaluation. The headless run is fully autonomous ({@code --dangerously-skip-
-   * permissions}) so it can merge and edit without prompts.
-   */
-  private static final String PROMPT_REL_PATH = ".qits/resolve-prompt.md";
-
-  private static final String ACTION_SCRIPT =
-      "claude -p \"$(cat " + PROMPT_REL_PATH + ")\" --dangerously-skip-permissions";
+  /** The command name shown for a resolution run in the Commands list. */
+  private static final String RESOLVE_NAME = "Resolve merge conflict";
 
   @Inject RepositoryRepository repositoryRepository;
 
@@ -61,9 +45,7 @@ public class ResolveConflictService {
 
   @Inject CommitService commitService;
 
-  @Inject RepositoryActionService repositoryActionService;
-
-  @Inject RepositoryActionRepository repositoryActionRepository;
+  @Inject AgentLaunchService agentLaunchService;
 
   @Inject GitExecutor git;
 
@@ -71,7 +53,10 @@ public class ResolveConflictService {
   String dataDir;
 
   /** The outcome of starting a resolution: where the human should watch Claude work. */
-  public record ResolveResult(String worktreeId, String branch, String actionId) {}
+  public record ResolveResult(String worktreeId, String branch, String commandId) {}
+
+  /** The forked resolution worktree and the prompt to run in it, produced inside a transaction. */
+  private record Resolution(String resolutionId, String branch, String prompt) {}
 
   /**
    * The files that merging {@code parent} into a worktree's branch would conflict on, for the
@@ -123,12 +108,26 @@ public class ResolveConflictService {
   }
 
   /**
-   * Starts resolving a worktree's conflict: forks a resolution worktree off the conflicting branch,
-   * writes the composed prompt into it, and returns the (find-or-created) action that runs Claude
-   * over that prompt. The caller opens a terminal on the returned worktree/action to watch it work.
+   * Starts resolving a worktree's conflict: forks a resolution worktree off the conflicting branch
+   * and launches an autonomous Claude agent to merge the parent in and resolve the conflicts. The
+   * caller opens a terminal on the returned command to watch it work. The fork is committed in its
+   * own transaction <em>before</em> the agent is spawned, so the resolution worktree's row is
+   * visible when the command registry validates it.
    */
-  @Transactional
   public ResolveResult resolveConflict(String repoId, String worktreeId) {
+    Resolution resolution =
+        QuarkusTransaction.requiringNew().call(() -> prepareResolution(repoId, worktreeId));
+    CommandDto command =
+        agentLaunchService.launchAutonomous(
+            repoId, resolution.resolutionId(), RESOLVE_NAME, resolution.prompt());
+    return new ResolveResult(resolution.resolutionId(), resolution.branch(), command.id());
+  }
+
+  /**
+   * Forks the resolution worktree off the conflicting branch, re-points it at the original parent,
+   * and composes the prompt Claude will run — all in one transaction. Returns what the spawn needs.
+   */
+  private Resolution prepareResolution(String repoId, String worktreeId) {
     repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
@@ -140,8 +139,7 @@ public class ResolveConflictService {
       throw new BadRequestException("Worktree '" + worktreeId + "' has no parent to merge in");
     }
 
-    // Capture the diverging commits before forking — they describe what the human/Claude is about
-    // to
+    // Capture the diverging commits before forking — they describe what Claude is about to
     // reconcile. Computed against the original branch/parent, not the fresh resolution worktree.
     List<CommitDto> incoming = commitService.listIncomingCommits(repoId, worktreeId).commits();
     List<CommitDto> outgoing = commitService.listCommits(repoId, branch).commits();
@@ -160,11 +158,8 @@ public class ResolveConflictService {
     // merged — so it becomes cleanable — instead of merging back into itself.
     retargetParent(repoId, resolution, parent);
 
-    writePromptFile(repoId, resolutionId, prompt);
-
-    RepositoryAction action = findOrCreateResolveAction(repoId);
     // The resolution worktree owns the branch named after its id (see createWorktree).
-    return new ResolveResult(resolutionId, resolutionId, action.id);
+    return new Resolution(resolutionId, resolutionId, prompt);
   }
 
   /** How many characters of a commit subject we echo into the (untrusted) prompt context. */
@@ -272,38 +267,6 @@ public class ResolveConflictService {
     metadata.worktreeId = worktree.worktreeId;
     metadata.parent = parent;
     metadataService.writeWorktreeMetadata(repoId, metadata);
-  }
-
-  /** Writes the prompt into the resolution worktree at {@link #PROMPT_REL_PATH}. */
-  private void writePromptFile(String repoId, String worktreeId, String prompt) {
-    Path promptPath = Path.of(dataDir, repoId, "worktrees", worktreeId, PROMPT_REL_PATH);
-    try {
-      Files.createDirectories(promptPath.getParent());
-      Files.writeString(promptPath, prompt, StandardCharsets.UTF_8);
-    } catch (IOException e) {
-      throw new InternalServerErrorException("Failed to write resolve prompt: " + e.getMessage());
-    }
-  }
-
-  /**
-   * The single repository-owned action that runs Claude over the prompt file, created on first use.
-   * Repository-scoped (not global) so it never appears in the global Run… picker; interactive so it
-   * runs in the worktree terminal.
-   */
-  private RepositoryAction findOrCreateResolveAction(String repoId) {
-    return repositoryActionRepository
-        .findByRepositoryAndName(repoId, ACTION_NAME)
-        .orElseGet(
-            () ->
-                repositoryActionService.create(
-                    repoId,
-                    ACTION_NAME,
-                    "Headless Claude session that merges the parent in and resolves the conflicts",
-                    ACTION_SCRIPT,
-                    null,
-                    true,
-                    ActionVariant.SHELL,
-                    null));
   }
 
   /** A unique {@code <worktreeId>-resolve[-n]} slug for the resolution worktree. */

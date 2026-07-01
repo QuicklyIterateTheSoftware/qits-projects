@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.domain.command.persistence.CommandRepository;
 import eu.wohlben.qits.domain.project.control.ProjectService;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -18,8 +20,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the resolve-merge-conflict composed action against a real diverged-with-conflict
- * repository cloned from the fixture: a worktree and its parent both change the same new file.
+ * Verifies the resolve-merge-conflict composed flow against a real diverged-with-conflict
+ * repository cloned from the fixture: a worktree and its parent both change the same new file. The
+ * flow forks a resolution worktree and launches an autonomous Claude agent, with the composed
+ * prompt embedded in the launched command.
  */
 @QuarkusTest
 @TestProfile(ResolveConflictServiceTest.TestProfile.class)
@@ -45,10 +49,18 @@ public class ResolveConflictServiceTest {
 
   @Inject ResolveConflictService resolveConflictService;
 
+  @Inject CommandRepository commandRepository;
+
   @Inject GitExecutor git;
 
   @ConfigProperty(name = "qits.repositories.data-dir")
   String dataDir;
+
+  /** The exact shell line a launched command ran — where the resolve prompt is now embedded. */
+  private String executeScriptOf(String commandId) {
+    return QuarkusTransaction.requiringNew()
+        .call(() -> commandRepository.findById(commandId).executeScript);
+  }
 
   /** Clones the fixture and builds a conflict on {@code feat} vs its parent {@code master}. */
   private String divergedRepo() throws Exception {
@@ -92,14 +104,14 @@ public class ResolveConflictServiceTest {
   }
 
   @Test
-  public void resolveForksAWorktreeAndWritesThePrompt() throws Exception {
+  public void resolveForksAWorktreeAndLaunchesClaudeWithTheEmbeddedPrompt() throws Exception {
     String repoId = divergedRepo();
 
     var result = resolveConflictService.resolveConflict(repoId, "feat");
 
     assertEquals("feat-resolve", result.worktreeId());
     assertEquals("feat-resolve", result.branch());
-    assertNotNull(result.actionId());
+    assertNotNull(result.commandId());
 
     // The resolution worktree exists on disk, forked off feat (so it carries our work).
     Path resolutionWorktree = Path.of(dataDir, repoId, "worktrees", "feat-resolve");
@@ -115,13 +127,15 @@ public class ResolveConflictServiceTest {
             .parent();
     assertEquals("master", resolutionParent);
 
-    // The composed prompt is written for Claude, naming the parent and the divergence.
-    Path prompt = resolutionWorktree.resolve(".qits/resolve-prompt.md");
-    assertTrue(Files.exists(prompt), "prompt file should be written");
-    String text = Files.readString(prompt);
-    assertTrue(text.contains("diverged"), text);
-    assertTrue(text.contains("master"), "prompt should name the parent: " + text);
-    assertTrue(text.contains("Merge `master`"), "prompt should instruct the merge: " + text);
+    // The composed prompt is embedded in the launched command (autonomous claude -p run), naming
+    // the
+    // parent and the divergence.
+    String script = executeScriptOf(result.commandId());
+    assertTrue(script.startsWith("claude -p '"), script);
+    assertTrue(script.endsWith(" --dangerously-skip-permissions"), script);
+    assertTrue(script.contains("diverged"), script);
+    assertTrue(script.contains("master"), "command should name the parent: " + script);
+    assertTrue(script.contains("Merge `master`"), "command should instruct the merge: " + script);
   }
 
   @Test
@@ -146,11 +160,8 @@ public class ResolveConflictServiceTest {
         "-m",
         injection);
 
-    resolveConflictService.resolveConflict(repoId, "feat");
-
-    String text =
-        Files.readString(
-            Path.of(dataDir, repoId, "worktrees", "feat-resolve", ".qits", "resolve-prompt.md"));
+    var result = resolveConflictService.resolveConflict(repoId, "feat");
+    String text = executeScriptOf(result.commandId());
 
     // Exactly one BEGIN and one END marker — the forged closing marker the attacker embedded was
     // defused (its hyphen run collapsed), so it can't end the untrusted block early.
@@ -177,16 +188,17 @@ public class ResolveConflictServiceTest {
   }
 
   @Test
-  public void resolveActionIsReusedAcrossInvocations() throws Exception {
+  public void eachResolutionGetsItsOwnCommand() throws Exception {
     String repoId = divergedRepo();
 
     var first = resolveConflictService.resolveConflict(repoId, "feat");
-    // A second resolution (e.g. another branch) reuses the one repository-owned action.
+    // A second resolution (e.g. another branch) spawns its own command in its own worktree.
     worktreeService.createWorktree(repoId, "feat2", "master", "feat2");
     commitFile(repoId, "feat2", "other.txt", "feat2\n");
     var second = resolveConflictService.resolveConflict(repoId, "feat2");
 
-    assertEquals(first.actionId(), second.actionId(), "the resolve action should be reused");
+    assertFalse(
+        first.commandId().equals(second.commandId()), "each resolution gets its own command");
     assertFalse(first.worktreeId().equals(second.worktreeId()), "each gets its own worktree");
   }
 }

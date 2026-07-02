@@ -473,6 +473,102 @@ public class WorktreeControllerTest {
   }
 
   @Test
+  public void testListFilesIncludesTrackedAndNewUntrackedFiles() throws Exception {
+    String repoId = createProjectAndRepository();
+    // The default main worktree is checked out at "master".
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    Files.writeString(worktreePath.resolve("browse-me.txt"), "hello\n");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        // a brand-new untracked file shows up (ls-files --others), sorted alongside tracked ones
+        .body("paths", hasItem("browse-me.txt"));
+  }
+
+  @Test
+  public void testFileContentReturnsText() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    Files.writeString(worktreePath.resolve("readme.md"), "# Title\n\nbody\n");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files/content?path=readme.md")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("path", equalTo("readme.md"))
+        .body("binary", equalTo(false))
+        .body("content", equalTo("# Title\n\nbody\n"));
+  }
+
+  @Test
+  public void testFileContentDetectsBinary() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    // A NUL byte marks the file as binary; the viewer gets no content.
+    Files.write(worktreePath.resolve("blob.bin"), new byte[] {1, 2, 0, 3, 4});
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files/content?path=blob.bin")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("binary", equalTo(true))
+        .body("content", nullValue());
+  }
+
+  @Test
+  public void testFileContentRejectsPathTraversal() {
+    String repoId = createProjectAndRepository();
+    // `path` is user-supplied; a `..` escape out of the worktree root is rejected.
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get(
+            "/api/repositories/" + repoId + "/worktrees/master/files/content?path=../origin/config")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testFileContentRejectsSymlinkEscape() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    // A cloned repo is untrusted: a symlink committed inside the worktree that points outside it
+    // must not be followed when reading (path traversal via symlink).
+    Path secret = Files.createTempFile("qits-secret", ".txt");
+    Files.writeString(secret, "top secret");
+    Files.createSymbolicLink(worktreePath.resolve("escape-link"), secret);
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files/content?path=escape-link")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testFileContentMissingFileReturns404() {
+    String repoId = createProjectAndRepository();
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get(
+            "/api/repositories/"
+                + repoId
+                + "/worktrees/master/files/content?path=does-not-exist.txt")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  @Test
   public void testCreateWorktreeRejectsPathTraversalAndFlagIds() {
     String repoId = createProjectAndRepository();
     // A worktree id becomes a path segment + git operand; slashes/dots/leading-dash are rejected.

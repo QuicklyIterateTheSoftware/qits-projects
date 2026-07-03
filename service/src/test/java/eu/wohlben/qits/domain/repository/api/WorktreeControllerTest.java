@@ -569,6 +569,106 @@ public class WorktreeControllerTest {
   }
 
   @Test
+  public void testListFilesReturnsGitignoredDirectoryAsLazyStub() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    Files.writeString(worktreePath.resolve(".gitignore"), "node_modules/\n");
+    Files.createDirectories(worktreePath.resolve("node_modules/pkg"));
+    Files.writeString(worktreePath.resolve("node_modules/top.js"), "x\n");
+    Files.writeString(worktreePath.resolve("node_modules/pkg/index.js"), "y\n");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        // the ignored dir is a collapsed stub, not walked into: no node_modules contents in paths
+        .body("paths", not(hasItem(startsWith("node_modules"))))
+        // …but present as a lazy stub with a cheap immediate-child count and a self-referential
+        // href
+        .body("lazyDirs.path", hasItem("node_modules"))
+        .body("lazyDirs.find { it.path == 'node_modules' }.childCount", equalTo(2))
+        .body(
+            "lazyDirs.find { it.path == 'node_modules' }.href",
+            containsString("path=node_modules"));
+  }
+
+  @Test
+  public void testListLazyDirectoryContentsOneLevelDeep() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    Files.writeString(worktreePath.resolve(".gitignore"), "node_modules/\n");
+    Files.createDirectories(worktreePath.resolve("node_modules/pkg"));
+    Files.writeString(worktreePath.resolve("node_modules/top.js"), "x\n");
+    Files.writeString(worktreePath.resolve("node_modules/pkg/index.js"), "y\n");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=node_modules")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        // immediate regular files are eager; the nested subdir stays lazy
+        .body("paths", hasItem("node_modules/top.js"))
+        .body("paths", not(hasItem("node_modules/pkg/index.js")))
+        .body("lazyDirs.path", hasItem("node_modules/pkg"))
+        .body("lazyDirs.find { it.path == 'node_modules/pkg' }.childCount", equalTo(1));
+  }
+
+  @Test
+  public void testListFilesRejectsPathTraversal() {
+    String repoId = createProjectAndRepository();
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=../origin")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testListFilesRejectsSymlinkDirectoryEscape() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    // A symlinked directory committed inside the worktree must not redirect the listing outside it.
+    Path outside = Files.createTempDirectory("qits-outside");
+    Files.createSymbolicLink(worktreePath.resolve("escape-dir"), outside);
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=escape-dir")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testListFilesRejectsNonDirectory() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    Files.writeString(worktreePath.resolve("a-file.txt"), "hi\n");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=a-file.txt")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testListFilesRejectsGitDirectory() {
+    String repoId = createProjectAndRepository();
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=.git")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
   public void testCreateWorktreeRejectsPathTraversalAndFlagIds() {
     String repoId = createProjectAndRepository();
     // A worktree id becomes a path segment + git operand; slashes/dots/leading-dash are rejected.

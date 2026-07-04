@@ -4,6 +4,7 @@ import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.Worktree;
 import eu.wohlben.qits.domain.repository.entity.WorktreeEvent;
 import eu.wohlben.qits.domain.repository.entity.WorktreeEventType;
+import eu.wohlben.qits.domain.repository.entity.WorktreeRuntimeStatus;
 import eu.wohlben.qits.domain.repository.entity.WorktreeStatus;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorktreeEventRepository;
@@ -34,6 +35,8 @@ public class RepositoryDiscoveryService {
   @Inject MetadataService metadataService;
 
   @Inject ContainerRuntime containers;
+
+  @Inject WorktreeService worktreeService;
 
   @Inject RepositoryRepository repositoryRepository;
 
@@ -111,15 +114,29 @@ public class RepositoryDiscoveryService {
                       });
           worktree.parent = info.parent();
           worktree.branch = info.branch();
+          worktree.runtimeStatus = WorktreeRuntimeStatus.RUNNING;
           worktreeRepository.persist(worktree);
         }
 
-        // Soft-delete: an ACTIVE worktree whose container is gone (removed out-of-band) is marked
-        // ABANDONED, not deleted, so its history survives. Resolved rows are left untouched.
+        // Reconcile ACTIVE rows whose container is absent. The durable branch — not the container —
+        // is the source of truth, so a missing container is not death: if the branch still exists
+        // we
+        // only lost a recreatable cache (mark STOPPED; lazy ensureContainer re-provisions it on
+        // next
+        // use — we deliberately don't docker-run here, to keep startup fast). Only when the branch
+        // itself is gone from origin is the work genuinely lost; only then is the worktree
+        // ABANDONED
+        // (soft-delete, so its history survives). This is now the only path to abandonment.
         for (Worktree existing : worktreeRepository.findActiveByRepositoryId(repoId)) {
-          if (!containerWorktreeIds.contains(existing.worktreeId)) {
+          if (containerWorktreeIds.contains(existing.worktreeId)) {
+            continue; // healthy — handled above
+          }
+          if (existing.branch != null && worktreeService.branchExists(repoId, existing.branch)) {
+            existing.runtimeStatus = WorktreeRuntimeStatus.STOPPED;
+          } else {
             existing.status = WorktreeStatus.ABANDONED;
             existing.resolvedAt = Instant.now();
+            existing.runtimeStatus = WorktreeRuntimeStatus.STOPPED;
             worktreeEventRepository.persist(
                 WorktreeEvent.builder()
                     .worktree(existing)

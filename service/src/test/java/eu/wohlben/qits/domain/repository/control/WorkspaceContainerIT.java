@@ -129,6 +129,59 @@ public class WorkspaceContainerIT {
   }
 
   /**
+   * The two Phase-3 additions that don't need a credential: the shared {@code ~/.claude} volume is
+   * mounted read/write at the agent {@code HOME}, and the {@code claude} CLI is baked into the
+   * image and on PATH for the arbitrary runtime uid. Uses a throwaway volume so a real login volume
+   * is never touched; the full authenticated round-trip (login → {@code claude -p} writing a file
+   * and pushing) is the manual verification step in the feature doc.
+   */
+  @Test
+  public void sharedCredentialVolumeIsMountedAndClaudeIsOnPath() throws Exception {
+    DockerExecutor de = executor();
+    assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
+
+    de.claudeVolume = "qits-it-dot-claude-" + UUID.randomUUID();
+    de.claudeMount = "/claude-home";
+
+    String repoId = UUID.randomUUID().toString();
+    String worktreeId = "it-claude";
+    String container = de.containerName(worktreeId, repoId);
+    de.rm(container);
+    try {
+      de.ensureClaudeVolume(); // idempotent `docker volume create`
+      de.run(repoId, worktreeId, "it-branch", "main");
+
+      // The shared credential volume is mounted writable at the agent HOME.
+      ContainerRuntime.ExecResult mount =
+          de.exec(
+              container,
+              null,
+              Map.of(),
+              "sh",
+              "-c",
+              "touch /claude-home/.mount-check && echo MOUNT-OK");
+      assertEquals(
+          0,
+          mount.exitCode(),
+          "shared volume must be mounted writable at /claude-home: " + mount.output());
+      assertTrue(mount.output().contains("MOUNT-OK"), mount.output());
+
+      // The coding-agent CLI is on PATH (HOME points at the mounted credential volume).
+      ContainerRuntime.ExecResult version =
+          de.exec(container, "/workspace", Map.of("HOME", "/claude-home"), "claude", "--version");
+      assertEquals(
+          0, version.exitCode(), "claude must be baked in and on PATH: " + version.output());
+    } finally {
+      de.rm(container);
+      try {
+        new ProcessBuilder(RUNTIME, "volume", "rm", "-f", de.claudeVolume).start().waitFor();
+      } catch (Exception ignored) {
+        // best-effort cleanup of the throwaway volume
+      }
+    }
+  }
+
+  /**
    * The interactive PTY path, exactly as {@link
    * eu.wohlben.qits.domain.command.control.CommandRegistry} spawns terminal/daemon commands: a
    * {@code pty4j} outer PTY driving a {@code docker exec -it} client. Proves the inner TTY is

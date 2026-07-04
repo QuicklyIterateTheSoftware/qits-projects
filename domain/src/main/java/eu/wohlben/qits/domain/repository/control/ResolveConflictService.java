@@ -295,15 +295,13 @@ public class ResolveConflictService {
   }
 
   private String currentBranch(String repoId, String worktreeId) {
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", worktreeId);
-    if (!Files.exists(worktreePath)) {
-      throw new NotFoundException("Worktree not found on disk: " + worktreeId);
-    }
-    try {
-      return git.getCurrentBranch(worktreePath);
-    } catch (Exception e) {
+    // The branch is the worktree's stored column — the checkout lives in the container now, so
+    // there is no host path to read `git branch --show-current` from.
+    Worktree worktree = requireWorktree(repoId, worktreeId);
+    if (worktree.branch == null || worktree.branch.isBlank()) {
       throw new InternalServerErrorException(
-          "Could not read the branch of worktree '" + worktreeId + "': " + e.getMessage());
+          "Worktree '" + worktreeId + "' has no recorded branch");
     }
+    return worktree.branch;
   }
 }

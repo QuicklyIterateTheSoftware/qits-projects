@@ -101,14 +101,11 @@ public class CommitService {
             .orElseThrow(() -> new NotFoundException("Worktree not found: " + worktreeId));
 
     Path originPath = requireOrigin(repoId);
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", worktreeId);
 
-    String branch;
-    try {
-      branch = git.getCurrentBranch(worktreePath);
-    } catch (Exception e) {
-      branch = null;
-    }
+    // The branch is the worktree's stored column (there is no host checkout to read it from — the
+    // checkout lives in the container). The log range below runs against the bare origin, which
+    // holds every worktree branch as a ref.
+    String branch = worktree.branch;
     String parent = worktree.parent;
     boolean usable =
         branch != null
@@ -281,21 +278,13 @@ public class CommitService {
 
   /**
    * The branch a worktree forked from, when {@code branch} is owned by a worktree; otherwise the
-   * repository's main branch. A worktree's branch is resolved from disk (the worktree's checkout),
-   * matching how {@link WorktreeService} reports it.
+   * repository's main branch. Matched against each worktree's stored {@code branch} column (the
+   * checkout lives in the container now — there is no host path to read the branch from).
    */
   private String resolveParent(String repoId, Repository repo, String branch) {
     for (Worktree wt : worktreeRepository.findActiveByRepositoryId(repoId)) {
-      Path worktreePath = Path.of(dataDir, repoId, "worktrees", wt.worktreeId);
-      if (!Files.exists(worktreePath)) {
-        continue;
-      }
-      try {
-        if (branch.equals(git.getCurrentBranch(worktreePath))) {
-          return wt.parent;
-        }
-      } catch (Exception ignored) {
-        // Worktree checkout unreadable — skip it.
+      if (branch.equals(wt.branch)) {
+        return wt.parent;
       }
     }
     return repo.mainBranch;

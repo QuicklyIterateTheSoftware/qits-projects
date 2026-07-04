@@ -560,6 +560,48 @@ public class WorktreeControllerTest {
   }
 
   @Test
+  public void testFileContentRejectsIntermediateSymlinkEscape() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    // A symlinked *directory* committed inside the worktree is transparently followed during path
+    // resolution, so a request whose intermediate segment is that link escapes the worktree even
+    // though the final segment is an ordinary file. The read must be rejected (path traversal via
+    // an
+    // intermediate symlink, not just the final component).
+    Path outside = Files.createTempDirectory("qits-outside");
+    Files.writeString(outside.resolve("secret.txt"), "top secret");
+    Files.createSymbolicLink(worktreePath.resolve("escape-dir"), outside);
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get(
+            "/api/repositories/"
+                + repoId
+                + "/worktrees/master/files/content?path=escape-dir/secret.txt")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  public void testListFilesRejectsIntermediateSymlinkEscape() throws Exception {
+    String repoId = createProjectAndRepository();
+    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    // Same escape via an intermediate symlinked directory, but for a listing: the final segment
+    // resolves to a real directory outside the worktree, which must not be walked.
+    Path outside = Files.createTempDirectory("qits-outside");
+    Files.createDirectories(outside.resolve("nested"));
+    Files.createSymbolicLink(worktreePath.resolve("escape-dir"), outside);
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=escape-dir/nested")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
   public void testFileContentMissingFileReturns404() {
     String repoId = createProjectAndRepository();
     given()

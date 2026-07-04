@@ -114,6 +114,17 @@ public class ContainerFileBrowserIT {
       assertArrayEquals(
           "changed\n".getBytes(StandardCharsets.UTF_8),
           access.read(repoId, worktreeId, "readme.md"));
+
+      // containment: in-tree paths resolve inside the root; a committed symlink to an absolute path
+      // outside /workspace does not — including when it is only an intermediate path segment.
+      assertTrue(access.resolvesInsideRoot(repoId, worktreeId, "dir1/a.txt"));
+      exec(de, container, "ln -s /etc escape");
+      assertTrue(
+          !access.resolvesInsideRoot(repoId, worktreeId, "escape"),
+          "a symlink to /etc must not resolve inside the worktree");
+      assertTrue(
+          !access.resolvesInsideRoot(repoId, worktreeId, "escape/passwd"),
+          "an intermediate symlink to /etc must not resolve inside the worktree");
     } finally {
       de.rm(container);
       assertTrue(!de.exists(container), "container should be removed");

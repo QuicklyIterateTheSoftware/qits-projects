@@ -33,6 +33,8 @@ public class RepositoryDiscoveryService {
 
   @Inject MetadataService metadataService;
 
+  @Inject ContainerRuntime containers;
+
   @Inject RepositoryRepository repositoryRepository;
 
   @Inject WorktreeRepository worktreeRepository;
@@ -77,20 +79,23 @@ public class RepositoryDiscoveryService {
           repo.archetype = metadata.archetype;
         }
 
-        List<WorktreeMetadata> worktreeMetadataList =
-            metadataService.readAllWorktreeMetadata(repoId);
-        Set<String> metadataWorktreeIds = new HashSet<>();
-        for (WorktreeMetadata wtMeta : worktreeMetadataList) {
-          metadataWorktreeIds.add(wtMeta.worktreeId);
+        // Worktrees are now containers, not on-disk checkouts, so reconcile the DB against the
+        // live containers (keyed by their qits.* labels) rather than the metadata sidecar files.
+        List<ContainerRuntime.ContainerInfo> containerList =
+            containers.listWorktreeContainers(repoId);
+        Set<String> containerWorktreeIds = new HashSet<>();
+        for (ContainerRuntime.ContainerInfo info : containerList) {
+          containerWorktreeIds.add(info.worktreeId());
           // Upsert against the ACTIVE row only, so a resolved worktree of the same id is never
-          // revived back to ACTIVE; a metadata file with no active row means a fresh worktree.
+          // revived back to ACTIVE; a container with no active row means a fresh worktree whose row
+          // was lost (rebuild it from the labels).
           Worktree worktree =
               worktreeRepository
-                  .findActiveByRepositoryAndWorktreeId(repoId, wtMeta.worktreeId)
+                  .findActiveByRepositoryAndWorktreeId(repoId, info.worktreeId())
                   .orElseGet(
                       () -> {
                         Worktree w = new Worktree();
-                        w.worktreeId = wtMeta.worktreeId;
+                        w.worktreeId = info.worktreeId();
                         w.repository = repo;
                         w.status = WorktreeStatus.ACTIVE;
                         worktreeRepository.persist(w);
@@ -98,19 +103,21 @@ public class RepositoryDiscoveryService {
                             WorktreeEvent.builder()
                                 .worktree(w)
                                 .type(WorktreeEventType.CREATED)
-                                .parent(wtMeta.parent)
+                                .branch(info.branch())
+                                .parent(info.parent())
                                 .at(Instant.now())
                                 .build());
                         return w;
                       });
-          worktree.parent = wtMeta.parent;
+          worktree.parent = info.parent();
+          worktree.branch = info.branch();
           worktreeRepository.persist(worktree);
         }
 
-        // Soft-delete: an ACTIVE worktree whose metadata vanished (removed out-of-band) is marked
+        // Soft-delete: an ACTIVE worktree whose container is gone (removed out-of-band) is marked
         // ABANDONED, not deleted, so its history survives. Resolved rows are left untouched.
         for (Worktree existing : worktreeRepository.findActiveByRepositoryId(repoId)) {
-          if (!metadataWorktreeIds.contains(existing.worktreeId)) {
+          if (!containerWorktreeIds.contains(existing.worktreeId)) {
             existing.status = WorktreeStatus.ABANDONED;
             existing.resolvedAt = Instant.now();
             worktreeEventRepository.persist(

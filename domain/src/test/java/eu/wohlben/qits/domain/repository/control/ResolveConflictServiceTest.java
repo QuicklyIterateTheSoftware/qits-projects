@@ -79,6 +79,8 @@ public class ResolveConflictServiceTest {
 
   private void commitFile(String repoId, String worktreeId, String name, String content)
       throws Exception {
+    // The worktree is a container-style clone at this path; committing here stays local until
+    // pushed, and the origin-side conflict/divergence probes only see pushed commits — so push.
     Path worktree = Path.of(dataDir, repoId, "worktrees", worktreeId);
     Files.writeString(worktree.resolve(name), content, StandardCharsets.UTF_8);
     git.exec(worktree.toFile(), "git", "add", name);
@@ -92,6 +94,7 @@ public class ResolveConflictServiceTest {
         "commit",
         "-m",
         "change " + name + " on " + worktreeId);
+    git.exec(worktree.toFile(), "git", "push", "origin", worktreeId);
   }
 
   @Test
@@ -159,6 +162,7 @@ public class ResolveConflictServiceTest {
         "commit",
         "-m",
         injection);
+    git.exec(feat.toFile(), "git", "push", "origin", "feat");
 
     var result = resolveConflictService.resolveConflict(repoId, "feat");
     String text = executeScriptOf(result.commandId());

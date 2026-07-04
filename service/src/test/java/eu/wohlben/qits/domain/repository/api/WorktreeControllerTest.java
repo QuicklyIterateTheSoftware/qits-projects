@@ -424,7 +424,11 @@ public class WorktreeControllerTest {
         .body("commits", hasSize(0));
   }
 
-  /** Writes a file inside the worktree on disk and commits it on the worktree's branch. */
+  /**
+   * Writes a file inside the worktree on disk, commits it on the worktree's branch, and pushes. The
+   * worktree is a container-style clone, so a commit stays local until pushed; the origin-side
+   * ahead/behind, conflict and incoming-commits probes only see pushed commits.
+   */
   private void commitFile(String repoId, String worktreeId, String file, String content, String msg)
       throws Exception {
     Path worktreePath = Path.of(dataDir, repoId, "worktrees", worktreeId);
@@ -440,6 +444,7 @@ public class WorktreeControllerTest {
         "commit",
         "-m",
         msg);
+    runGit(worktreePath, "git", "push", "origin", "HEAD");
   }
 
   private void runGit(Path cwd, String... command) throws Exception {

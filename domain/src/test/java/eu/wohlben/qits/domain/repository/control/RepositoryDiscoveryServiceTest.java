@@ -44,6 +44,8 @@ public class RepositoryDiscoveryServiceTest {
 
   @Inject MetadataService metadataService;
 
+  @Inject ContainerRuntime containers;
+
   @Inject ProjectRepository projectRepository;
 
   private Project createProject() {
@@ -102,10 +104,9 @@ public class RepositoryDiscoveryServiceTest {
 
     metadataService.writeRepositoryMetadata(repo);
 
-    WorktreeMetadata wt = new WorktreeMetadata();
-    wt.worktreeId = "wt-01";
-    wt.parent = null;
-    metadataService.writeWorktreeMetadata(repoId, wt);
+    // Worktree reconciliation is now keyed to live containers (their qits.* labels), not metadata
+    // files: register a worktree container and discovery upserts its row.
+    containers.run(repoId, "wt-01", "wt-01", null);
 
     discoveryService.discover();
 
@@ -130,16 +131,14 @@ public class RepositoryDiscoveryServiceTest {
 
     metadataService.writeRepositoryMetadata(repo);
 
-    WorktreeMetadata wt = new WorktreeMetadata();
-    wt.worktreeId = "orphan-wt";
-    wt.parent = null;
-    metadataService.writeWorktreeMetadata(repoId, wt);
+    containers.run(repoId, "orphan-wt", "orphan-wt", null);
 
     discoveryService.discover();
     assertTrue(
         worktreeRepository.findActiveByRepositoryAndWorktreeId(repoId, "orphan-wt").isPresent());
 
-    metadataService.deleteWorktreeMetadata(repoId, "orphan-wt");
+    // The container is removed out-of-band; discovery then soft-deletes the now-orphaned row.
+    containers.rm(containers.containerName("orphan-wt", repoId));
 
     discoveryService.discover();
     // Soft-delete: the worktree is no longer ACTIVE, but its row survives as history (marked

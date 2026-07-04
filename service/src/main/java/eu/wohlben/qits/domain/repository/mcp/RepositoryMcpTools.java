@@ -1,6 +1,5 @@
 package eu.wohlben.qits.domain.repository.mcp;
 
-import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.featureflow.control.ActionConfigurationService;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.repository.control.ActionRunService;
@@ -36,7 +35,10 @@ import java.util.List;
  * editing actions is the job of the separate "actions" server (see {@link
  * eu.wohlben.qits.domain.featureflow.mcp.ActionConfigurationMcpTools}). The split is intentional: a
  * session here is for getting work done in a checkout, not for changing what actions exist, so
- * {@code runAction} and {@code listActions} here only ever read and use the library.
+ * {@code runAction} and {@code listActions} here only ever read and use the library. Daemons are
+ * the exception that proves the rule: a daemon is repository-owned configuration (there is no
+ * global daemon library), so defining, editing, starting and stopping daemons all live on this
+ * server too — in {@link eu.wohlben.qits.domain.daemon.mcp.DaemonMcpTools}.
  *
  * <p>Each session is scoped to a single project via {@link ProjectScope} (the {@code
  * X-QITS-Project} header), and may be further narrowed to one repository within it (the optional
@@ -55,6 +57,8 @@ import java.util.List;
 public class RepositoryMcpTools {
 
   @Inject ProjectScope scope;
+
+  @Inject ProjectScopeGuard scopeGuard;
 
   @Inject ProjectService projectService;
 
@@ -271,21 +275,8 @@ public class RepositoryMcpTools {
 
   // --- Scoping --------------------------------------------------------------
 
-  /**
-   * Ensures {@code repoId} names a repository inside the project this session is scoped to, so no
-   * tool can operate on a repository from another project. When the session is narrowed to a single
-   * repository, also rejects any other repository in the project. Throws {@link NotFoundException}
-   * otherwise (also covering a non-existent repository).
-   */
+  /** See {@link ProjectScopeGuard#requireRepoInProject} — shared with the daemon tools. */
   private Repository requireRepoInProject(String repoId) {
-    var scopedRepo = scope.repositoryId();
-    if (scopedRepo.isPresent() && !scopedRepo.get().equals(repoId)) {
-      throw new NotFoundException("Repository not in this session's scope: " + repoId);
-    }
-    return projectService.getRepositories(scope.requireProjectId()).stream()
-        .filter(r -> r.id.equals(repoId))
-        .findFirst()
-        .orElseThrow(
-            () -> new NotFoundException("Repository not found in this project: " + repoId));
+    return scopeGuard.requireRepoInProject(repoId);
   }
 }

@@ -729,4 +729,36 @@ public class WorktreeControllerTest {
           .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
     }
   }
+
+  @Test
+  public void stopThenEnsureContainerRoundTripsTheRuntimeStatus() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new WorktreeController.CreateWorktreeRequest("wt-run", "master", "run-branch", null))
+        .when()
+        .post("/api/repositories/" + repoId + "/worktrees")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("worktree.runtimeStatus", equalTo("RUNNING"));
+
+    // Graceful stop removes the container but keeps the worktree active (STOPPED).
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/api/repositories/" + repoId + "/worktrees/wt-run/stop-container")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("runtimeStatus", equalTo("STOPPED"));
+
+    // Ensure re-provisions from the durable branch — the container is back and RUNNING.
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/api/repositories/" + repoId + "/worktrees/wt-run/ensure-container")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("runtimeStatus", equalTo("RUNNING"));
+  }
 }

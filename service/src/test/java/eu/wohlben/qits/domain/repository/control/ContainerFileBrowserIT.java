@@ -68,7 +68,7 @@ public class ContainerFileBrowserIT {
     String container = de.containerName(worktreeId, repoId);
     de.rm(container);
     try {
-      de.run(repoId, worktreeId, "it-branch", "main");
+      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
 
       // Lay out a working tree via exec: a git repo, a tracked-ish text file, a nested subdir, and
       // a

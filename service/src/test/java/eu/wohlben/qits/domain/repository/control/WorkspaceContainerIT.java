@@ -56,6 +56,48 @@ public class WorkspaceContainerIT {
     }
   }
 
+  /**
+   * The host→container channel the daemon web-view proxy rides on: a port declared at {@code run}
+   * is published to an ephemeral localhost port, resolvable via {@code hostPort} and actually
+   * reachable from the host (this is the property bridge IPs lack under Docker Desktop).
+   */
+  @Test
+  public void publishedPortIsResolvableAndReachableFromTheHost() throws Exception {
+    DockerExecutor de = executor();
+    assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
+
+    String repoId = UUID.randomUUID().toString();
+    String container = de.containerName("it-wt-port", repoId);
+    de.rm(container);
+    try {
+      de.run(repoId, "it-wt-port", "it-branch", "main", java.util.List.of(8123));
+      assertEquals(null, de.hostPort(container, 9999), "undeclared port must resolve to null");
+      Integer hostPort = de.hostPort(container, 8123);
+      assertTrue(hostPort != null && hostPort > 0, "published port must map to a host port");
+
+      // A trivial in-container HTTP server (bound 0.0.0.0, as the daemon convention requires)
+      // must answer on the published localhost port.
+      de.exec(
+          container,
+          null,
+          Map.of(),
+          "bash",
+          "-lc",
+          "setsid python3 -m http.server 8123 --bind 0.0.0.0 >/dev/null 2>&1 & sleep 1");
+      java.net.http.HttpResponse<Void> response =
+          java.net.http.HttpClient.newHttpClient()
+              .send(
+                  java.net.http.HttpRequest.newBuilder()
+                      .uri(java.net.URI.create("http://127.0.0.1:" + hostPort + "/"))
+                      .timeout(java.time.Duration.ofSeconds(5))
+                      .build(),
+                  java.net.http.HttpResponse.BodyHandlers.discarding());
+      assertEquals(200, response.statusCode(), "published port must be reachable from the host");
+    } finally {
+      de.rm(container);
+    }
+  }
+
   @Test
   public void containerLifecycleExecAndProcessGroupTermination() throws Exception {
     DockerExecutor de = executor();
@@ -69,7 +111,7 @@ public class WorkspaceContainerIT {
     try {
       // run: the container comes up with the qits.* labels, read back through
       // listWorktreeContainers.
-      String name = de.run(repoId, worktreeId, "it-branch", "main");
+      String name = de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
       assertEquals(container, name);
       assertTrue(de.exists(container), "container should be running");
 
@@ -149,7 +191,7 @@ public class WorkspaceContainerIT {
     de.rm(container);
     try {
       de.ensureClaudeVolume(); // idempotent `docker volume create`
-      de.run(repoId, worktreeId, "it-branch", "main");
+      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
 
       // The shared credential volume is mounted writable at the agent HOME.
       ContainerRuntime.ExecResult mount =
@@ -199,7 +241,7 @@ public class WorkspaceContainerIT {
     String container = de.containerName(worktreeId, repoId);
     de.rm(container);
     try {
-      de.run(repoId, worktreeId, "it-branch", "main");
+      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
 
       // docker exec -it … bash -lc '<script>' — the exact argv shape the registry builds.
       List<String> argv = new ArrayList<>(de.execArgv(container, true, "/workspace", Map.of()));

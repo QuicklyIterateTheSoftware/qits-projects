@@ -106,7 +106,7 @@ public class RepositoryDiscoveryServiceTest {
 
     // Worktree reconciliation is now keyed to live containers (their qits.* labels), not metadata
     // files: register a worktree container and discovery upserts its row.
-    containers.run(repoId, "wt-01", "wt-01", null);
+    containers.run(repoId, "wt-01", "wt-01", null, java.util.List.of());
 
     discoveryService.discover();
 
@@ -131,7 +131,7 @@ public class RepositoryDiscoveryServiceTest {
 
     metadataService.writeRepositoryMetadata(repo);
 
-    containers.run(repoId, "orphan-wt", "orphan-wt", null);
+    containers.run(repoId, "orphan-wt", "orphan-wt", null, java.util.List.of());
 
     discoveryService.discover();
     assertTrue(

@@ -14,8 +14,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 @QuarkusTest
-@TestProfile(WorktreeControllerTest.TestProfile.class)
-public class WorktreeControllerTest {
+@TestProfile(WorkspaceControllerTest.TestProfile.class)
+public class WorkspaceControllerTest {
 
   public static class TestProfile implements QuarkusTestProfile {
     @Override
@@ -29,13 +29,13 @@ public class WorktreeControllerTest {
     }
   }
 
-  // The effective data dir the app uses, so tests can commit directly inside a worktree on disk.
+  // The effective data dir the app uses, so tests can commit directly inside a workspace on disk.
   @org.eclipse.microprofile.config.inject.ConfigProperty(name = "qits.repositories.data-dir")
   String dataDir;
 
   private final String fixtureUrl;
 
-  public WorktreeControllerTest() throws Exception {
+  public WorkspaceControllerTest() throws Exception {
     fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
   }
 
@@ -45,7 +45,7 @@ public class WorktreeControllerTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest(
-                    "Worktree Project", null))
+                    "Workspace Project", null))
             .when()
             .post("/api/projects")
             .then()
@@ -67,25 +67,26 @@ public class WorktreeControllerTest {
   }
 
   @Test
-  public void testCreateWorktreeAndMergeAndDiscard() {
+  public void testCreateWorkspaceAndMergeAndDiscard() {
     String repoId = createProjectAndRepository();
 
     // fork a new branch "step-work" from the feature branch
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("step-01", "feature", "step-work", null))
+        .body(
+            new WorkspaceController.CreateWorkspaceRequest("step-01", "feature", "step-work", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("worktree.worktreeId", equalTo("step-01"));
+        .body("workspace.workspaceId", equalTo("step-01"));
 
-    // merge the worktree's branch into master
+    // merge the workspace's branch into master
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.MergeWorktreeRequest("master"))
+        .body(new WorkspaceController.MergeWorkspaceRequest("master"))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/step-01/merge")
+        .post("/api/repositories/" + repoId + "/workspaces/step-01/merge")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("hasConflicts", equalTo(false));
@@ -93,116 +94,117 @@ public class WorktreeControllerTest {
     // discard
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.DiscardWorktreeRequest(null))
+        .body(new WorkspaceController.DiscardWorkspaceRequest(null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/step-01/discard")
+        .post("/api/repositories/" + repoId + "/workspaces/step-01/discard")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("success", equalTo(true));
   }
 
   @Test
-  public void testListWorktreesReturnsCreatedWorktreeWithBranch() {
+  public void testListWorkspacesReturnsCreatedWorkspaceWithBranch() {
     String repoId = createProjectAndRepository();
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("wt-list", "master", "wt-branch", null))
+        .body(
+            new WorkspaceController.CreateWorkspaceRequest("wt-list", "master", "wt-branch", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.worktree.worktreeId", hasItem("wt-list"))
-        // branch is the worktree's own forked branch, resolved from the on-disk worktree
+        .body("entries.workspace.workspaceId", hasItem("wt-list"))
+        // branch is the workspace's own forked branch, resolved from the on-disk workspace
         // (also a regression guard for the path fix).
         .body(
-            "entries.find { it.worktree.worktreeId == 'wt-list' }.worktree.branch",
+            "entries.find { it.workspace.workspaceId == 'wt-list' }.workspace.branch",
             equalTo("wt-branch"));
   }
 
   @Test
-  public void testTwoWorktreesCanForkFromTheSameParentBranch() {
+  public void testTwoWorkspacesCanForkFromTheSameParentBranch() {
     String repoId = createProjectAndRepository();
 
-    // Two worktrees forking new branches from the same parent must not conflict —
+    // Two workspaces forking new branches from the same parent must not conflict —
     // the old behaviour (checking out an existing branch) made this impossible.
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("fork-a", "master", "branch-a", null))
+        .body(new WorkspaceController.CreateWorkspaceRequest("fork-a", "master", "branch-a", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("fork-b", "master", "branch-b", null))
+        .body(new WorkspaceController.CreateWorkspaceRequest("fork-b", "master", "branch-b", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body(
-            "entries.find { it.worktree.worktreeId == 'fork-a' }.worktree.branch",
+            "entries.find { it.workspace.workspaceId == 'fork-a' }.workspace.branch",
             equalTo("branch-a"))
         .body(
-            "entries.find { it.worktree.worktreeId == 'fork-b' }.worktree.branch",
+            "entries.find { it.workspace.workspaceId == 'fork-b' }.workspace.branch",
             equalTo("branch-b"));
   }
 
   @Test
-  public void testListWorktreesReportsCommitsAheadAndBehindParent() {
+  public void testListWorkspacesReportsCommitsAheadAndBehindParent() {
     String repoId = createProjectAndRepository();
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("ab-wt", "master", "ab-branch", null))
+        .body(new WorkspaceController.CreateWorkspaceRequest("ab-wt", "master", "ab-branch", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
-    // A worktree freshly forked from its parent has made no commits yet, so it is
+    // A workspace freshly forked from its parent has made no commits yet, so it is
     // neither ahead of nor behind the parent branch.
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.find { it.worktree.worktreeId == 'ab-wt' }.worktree.ahead", equalTo(0))
-        .body("entries.find { it.worktree.worktreeId == 'ab-wt' }.worktree.behind", equalTo(0));
+        .body("entries.find { it.workspace.workspaceId == 'ab-wt' }.workspace.ahead", equalTo(0))
+        .body("entries.find { it.workspace.workspaceId == 'ab-wt' }.workspace.behind", equalTo(0));
   }
 
-  private void createWorktree(String repoId, String id, String parent, String branch) {
+  private void createWorkspace(String repoId, String id, String parent, String branch) {
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest(id, parent, branch, null))
+        .body(new WorkspaceController.CreateWorkspaceRequest(id, parent, branch, null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
   }
 
-  private void mergeInto(String repoId, String worktreeId, String target) {
+  private void mergeInto(String repoId, String workspaceId, String target) {
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.MergeWorktreeRequest(target))
+        .body(new WorkspaceController.MergeWorkspaceRequest(target))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/" + worktreeId + "/merge")
+        .post("/api/repositories/" + repoId + "/workspaces/" + workspaceId + "/merge")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
   }
@@ -213,28 +215,30 @@ public class WorktreeControllerTest {
 
     // parent-wt owns parent-branch (== master); child-wt forks child-branch off it, so the two
     // start at the same commit.
-    createWorktree(repoId, "parent-wt", "master", "parent-branch");
-    createWorktree(repoId, "child-wt", "parent-branch", "child-branch");
+    createWorkspace(repoId, "parent-wt", "master", "parent-branch");
+    createWorkspace(repoId, "child-wt", "parent-branch", "child-branch");
 
     // Advance parent-branch by merging the (diverged) feature branch into it. child-branch now
     // lags strictly behind parent-branch with no commits of its own — a clean fast-forward.
-    createWorktree(repoId, "src-wt", "feature", "src-branch");
+    createWorkspace(repoId, "src-wt", "feature", "src-branch");
     mergeInto(repoId, "src-wt", "parent-branch");
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body(
-            "entries.find { it.worktree.worktreeId == 'child-wt' }.worktree.behind", greaterThan(0))
-        .body("entries.find { it.worktree.worktreeId == 'child-wt' }.worktree.ahead", equalTo(0));
+            "entries.find { it.workspace.workspaceId == 'child-wt' }.workspace.behind",
+            greaterThan(0))
+        .body(
+            "entries.find { it.workspace.workspaceId == 'child-wt' }.workspace.ahead", equalTo(0));
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/child-wt/fast-forward")
+        .post("/api/repositories/" + repoId + "/workspaces/child-wt/fast-forward")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
@@ -242,20 +246,22 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.find { it.worktree.worktreeId == 'child-wt' }.worktree.behind", equalTo(0))
-        .body("entries.find { it.worktree.worktreeId == 'child-wt' }.worktree.ahead", equalTo(0));
+        .body(
+            "entries.find { it.workspace.workspaceId == 'child-wt' }.workspace.behind", equalTo(0))
+        .body(
+            "entries.find { it.workspace.workspaceId == 'child-wt' }.workspace.ahead", equalTo(0));
   }
 
   @Test
   public void testFastForwardRejectsDivergedBranch() {
     String repoId = createProjectAndRepository();
 
-    createWorktree(repoId, "dv-parent", "master", "dv-parent-branch");
-    createWorktree(repoId, "dv-child", "dv-parent-branch", "dv-child-branch");
-    createWorktree(repoId, "dv-src", "feature", "dv-src-branch");
+    createWorkspace(repoId, "dv-parent", "master", "dv-parent-branch");
+    createWorkspace(repoId, "dv-child", "dv-parent-branch", "dv-child-branch");
+    createWorkspace(repoId, "dv-src", "feature", "dv-src-branch");
 
     // Merge feature into both branches independently: each gets its own merge commit, so the
     // child branch ends up both ahead of and behind its parent — a fast-forward can't apply.
@@ -265,17 +271,17 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/dv-child/fast-forward")
+        .post("/api/repositories/" + repoId + "/workspaces/dv-child/fast-forward")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
 
   @Test
-  public void testDivergedButCleanWorktreeReportsNoConflict() throws Exception {
+  public void testDivergedButCleanWorkspaceReportsNoConflict() throws Exception {
     String repoId = createProjectAndRepository();
 
-    createWorktree(repoId, "clean-parent", "master", "clean-parent-branch");
-    createWorktree(repoId, "clean-child", "clean-parent-branch", "clean-child-branch");
+    createWorkspace(repoId, "clean-parent", "master", "clean-parent-branch");
+    createWorkspace(repoId, "clean-child", "clean-parent-branch", "clean-child-branch");
 
     // Both branches add their own distinct file, so each is ahead of and behind the other, yet
     // merging the parent in applies cleanly — divergence without a conflict.
@@ -285,27 +291,27 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body(
-            "entries.find { it.worktree.worktreeId == 'clean-child' }.worktree.ahead",
+            "entries.find { it.workspace.workspaceId == 'clean-child' }.workspace.ahead",
             greaterThan(0))
         .body(
-            "entries.find { it.worktree.worktreeId == 'clean-child' }.worktree.behind",
+            "entries.find { it.workspace.workspaceId == 'clean-child' }.workspace.behind",
             greaterThan(0))
         // diverged but a merge would apply cleanly → no conflict warning
         .body(
-            "entries.find { it.worktree.worktreeId == 'clean-child' }.worktree.conflictsWithParent",
+            "entries.find { it.workspace.workspaceId == 'clean-child' }.workspace.conflictsWithParent",
             equalTo(false));
   }
 
   @Test
-  public void testDivergedConflictingWorktreeReportsConflict() throws Exception {
+  public void testDivergedConflictingWorkspaceReportsConflict() throws Exception {
     String repoId = createProjectAndRepository();
 
-    createWorktree(repoId, "cf-parent", "master", "cf-parent-branch");
-    createWorktree(repoId, "cf-child", "cf-parent-branch", "cf-child-branch");
+    createWorkspace(repoId, "cf-parent", "master", "cf-parent-branch");
+    createWorkspace(repoId, "cf-child", "cf-parent-branch", "cf-child-branch");
 
     // Both branches change the same line of the same file to different values, so a merge of the
     // parent into the child can't apply without manual resolution.
@@ -315,15 +321,17 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body(
-            "entries.find { it.worktree.worktreeId == 'cf-child' }.worktree.ahead", greaterThan(0))
+            "entries.find { it.workspace.workspaceId == 'cf-child' }.workspace.ahead",
+            greaterThan(0))
         .body(
-            "entries.find { it.worktree.worktreeId == 'cf-child' }.worktree.behind", greaterThan(0))
+            "entries.find { it.workspace.workspaceId == 'cf-child' }.workspace.behind",
+            greaterThan(0))
         .body(
-            "entries.find { it.worktree.worktreeId == 'cf-child' }.worktree.conflictsWithParent",
+            "entries.find { it.workspace.workspaceId == 'cf-child' }.workspace.conflictsWithParent",
             equalTo(true));
   }
 
@@ -331,8 +339,8 @@ public class WorktreeControllerTest {
   public void testUpdateFromParentMergesDivergedBranch() throws Exception {
     String repoId = createProjectAndRepository();
 
-    createWorktree(repoId, "up-parent", "master", "up-parent-branch");
-    createWorktree(repoId, "up-child", "up-parent-branch", "up-child-branch");
+    createWorkspace(repoId, "up-parent", "master", "up-parent-branch");
+    createWorkspace(repoId, "up-child", "up-parent-branch", "up-child-branch");
 
     // Diverge cleanly: each branch adds its own distinct file.
     commitFile(repoId, "up-parent", "parent-only.txt", "from parent\n", "parent commit");
@@ -342,7 +350,7 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/up-child/update-from-parent")
+        .post("/api/repositories/" + repoId + "/workspaces/up-child/update-from-parent")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
@@ -351,18 +359,19 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.find { it.worktree.worktreeId == 'up-child' }.worktree.behind", equalTo(0));
+        .body(
+            "entries.find { it.workspace.workspaceId == 'up-child' }.workspace.behind", equalTo(0));
   }
 
   @Test
-  public void testUpdateFromParentRejectsConflictAndLeavesWorktreeUsable() throws Exception {
+  public void testUpdateFromParentRejectsConflictAndLeavesWorkspaceUsable() throws Exception {
     String repoId = createProjectAndRepository();
 
-    createWorktree(repoId, "uc-parent", "master", "uc-parent-branch");
-    createWorktree(repoId, "uc-child", "uc-parent-branch", "uc-child-branch");
+    createWorkspace(repoId, "uc-parent", "master", "uc-parent-branch");
+    createWorkspace(repoId, "uc-child", "uc-parent-branch", "uc-child-branch");
 
     // Both edit the same line: a merge of the parent into the child would conflict.
     commitFile(repoId, "uc-parent", "conflict.txt", "parent version\n", "parent edit");
@@ -371,29 +380,31 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/uc-child/update-from-parent")
+        .post("/api/repositories/" + repoId + "/workspaces/uc-child/update-from-parent")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
 
-    // The aborted merge must leave the worktree exactly as it was: still diverged, not mid-merge.
+    // The aborted merge must leave the workspace exactly as it was: still diverged, not mid-merge.
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body(
-            "entries.find { it.worktree.worktreeId == 'uc-child' }.worktree.behind", greaterThan(0))
+            "entries.find { it.workspace.workspaceId == 'uc-child' }.workspace.behind",
+            greaterThan(0))
         .body(
-            "entries.find { it.worktree.worktreeId == 'uc-child' }.worktree.ahead", greaterThan(0));
+            "entries.find { it.workspace.workspaceId == 'uc-child' }.workspace.ahead",
+            greaterThan(0));
   }
 
   @Test
   public void testIncomingCommitsListsParentCommitsNotInBranch() throws Exception {
     String repoId = createProjectAndRepository();
 
-    createWorktree(repoId, "in-parent", "master", "in-parent-branch");
-    createWorktree(repoId, "in-child", "in-parent-branch", "in-child-branch");
+    createWorkspace(repoId, "in-parent", "master", "in-parent-branch");
+    createWorkspace(repoId, "in-child", "in-parent-branch", "in-child-branch");
 
     // Advance the parent branch by one commit; the child forked before it, so it's now behind by 1.
     commitFile(repoId, "in-parent", "p.txt", "p\n", "incoming parent commit");
@@ -401,7 +412,7 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/in-child/incoming-commits")
+        .get("/api/repositories/" + repoId + "/workspaces/in-child/incoming-commits")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branch", equalTo("in-child-branch"))
@@ -413,29 +424,29 @@ public class WorktreeControllerTest {
   @Test
   public void testIncomingCommitsEmptyWhenUpToDate() {
     String repoId = createProjectAndRepository();
-    createWorktree(repoId, "ut-wt", "master", "ut-branch");
+    createWorkspace(repoId, "ut-wt", "master", "ut-branch");
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/ut-wt/incoming-commits")
+        .get("/api/repositories/" + repoId + "/workspaces/ut-wt/incoming-commits")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("commits", hasSize(0));
   }
 
   /**
-   * Writes a file inside the worktree on disk, commits it on the worktree's branch, and pushes. The
-   * worktree is a container-style clone, so a commit stays local until pushed; the origin-side
+   * Writes a file inside the workspace on disk, commits it on the workspace's branch, and pushes.
+   * The workspace is a container-style clone, so a commit stays local until pushed; the origin-side
    * ahead/behind, conflict and incoming-commits probes only see pushed commits.
    */
-  private void commitFile(String repoId, String worktreeId, String file, String content, String msg)
-      throws Exception {
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", worktreeId);
-    Files.writeString(worktreePath.resolve(file), content);
-    runGit(worktreePath, "git", "add", file);
+  private void commitFile(
+      String repoId, String workspaceId, String file, String content, String msg) throws Exception {
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", workspaceId);
+    Files.writeString(workspacePath.resolve(file), content);
+    runGit(workspacePath, "git", "add", file);
     runGit(
-        worktreePath,
+        workspacePath,
         "git",
         "-c",
         "user.email=test@example.com",
@@ -444,7 +455,7 @@ public class WorktreeControllerTest {
         "commit",
         "-m",
         msg);
-    runGit(worktreePath, "git", "push", "origin", "HEAD");
+    runGit(workspacePath, "git", "push", "origin", "HEAD");
   }
 
   private void runGit(Path cwd, String... command) throws Exception {
@@ -460,34 +471,34 @@ public class WorktreeControllerTest {
   }
 
   @Test
-  public void testFreshRepositoryHasADefaultMainWorktree() {
+  public void testFreshRepositoryHasADefaultMainWorkspace() {
     String repoId = createProjectAndRepository();
 
-    // Adding a repository now checks out its main branch in a default worktree (a root with no
-    // parent), so the worktree list is never empty for a fresh repo.
+    // Adding a repository now checks out its main branch in a default workspace (a root with no
+    // parent), so the workspace list is never empty for a fresh repo.
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", hasSize(1))
-        .body("entries[0].worktree.branch", equalTo("master"))
-        .body("entries[0].worktree.worktreeId", equalTo("master"))
-        .body("entries[0].worktree.parent", nullValue());
+        .body("entries[0].workspace.branch", equalTo("master"))
+        .body("entries[0].workspace.workspaceId", equalTo("master"))
+        .body("entries[0].workspace.parent", nullValue());
   }
 
   @Test
   public void testListFilesIncludesTrackedAndNewUntrackedFiles() throws Exception {
     String repoId = createProjectAndRepository();
-    // The default main worktree is checked out at "master".
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    Files.writeString(worktreePath.resolve("browse-me.txt"), "hello\n");
+    // The default main workspace is checked out at "master".
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    Files.writeString(workspacePath.resolve("browse-me.txt"), "hello\n");
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         // a brand-new untracked file shows up (ls-files --others), sorted alongside tracked ones
@@ -497,13 +508,13 @@ public class WorktreeControllerTest {
   @Test
   public void testFileContentReturnsText() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    Files.writeString(worktreePath.resolve("readme.md"), "# Title\n\nbody\n");
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    Files.writeString(workspacePath.resolve("readme.md"), "# Title\n\nbody\n");
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files/content?path=readme.md")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files/content?path=readme.md")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("path", equalTo("readme.md"))
@@ -514,14 +525,14 @@ public class WorktreeControllerTest {
   @Test
   public void testFileContentDetectsBinary() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
     // A NUL byte marks the file as binary; the viewer gets no content.
-    Files.write(worktreePath.resolve("blob.bin"), new byte[] {1, 2, 0, 3, 4});
+    Files.write(workspacePath.resolve("blob.bin"), new byte[] {1, 2, 0, 3, 4});
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files/content?path=blob.bin")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files/content?path=blob.bin")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("binary", equalTo(true))
@@ -531,12 +542,14 @@ public class WorktreeControllerTest {
   @Test
   public void testFileContentRejectsPathTraversal() {
     String repoId = createProjectAndRepository();
-    // `path` is user-supplied; a `..` escape out of the worktree root is rejected.
+    // `path` is user-supplied; a `..` escape out of the workspace root is rejected.
     given()
         .contentType(ContentType.JSON)
         .when()
         .get(
-            "/api/repositories/" + repoId + "/worktrees/master/files/content?path=../origin/config")
+            "/api/repositories/"
+                + repoId
+                + "/workspaces/master/files/content?path=../origin/config")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -544,17 +557,17 @@ public class WorktreeControllerTest {
   @Test
   public void testFileContentRejectsSymlinkEscape() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    // A cloned repo is untrusted: a symlink committed inside the worktree that points outside it
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    // A cloned repo is untrusted: a symlink committed inside the workspace that points outside it
     // must not be followed when reading (path traversal via symlink).
     Path secret = Files.createTempFile("qits-secret", ".txt");
     Files.writeString(secret, "top secret");
-    Files.createSymbolicLink(worktreePath.resolve("escape-link"), secret);
+    Files.createSymbolicLink(workspacePath.resolve("escape-link"), secret);
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files/content?path=escape-link")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files/content?path=escape-link")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -562,15 +575,15 @@ public class WorktreeControllerTest {
   @Test
   public void testFileContentRejectsIntermediateSymlinkEscape() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    // A symlinked *directory* committed inside the worktree is transparently followed during path
-    // resolution, so a request whose intermediate segment is that link escapes the worktree even
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    // A symlinked *directory* committed inside the workspace is transparently followed during path
+    // resolution, so a request whose intermediate segment is that link escapes the workspace even
     // though the final segment is an ordinary file. The read must be rejected (path traversal via
     // an
     // intermediate symlink, not just the final component).
     Path outside = Files.createTempDirectory("qits-outside");
     Files.writeString(outside.resolve("secret.txt"), "top secret");
-    Files.createSymbolicLink(worktreePath.resolve("escape-dir"), outside);
+    Files.createSymbolicLink(workspacePath.resolve("escape-dir"), outside);
 
     given()
         .contentType(ContentType.JSON)
@@ -578,7 +591,7 @@ public class WorktreeControllerTest {
         .get(
             "/api/repositories/"
                 + repoId
-                + "/worktrees/master/files/content?path=escape-dir/secret.txt")
+                + "/workspaces/master/files/content?path=escape-dir/secret.txt")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -586,17 +599,17 @@ public class WorktreeControllerTest {
   @Test
   public void testListFilesRejectsIntermediateSymlinkEscape() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
     // Same escape via an intermediate symlinked directory, but for a listing: the final segment
-    // resolves to a real directory outside the worktree, which must not be walked.
+    // resolves to a real directory outside the workspace, which must not be walked.
     Path outside = Files.createTempDirectory("qits-outside");
     Files.createDirectories(outside.resolve("nested"));
-    Files.createSymbolicLink(worktreePath.resolve("escape-dir"), outside);
+    Files.createSymbolicLink(workspacePath.resolve("escape-dir"), outside);
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=escape-dir/nested")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files?path=escape-dir/nested")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -610,7 +623,7 @@ public class WorktreeControllerTest {
         .get(
             "/api/repositories/"
                 + repoId
-                + "/worktrees/master/files/content?path=does-not-exist.txt")
+                + "/workspaces/master/files/content?path=does-not-exist.txt")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -618,16 +631,16 @@ public class WorktreeControllerTest {
   @Test
   public void testListFilesReturnsGitignoredDirectoryAsLazyStub() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    Files.writeString(worktreePath.resolve(".gitignore"), "node_modules/\n");
-    Files.createDirectories(worktreePath.resolve("node_modules/pkg"));
-    Files.writeString(worktreePath.resolve("node_modules/top.js"), "x\n");
-    Files.writeString(worktreePath.resolve("node_modules/pkg/index.js"), "y\n");
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    Files.writeString(workspacePath.resolve(".gitignore"), "node_modules/\n");
+    Files.createDirectories(workspacePath.resolve("node_modules/pkg"));
+    Files.writeString(workspacePath.resolve("node_modules/top.js"), "x\n");
+    Files.writeString(workspacePath.resolve("node_modules/pkg/index.js"), "y\n");
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         // the ignored dir is a collapsed stub, not walked into: no node_modules contents in paths
@@ -644,16 +657,16 @@ public class WorktreeControllerTest {
   @Test
   public void testListLazyDirectoryContentsOneLevelDeep() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    Files.writeString(worktreePath.resolve(".gitignore"), "node_modules/\n");
-    Files.createDirectories(worktreePath.resolve("node_modules/pkg"));
-    Files.writeString(worktreePath.resolve("node_modules/top.js"), "x\n");
-    Files.writeString(worktreePath.resolve("node_modules/pkg/index.js"), "y\n");
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    Files.writeString(workspacePath.resolve(".gitignore"), "node_modules/\n");
+    Files.createDirectories(workspacePath.resolve("node_modules/pkg"));
+    Files.writeString(workspacePath.resolve("node_modules/top.js"), "x\n");
+    Files.writeString(workspacePath.resolve("node_modules/pkg/index.js"), "y\n");
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=node_modules")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files?path=node_modules")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         // immediate regular files are eager; the nested subdir stays lazy
@@ -669,7 +682,7 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=../origin")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files?path=../origin")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -677,15 +690,16 @@ public class WorktreeControllerTest {
   @Test
   public void testListFilesRejectsSymlinkDirectoryEscape() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    // A symlinked directory committed inside the worktree must not redirect the listing outside it.
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    // A symlinked directory committed inside the workspace must not redirect the listing outside
+    // it.
     Path outside = Files.createTempDirectory("qits-outside");
-    Files.createSymbolicLink(worktreePath.resolve("escape-dir"), outside);
+    Files.createSymbolicLink(workspacePath.resolve("escape-dir"), outside);
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=escape-dir")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files?path=escape-dir")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -693,13 +707,13 @@ public class WorktreeControllerTest {
   @Test
   public void testListFilesRejectsNonDirectory() throws Exception {
     String repoId = createProjectAndRepository();
-    Path worktreePath = Path.of(dataDir, repoId, "worktrees", "master");
-    Files.writeString(worktreePath.resolve("a-file.txt"), "hi\n");
+    Path workspacePath = Path.of(dataDir, repoId, "workspaces", "master");
+    Files.writeString(workspacePath.resolve("a-file.txt"), "hi\n");
 
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=a-file.txt")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files?path=a-file.txt")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -710,21 +724,21 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees/master/files?path=.git")
+        .get("/api/repositories/" + repoId + "/workspaces/master/files?path=.git")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
 
   @Test
-  public void testCreateWorktreeRejectsPathTraversalAndFlagIds() {
+  public void testCreateWorkspaceRejectsPathTraversalAndFlagIds() {
     String repoId = createProjectAndRepository();
-    // A worktree id becomes a path segment + git operand; slashes/dots/leading-dash are rejected.
+    // A workspace id becomes a path segment + git operand; slashes/dots/leading-dash are rejected.
     for (String badId : new String[] {"../escape", "a/b", "-D", "."}) {
       given()
           .contentType(ContentType.JSON)
-          .body(new WorktreeController.CreateWorktreeRequest(badId, "master", "wt-branch", null))
+          .body(new WorkspaceController.CreateWorkspaceRequest(badId, "master", "wt-branch", null))
           .when()
-          .post("/api/repositories/" + repoId + "/worktrees")
+          .post("/api/repositories/" + repoId + "/workspaces")
           .then()
           .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
     }
@@ -736,18 +750,19 @@ public class WorktreeControllerTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("wt-run", "master", "run-branch", null))
+        .body(
+            new WorkspaceController.CreateWorkspaceRequest("wt-run", "master", "run-branch", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("worktree.runtimeStatus", equalTo("RUNNING"));
+        .body("workspace.runtimeStatus", equalTo("RUNNING"));
 
-    // Graceful stop removes the container but keeps the worktree active (STOPPED).
+    // Graceful stop removes the container but keeps the workspace active (STOPPED).
     given()
         .contentType(ContentType.JSON)
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/wt-run/stop-container")
+        .post("/api/repositories/" + repoId + "/workspaces/wt-run/stop-container")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("runtimeStatus", equalTo("STOPPED"));
@@ -756,7 +771,7 @@ public class WorktreeControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/wt-run/ensure-container")
+        .post("/api/repositories/" + repoId + "/workspaces/wt-run/ensure-container")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("runtimeStatus", equalTo("RUNNING"));

@@ -66,7 +66,7 @@ public class CommitControllerTest {
   public void testCommitsForPlainBranchUseMainBranchAsParent() {
     String repoId = createProjectAndRepository();
 
-    // "feature" is a plain branch (no worktree), so it is compared against the main branch
+    // "feature" is a plain branch (no workspace), so it is compared against the main branch
     // (master). Only the single commit unique to "feature" is returned.
     given()
         .contentType(ContentType.JSON)
@@ -105,22 +105,22 @@ public class CommitControllerTest {
   }
 
   @Test
-  public void testCommitsForWorktreeBranchUseWorktreeParent() {
+  public void testCommitsForWorkspaceBranchUseWorkspaceParent() {
     String repoId = createProjectAndRepository();
 
-    // Fork a worktree off "feature": its new branch's parent is "feature".
+    // Fork a workspace off "feature": its new branch's parent is "feature".
     given()
         .contentType(ContentType.JSON)
         .body(
-            new WorktreeController.CreateWorktreeRequest(
+            new WorkspaceController.CreateWorkspaceRequest(
                 "child-wt", "feature", "child-branch", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
-    // No commits added on the worktree yet, so feature..child-branch is empty, but the parent
-    // is resolved from the worktree rather than the main branch.
+    // No commits added on the workspace yet, so feature..child-branch is empty, but the parent
+    // is resolved from the workspace rather than the main branch.
     given()
         .contentType(ContentType.JSON)
         .queryParam("branch", "child-branch")

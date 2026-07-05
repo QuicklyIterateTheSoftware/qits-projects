@@ -6,9 +6,9 @@ import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.project.persistence.ProjectRepository;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
-import eu.wohlben.qits.domain.repository.entity.WorktreeStatus;
+import eu.wohlben.qits.domain.repository.entity.WorkspaceStatus;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
-import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -40,7 +40,7 @@ public class RepositoryDiscoveryServiceTest {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject WorktreeRepository worktreeRepository;
+  @Inject WorkspaceRepository workspaceRepository;
 
   @Inject MetadataService metadataService;
 
@@ -88,8 +88,8 @@ public class RepositoryDiscoveryServiceTest {
 
   @Test
   @Transactional
-  public void testDiscoverWithWorktrees() throws Exception {
-    String repoId = "repo-with-worktrees";
+  public void testDiscoverWithWorkspaces() throws Exception {
+    String repoId = "repo-with-workspaces";
     Path repoDir = Path.of(metadataService.getDataDir(), repoId);
     Files.createDirectories(repoDir.resolve("origin"));
 
@@ -104,18 +104,19 @@ public class RepositoryDiscoveryServiceTest {
 
     metadataService.writeRepositoryMetadata(repo);
 
-    // Worktree reconciliation is now keyed to live containers (their qits.* labels), not metadata
-    // files: register a worktree container and discovery upserts its row.
+    // Workspace reconciliation is now keyed to live containers (their qits.* labels), not metadata
+    // files: register a workspace container and discovery upserts its row.
     containers.run(repoId, "wt-01", "wt-01", null, java.util.List.of());
 
     discoveryService.discover();
 
-    assertTrue(worktreeRepository.findActiveByRepositoryAndWorktreeId(repoId, "wt-01").isPresent());
+    assertTrue(
+        workspaceRepository.findActiveByRepositoryAndWorkspaceId(repoId, "wt-01").isPresent());
   }
 
   @Test
   @Transactional
-  public void testDiscoverAbandonsOrphanedWorktrees() throws Exception {
+  public void testDiscoverAbandonsOrphanedWorkspaces() throws Exception {
     String repoId = "repo-orphan";
     Path repoDir = Path.of(metadataService.getDataDir(), repoId);
     Files.createDirectories(repoDir.resolve("origin"));
@@ -135,20 +136,20 @@ public class RepositoryDiscoveryServiceTest {
 
     discoveryService.discover();
     assertTrue(
-        worktreeRepository.findActiveByRepositoryAndWorktreeId(repoId, "orphan-wt").isPresent());
+        workspaceRepository.findActiveByRepositoryAndWorkspaceId(repoId, "orphan-wt").isPresent());
 
     // The container is removed out-of-band; discovery then soft-deletes the now-orphaned row.
     containers.rm(containers.containerName("orphan-wt", repoId));
 
     discoveryService.discover();
-    // Soft-delete: the worktree is no longer ACTIVE, but its row survives as history (marked
+    // Soft-delete: the workspace is no longer ACTIVE, but its row survives as history (marked
     // ABANDONED) rather than being removed.
     assertTrue(
-        worktreeRepository.findActiveByRepositoryAndWorktreeId(repoId, "orphan-wt").isEmpty());
+        workspaceRepository.findActiveByRepositoryAndWorkspaceId(repoId, "orphan-wt").isEmpty());
     assertTrue(
-        worktreeRepository.findByRepositoryId(repoId).stream()
+        workspaceRepository.findByRepositoryId(repoId).stream()
             .anyMatch(
-                w -> "orphan-wt".equals(w.worktreeId) && w.status == WorktreeStatus.ABANDONED),
-        "orphaned worktree should be kept as ABANDONED history");
+                w -> "orphan-wt".equals(w.workspaceId) && w.status == WorkspaceStatus.ABANDONED),
+        "orphaned workspace should be kept as ABANDONED history");
   }
 }

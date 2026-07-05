@@ -12,30 +12,30 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Regression test for the worktree path bug.
+ * Regression test for the workspace path bug.
  *
  * <p>{@code git worktree add} runs with its working directory set to the bare origin. When {@code
- * qits.repositories.data-dir} is a <em>relative</em> path (as in dev), a relative worktree path
- * would be created nested under origin instead of the repo's worktrees directory — leaving {@code
+ * qits.repositories.data-dir} is a <em>relative</em> path (as in dev), a relative workspace path
+ * would be created nested under origin instead of the repo's workspaces directory — leaving {@code
  * list}/{@code merge}/{@code discard} unable to find it on disk. The other controller tests use an
  * absolute temp dir and so never exercised this case. This test pins the relative-data-dir
  * behaviour.
  */
 @QuarkusTest
-@TestProfile(WorktreeRelativeDataDirTest.TestProfile.class)
-public class WorktreeRelativeDataDirTest {
+@TestProfile(WorkspaceRelativeDataDirTest.TestProfile.class)
+public class WorkspaceRelativeDataDirTest {
 
   public static class TestProfile implements QuarkusTestProfile {
     @Override
     public Map<String, String> getConfigOverrides() {
       // Deliberately relative (resolves under the module's target/ build dir).
-      return Map.of("qits.repositories.data-dir", "target/qits-rel-worktree-test");
+      return Map.of("qits.repositories.data-dir", "target/qits-rel-workspace-test");
     }
   }
 
   private final String fixtureUrl;
 
-  public WorktreeRelativeDataDirTest() throws Exception {
+  public WorkspaceRelativeDataDirTest() throws Exception {
     fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
   }
 
@@ -45,7 +45,7 @@ public class WorktreeRelativeDataDirTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest(
-                    "Rel Worktree Project", null))
+                    "Rel Workspace Project", null))
             .when()
             .post("/api/projects")
             .then()
@@ -72,39 +72,40 @@ public class WorktreeRelativeDataDirTest {
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest("rel-01", "master", "rel-branch", null))
+        .body(
+            new WorkspaceController.CreateWorkspaceRequest("rel-01", "master", "rel-branch", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
-    // Worktree must be discoverable on disk: its forked branch resolves to "rel-branch".
+    // Workspace must be discoverable on disk: its forked branch resolves to "rel-branch".
     // This is the assertion that fails when the path is created nested under origin.
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body(
-            "entries.find { it.worktree.worktreeId == 'rel-01' }.worktree.branch",
+            "entries.find { it.workspace.workspaceId == 'rel-01' }.workspace.branch",
             equalTo("rel-branch"));
 
-    // merge + discard must also find the worktree on disk
+    // merge + discard must also find the workspace on disk
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.MergeWorktreeRequest("master"))
+        .body(new WorkspaceController.MergeWorkspaceRequest("master"))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/rel-01/merge")
+        .post("/api/repositories/" + repoId + "/workspaces/rel-01/merge")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("hasConflicts", equalTo(false));
 
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.DiscardWorktreeRequest(null))
+        .body(new WorkspaceController.DiscardWorkspaceRequest(null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees/rel-01/discard")
+        .post("/api/repositories/" + repoId + "/workspaces/rel-01/discard")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("success", equalTo(true));

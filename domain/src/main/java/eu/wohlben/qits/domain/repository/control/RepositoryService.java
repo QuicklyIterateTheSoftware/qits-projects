@@ -9,7 +9,7 @@ import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
-import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -25,11 +25,11 @@ public class RepositoryService {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject WorktreeRepository worktreeRepository;
+  @Inject WorkspaceRepository workspaceRepository;
 
   @Inject MetadataService metadataService;
 
-  @Inject WorktreeService worktreeService;
+  @Inject WorkspaceService workspaceService;
 
   @Inject GitExecutor git;
 
@@ -71,9 +71,9 @@ public class RepositoryService {
 
     metadataService.writeRepositoryMetadata(repo);
 
-    // Every repository starts with a default worktree checked out on its main branch, so the main
-    // branch is immediately workable and appears as a worktree-backed root in the branch tree.
-    worktreeService.createMainWorktree(repo.id, repo.mainBranch);
+    // Every repository starts with a default workspace checked out on its main branch, so the main
+    // branch is immediately workable and appears as a workspace-backed root in the branch tree.
+    workspaceService.createMainWorkspace(repo.id, repo.mainBranch);
 
     return repo;
   }
@@ -109,14 +109,14 @@ public class RepositoryService {
     Path originPath = requireOrigin(repoId);
     String branch = resolveMainBranch(repo, originPath);
 
-    // The main branch lives in its default worktree, so pull there: git refuses to fetch-update a
-    // ref that is checked out, and updating it behind the worktree's back would desync the working
-    // tree. We fetch by URL (into FETCH_HEAD, not refs/heads/*) and fast-forward the worktree,
+    // The main branch lives in its default workspace, so pull there: git refuses to fetch-update a
+    // ref that is checked out, and updating it behind the workspace's back would desync the working
+    // tree. We fetch by URL (into FETCH_HEAD, not refs/heads/*) and fast-forward the workspace,
     // which
     // moves the ref and the checkout together. Fall back to the bare origin for a repo with no main
-    // worktree.
-    Optional<Path> mainWorktree = worktreeService.worktreePathForBranch(repoId, branch);
-    Path workdir = mainWorktree.orElse(originPath);
+    // workspace.
+    Optional<Path> mainWorkspace = workspaceService.workspacePathForBranch(repoId, branch);
+    Path workdir = mainWorkspace.orElse(originPath);
 
     try {
       // `--end-of-options`: url and branch are positional, never parsed as flags, so neither a
@@ -133,7 +133,7 @@ public class RepositoryService {
       }
       if (isAncestor(workdir, localSha, remoteSha)) {
         // Remote is strictly ahead — fast-forward.
-        if (mainWorktree.isPresent()) {
+        if (mainWorkspace.isPresent()) {
           // Update the ref and the working tree together (the branch is checked out here).
           git.exec(workdir.toFile(), "git", "merge", "--ff-only", "--end-of-options", remoteSha);
         } else {
@@ -311,7 +311,7 @@ public class RepositoryService {
 
   /**
    * The repository's branches, each tagged with whether it can be safely cleaned up (see {@link
-   * WorktreeService#canCleanupBranch}). Used by the branch list UI to offer cleanup in place of
+   * WorkspaceService#canCleanupBranch}). Used by the branch list UI to offer cleanup in place of
    * integrate once a branch is fully merged.
    */
   public List<BranchDto> listBranchesWithCleanup(String repoId) {
@@ -324,10 +324,10 @@ public class RepositoryService {
     return listBranches(repoId).stream()
         .map(
             b -> {
-              var summary = worktreeService.summarize(repoId, originPath, b, repo.mainBranch);
+              var summary = workspaceService.summarize(repoId, originPath, b, repo.mainBranch);
               return new BranchDto(
                   b,
-                  worktreeService.canCleanupBranch(repoId, originPath, b, repo.mainBranch),
+                  workspaceService.canCleanupBranch(repoId, originPath, b, repo.mainBranch),
                   summary.parent(),
                   summary.ahead(),
                   summary.behind());
@@ -337,7 +337,7 @@ public class RepositoryService {
 
   /**
    * Deletes a git branch from the repository's origin. Refuses to delete a branch that is the
-   * {@code parent} of any worktree, since that would orphan those worktrees in the branch tree.
+   * {@code parent} of any workspace, since that would orphan those workspaces in the branch tree.
    */
   @Transactional
   public void deleteBranch(String repoId, String branch) {
@@ -352,10 +352,10 @@ public class RepositoryService {
     }
 
     boolean hasChildren =
-        worktreeRepository.findActiveByRepositoryId(repoId).stream()
+        workspaceRepository.findActiveByRepositoryId(repoId).stream()
             .anyMatch(wt -> branch.equals(wt.parent));
     if (hasChildren) {
-      throw new BadRequestException("Branch has child worktrees: " + branch);
+      throw new BadRequestException("Branch has child workspaces: " + branch);
     }
 
     Path originPath = Path.of(dataDir, repoId, "origin");

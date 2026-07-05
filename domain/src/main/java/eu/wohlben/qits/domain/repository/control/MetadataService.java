@@ -49,55 +49,56 @@ public class MetadataService {
     }
   }
 
-  public void writeWorktreeMetadata(String repoId, WorktreeMetadata wt) {
+  public void writeWorkspaceMetadata(String repoId, WorkspaceMetadata wt) {
     try {
       Path metadataPath = getMetadataDir(repoId);
       Files.createDirectories(metadataPath);
       objectMapper
           .writerWithDefaultPrettyPrinter()
-          .writeValue(metadataPath.resolve("worktree_" + wt.worktreeId + ".json").toFile(), wt);
+          .writeValue(metadataPath.resolve("workspace_" + wt.workspaceId + ".json").toFile(), wt);
     } catch (IOException e) {
       throw new RuntimeException(
-          "Failed to write worktree metadata for " + repoId + "/" + wt.worktreeId, e);
+          "Failed to write workspace metadata for " + repoId + "/" + wt.workspaceId, e);
     }
   }
 
-  public Optional<WorktreeMetadata> readWorktreeMetadata(String repoId, String worktreeId) {
-    Path file = getMetadataDir(repoId).resolve("worktree_" + worktreeId + ".json");
+  public Optional<WorkspaceMetadata> readWorkspaceMetadata(String repoId, String workspaceId) {
+    Path file = getMetadataDir(repoId).resolve("workspace_" + workspaceId + ".json");
     if (!Files.exists(file)) {
       return Optional.empty();
     }
     try {
-      return Optional.of(objectMapper.readValue(file.toFile(), WorktreeMetadata.class));
+      return Optional.of(objectMapper.readValue(file.toFile(), WorkspaceMetadata.class));
     } catch (IOException e) {
       throw new RuntimeException(
-          "Failed to read worktree metadata for " + repoId + "/" + worktreeId, e);
+          "Failed to read workspace metadata for " + repoId + "/" + workspaceId, e);
     }
   }
 
-  public List<WorktreeMetadata> readAllWorktreeMetadata(String repoId) {
-    List<WorktreeMetadata> result = new ArrayList<>();
+  public List<WorkspaceMetadata> readAllWorkspaceMetadata(String repoId) {
+    List<WorkspaceMetadata> result = new ArrayList<>();
     Path metadataPath = getMetadataDir(repoId);
     if (!Files.exists(metadataPath)) {
       return result;
     }
-    try (DirectoryStream<Path> stream = Files.newDirectoryStream(metadataPath, "worktree_*.json")) {
+    try (DirectoryStream<Path> stream =
+        Files.newDirectoryStream(metadataPath, "workspace_*.json")) {
       for (Path file : stream) {
-        result.add(objectMapper.readValue(file.toFile(), WorktreeMetadata.class));
+        result.add(objectMapper.readValue(file.toFile(), WorkspaceMetadata.class));
       }
     } catch (IOException e) {
-      throw new RuntimeException("Failed to read worktree metadata for " + repoId, e);
+      throw new RuntimeException("Failed to read workspace metadata for " + repoId, e);
     }
     return result;
   }
 
-  public void deleteWorktreeMetadata(String repoId, String worktreeId) {
+  public void deleteWorkspaceMetadata(String repoId, String workspaceId) {
     try {
-      Path file = getMetadataDir(repoId).resolve("worktree_" + worktreeId + ".json");
+      Path file = getMetadataDir(repoId).resolve("workspace_" + workspaceId + ".json");
       Files.deleteIfExists(file);
     } catch (IOException e) {
       throw new RuntimeException(
-          "Failed to delete worktree metadata for " + repoId + "/" + worktreeId, e);
+          "Failed to delete workspace metadata for " + repoId + "/" + workspaceId, e);
     }
   }
 

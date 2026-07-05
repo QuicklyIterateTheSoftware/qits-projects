@@ -107,21 +107,21 @@ public class WorkspaceContainerIT {
     assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
 
     String repoId = UUID.randomUUID().toString();
-    String worktreeId = "it-wt";
-    String container = de.containerName(worktreeId, repoId);
+    String workspaceId = "it-wt";
+    String container = de.containerName(workspaceId, repoId);
     de.rm(container); // clean any leftover from a prior run
 
     try {
       // run: the container comes up with the qits.* labels, read back through
-      // listWorktreeContainers.
-      String name = de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
+      // listWorkspaceContainers.
+      String name = de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
       assertEquals(container, name);
       assertTrue(de.exists(container), "container should be running");
 
-      var infos = de.listWorktreeContainers(repoId);
+      var infos = de.listWorkspaceContainers(repoId);
       assertEquals(1, infos.size(), "exactly one container for the repo");
       ContainerRuntime.ContainerInfo info = infos.get(0);
-      assertEquals(worktreeId, info.worktreeId());
+      assertEquals(workspaceId, info.workspaceId());
       assertEquals("it-branch", info.branch());
       assertEquals("main", info.parent());
 
@@ -189,12 +189,12 @@ public class WorkspaceContainerIT {
     de.containerFactory.claudeMount = "/claude-home";
 
     String repoId = UUID.randomUUID().toString();
-    String worktreeId = "it-claude";
-    String container = de.containerName(worktreeId, repoId);
+    String workspaceId = "it-claude";
+    String container = de.containerName(workspaceId, repoId);
     de.rm(container);
     try {
       de.ensureClaudeVolume(); // idempotent `docker volume create`
-      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
+      de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
 
       // The shared credential volume is mounted writable at the agent HOME.
       ContainerRuntime.ExecResult mount =
@@ -242,11 +242,11 @@ public class WorkspaceContainerIT {
     assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
 
     String repoId = UUID.randomUUID().toString();
-    String worktreeId = "it-pty";
-    String container = de.containerName(worktreeId, repoId);
+    String workspaceId = "it-pty";
+    String container = de.containerName(workspaceId, repoId);
     de.rm(container);
     try {
-      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
+      de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
 
       // docker exec -it … bash -lc '<script>' — the exact argv shape the registry builds.
       List<String> argv = new ArrayList<>(de.execArgv(container, true, "/workspace", Map.of()));
@@ -299,12 +299,12 @@ public class WorkspaceContainerIT {
     assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
 
     String repoId = UUID.randomUUID().toString();
-    String worktreeId = "it-daemon";
-    String container = de.containerName(worktreeId, repoId);
+    String workspaceId = "it-daemon";
+    String container = de.containerName(workspaceId, repoId);
     String daemonId = "it-daemon-" + UUID.randomUUID();
     de.rm(container);
     try {
-      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
+      de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
 
       // Start the daemon as a detached tmux session that keeps printing a recognizable marker.
       String script = "while true; do echo tmux-marker; sleep 0.3; done";

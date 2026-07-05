@@ -1,14 +1,14 @@
 package eu.wohlben.qits.domain.repository.control;
 
 import eu.wohlben.qits.domain.repository.entity.Repository;
-import eu.wohlben.qits.domain.repository.entity.Worktree;
-import eu.wohlben.qits.domain.repository.entity.WorktreeEvent;
-import eu.wohlben.qits.domain.repository.entity.WorktreeEventType;
-import eu.wohlben.qits.domain.repository.entity.WorktreeRuntimeStatus;
-import eu.wohlben.qits.domain.repository.entity.WorktreeStatus;
+import eu.wohlben.qits.domain.repository.entity.Workspace;
+import eu.wohlben.qits.domain.repository.entity.WorkspaceEvent;
+import eu.wohlben.qits.domain.repository.entity.WorkspaceEventType;
+import eu.wohlben.qits.domain.repository.entity.WorkspaceRuntimeStatus;
+import eu.wohlben.qits.domain.repository.entity.WorkspaceStatus;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
-import eu.wohlben.qits.domain.repository.persistence.WorktreeEventRepository;
-import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspaceEventRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
@@ -36,13 +36,13 @@ public class RepositoryDiscoveryService {
 
   @Inject ContainerRuntime containers;
 
-  @Inject WorktreeService worktreeService;
+  @Inject WorkspaceService workspaceService;
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject WorktreeRepository worktreeRepository;
+  @Inject WorkspaceRepository workspaceRepository;
 
-  @Inject WorktreeEventRepository worktreeEventRepository;
+  @Inject WorkspaceEventRepository workspaceEventRepository;
 
   @Transactional
   void onStart(@Observes StartupEvent event) {
@@ -82,40 +82,41 @@ public class RepositoryDiscoveryService {
           repo.archetype = metadata.archetype;
         }
 
-        // Worktrees are now containers, not on-disk checkouts, so reconcile the DB against the
+        // Workspaces are now containers, not on-disk checkouts, so reconcile the DB against the
         // live containers (keyed by their qits.* labels) rather than the metadata sidecar files.
         List<ContainerRuntime.ContainerInfo> containerList =
-            containers.listWorktreeContainers(repoId);
-        Set<String> containerWorktreeIds = new HashSet<>();
+            containers.listWorkspaceContainers(repoId);
+        Set<String> containerWorkspaceIds = new HashSet<>();
         for (ContainerRuntime.ContainerInfo info : containerList) {
-          containerWorktreeIds.add(info.worktreeId());
-          // Upsert against the ACTIVE row only, so a resolved worktree of the same id is never
-          // revived back to ACTIVE; a container with no active row means a fresh worktree whose row
+          containerWorkspaceIds.add(info.workspaceId());
+          // Upsert against the ACTIVE row only, so a resolved workspace of the same id is never
+          // revived back to ACTIVE; a container with no active row means a fresh workspace whose
+          // row
           // was lost (rebuild it from the labels).
-          Worktree worktree =
-              worktreeRepository
-                  .findActiveByRepositoryAndWorktreeId(repoId, info.worktreeId())
+          Workspace workspace =
+              workspaceRepository
+                  .findActiveByRepositoryAndWorkspaceId(repoId, info.workspaceId())
                   .orElseGet(
                       () -> {
-                        Worktree w = new Worktree();
-                        w.worktreeId = info.worktreeId();
+                        Workspace w = new Workspace();
+                        w.workspaceId = info.workspaceId();
                         w.repository = repo;
-                        w.status = WorktreeStatus.ACTIVE;
-                        worktreeRepository.persist(w);
-                        worktreeEventRepository.persist(
-                            WorktreeEvent.builder()
-                                .worktree(w)
-                                .type(WorktreeEventType.CREATED)
+                        w.status = WorkspaceStatus.ACTIVE;
+                        workspaceRepository.persist(w);
+                        workspaceEventRepository.persist(
+                            WorkspaceEvent.builder()
+                                .workspace(w)
+                                .type(WorkspaceEventType.CREATED)
                                 .branch(info.branch())
                                 .parent(info.parent())
                                 .at(Instant.now())
                                 .build());
                         return w;
                       });
-          worktree.parent = info.parent();
-          worktree.branch = info.branch();
-          worktree.runtimeStatus = WorktreeRuntimeStatus.RUNNING;
-          worktreeRepository.persist(worktree);
+          workspace.parent = info.parent();
+          workspace.branch = info.branch();
+          workspace.runtimeStatus = WorkspaceRuntimeStatus.RUNNING;
+          workspaceRepository.persist(workspace);
         }
 
         // Reconcile ACTIVE rows whose container is absent. The durable branch — not the container —
@@ -124,23 +125,23 @@ public class RepositoryDiscoveryService {
         // only lost a recreatable cache (mark STOPPED; lazy ensureContainer re-provisions it on
         // next
         // use — we deliberately don't docker-run here, to keep startup fast). Only when the branch
-        // itself is gone from origin is the work genuinely lost; only then is the worktree
+        // itself is gone from origin is the work genuinely lost; only then is the workspace
         // ABANDONED
         // (soft-delete, so its history survives). This is now the only path to abandonment.
-        for (Worktree existing : worktreeRepository.findActiveByRepositoryId(repoId)) {
-          if (containerWorktreeIds.contains(existing.worktreeId)) {
+        for (Workspace existing : workspaceRepository.findActiveByRepositoryId(repoId)) {
+          if (containerWorkspaceIds.contains(existing.workspaceId)) {
             continue; // healthy — handled above
           }
-          if (existing.branch != null && worktreeService.branchExists(repoId, existing.branch)) {
-            existing.runtimeStatus = WorktreeRuntimeStatus.STOPPED;
+          if (existing.branch != null && workspaceService.branchExists(repoId, existing.branch)) {
+            existing.runtimeStatus = WorkspaceRuntimeStatus.STOPPED;
           } else {
-            existing.status = WorktreeStatus.ABANDONED;
+            existing.status = WorkspaceStatus.ABANDONED;
             existing.resolvedAt = Instant.now();
-            existing.runtimeStatus = WorktreeRuntimeStatus.STOPPED;
-            worktreeEventRepository.persist(
-                WorktreeEvent.builder()
-                    .worktree(existing)
-                    .type(WorktreeEventType.ABANDONED)
+            existing.runtimeStatus = WorkspaceRuntimeStatus.STOPPED;
+            workspaceEventRepository.persist(
+                WorkspaceEvent.builder()
+                    .workspace(existing)
+                    .type(WorkspaceEventType.ABANDONED)
                     .parent(existing.parent)
                     .at(Instant.now())
                     .build());

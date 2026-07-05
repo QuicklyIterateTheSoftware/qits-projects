@@ -5,13 +5,13 @@ import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.repository.control.ActionRunService;
 import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
-import eu.wohlben.qits.domain.repository.control.WorktreeService;
-import eu.wohlben.qits.domain.repository.control.WorktreeService.MergeResult;
+import eu.wohlben.qits.domain.repository.control.WorkspaceService;
+import eu.wohlben.qits.domain.repository.control.WorkspaceService.MergeResult;
 import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.CommitChangesDto;
 import eu.wohlben.qits.domain.repository.dto.CommitFileDiffDto;
 import eu.wohlben.qits.domain.repository.dto.CommitLogDto;
-import eu.wohlben.qits.domain.repository.dto.WorktreeDto;
+import eu.wohlben.qits.domain.repository.dto.WorkspaceDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import io.quarkiverse.mcp.server.McpServer;
 import io.quarkiverse.mcp.server.Tool;
@@ -29,8 +29,8 @@ import java.util.List;
  * a client connected to this endpoint only ever sees repository tools and stays on task.
  *
  * <p><strong>Use case: working inside a repository.</strong> Inspect its branches, commits and
- * diffs; manipulate worktrees (branch off, integrate, clean up, merge a parent in); and
- * <em>run</em> a non-interactive action in a worktree via {@code runAction}. That last tool
+ * diffs; manipulate workspaces (branch off, integrate, clean up, merge a parent in); and
+ * <em>run</em> a non-interactive action in a workspace via {@code runAction}. That last tool
  * <em>consumes</em> an action from the global library but does not configure one — defining and
  * editing actions is the job of the separate "actions" server (see {@link
  * eu.wohlben.qits.domain.featureflow.mcp.ActionConfigurationMcpTools}). The split is intentional: a
@@ -66,7 +66,7 @@ public class RepositoryMcpTools {
 
   @Inject CommitService commitService;
 
-  @Inject WorktreeService worktreeService;
+  @Inject WorkspaceService workspaceService;
 
   @Inject ActionConfigurationService actionConfigurationService;
 
@@ -110,14 +110,14 @@ public class RepositoryMcpTools {
   @McpServer("repository")
   @Tool(
       description =
-          "List the worktrees of a repository (a worktree owns a feature branch forked from a"
+          "List the workspaces of a repository (a workspace owns a feature branch forked from a"
               + " parent), with ahead/behind counts and whether merging its parent in would"
-              + " conflict. Needed to integrate or to merge the parent into a worktree.")
+              + " conflict. Needed to integrate or to merge the parent into a workspace.")
   @Transactional
-  public List<WorktreeDto> listWorktrees(
+  public List<WorkspaceDto> listWorkspaces(
       @ToolArg(description = "id of a repository in this project") String repoId) {
     requireRepoInProject(repoId);
-    return worktreeService.listWorktrees(repoId);
+    return workspaceService.listWorkspaces(repoId);
   }
 
   @McpServer("repository")
@@ -167,25 +167,25 @@ public class RepositoryMcpTools {
 
   // --- Actions (write) ------------------------------------------------------
 
-  /** Result of creating a worktree. */
-  public record CreatedWorktree(String worktreeId, String parent) {}
+  /** Result of creating a workspace. */
+  public record CreatedWorkspace(String workspaceId, String parent) {}
 
   @McpServer("repository")
   @Tool(
       description =
-          "Branch off a new worktree: create a worktree that owns a fresh branch forked from"
-              + " 'parent'. The worktreeId must match [A-Za-z0-9_-]{1,64}. Omit 'parent' to fork"
-              + " from master, and 'branch' to name the new branch after the worktree.")
-  public CreatedWorktree createWorktree(
+          "Branch off a new workspace: create a workspace that owns a fresh branch forked from"
+              + " 'parent'. The workspaceId must match [A-Za-z0-9_-]{1,64}. Omit 'parent' to fork"
+              + " from master, and 'branch' to name the new branch after the workspace.")
+  public CreatedWorkspace createWorkspace(
       @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "slug for the new worktree, [A-Za-z0-9_-]{1,64}") String worktreeId,
+      @ToolArg(description = "slug for the new workspace, [A-Za-z0-9_-]{1,64}") String workspaceId,
       @ToolArg(required = false, description = "branch to fork from (default: master)")
           String parent,
-      @ToolArg(required = false, description = "name for the new branch (default: the worktreeId)")
+      @ToolArg(required = false, description = "name for the new branch (default: the workspaceId)")
           String branch) {
     requireRepoInProject(repoId);
-    var wt = worktreeService.createWorktree(repoId, worktreeId, parent, branch);
-    return new CreatedWorktree(wt.worktreeId, wt.parent);
+    var wt = workspaceService.createWorkspace(repoId, workspaceId, parent, branch);
+    return new CreatedWorkspace(wt.workspaceId, wt.parent);
   }
 
   /** Result of a cleanup. */
@@ -194,14 +194,14 @@ public class RepositoryMcpTools {
   @McpServer("repository")
   @Tool(
       description =
-          "Clean up a branch: remove it (and its worktree, if any) once it is fully merged with no"
-              + " dependent worktrees and a clean working tree. Refuses (error) when the branch"
+          "Clean up a branch: remove it (and its workspace, if any) once it is fully merged with no"
+              + " dependent workspaces and a clean working tree. Refuses (error) when the branch"
               + " still has unmerged commits or dependents, so it never loses work.")
   public CleanupResult cleanupBranch(
       @ToolArg(description = "id of a repository in this project") String repoId,
       @ToolArg(description = "branch to clean up") String branch) {
     requireRepoInProject(repoId);
-    worktreeService.cleanupBranch(repoId, branch);
+    workspaceService.cleanupBranch(repoId, branch);
     return new CleanupResult(branch, true);
   }
 
@@ -210,7 +210,7 @@ public class RepositoryMcpTools {
       description =
           "Integrate a branch into a target branch (default: the repository's main branch) by"
               + " merging it. When the integration is clean and the source is then fully merged"
-              + " with no dependents, the source branch/worktree is cleaned up automatically"
+              + " with no dependents, the source branch/workspace is cleaned up automatically"
               + " (reported via cleanedUp). hasConflicts=true means the merge hit conflicts.")
   public MergeResult integrateBranch(
       @ToolArg(description = "id of a repository in this project") String repoId,
@@ -218,24 +218,24 @@ public class RepositoryMcpTools {
       @ToolArg(required = false, description = "branch to integrate into (default: main branch)")
           String target) {
     requireRepoInProject(repoId);
-    return worktreeService.mergeBranch(repoId, source, target);
+    return workspaceService.mergeBranch(repoId, source, target);
   }
 
-  /** Result of merging a worktree's parent into it. */
-  public record MergeParentResult(String worktreeId, String output) {}
+  /** Result of merging a workspace's parent into it. */
+  public record MergeParentResult(String workspaceId, String output) {}
 
   @McpServer("repository")
   @Tool(
       description =
-          "Merge a worktree's parent branch (e.g. master) into the worktree, so a branch that has"
+          "Merge a workspace's parent branch (e.g. master) into the workspace, so a branch that has"
               + " fallen behind catches up. Creates a merge commit. If it would conflict the merge"
-              + " is aborted and an error is returned, leaving the worktree untouched.")
-  public MergeParentResult mergeParentIntoWorktree(
+              + " is aborted and an error is returned, leaving the workspace untouched.")
+  public MergeParentResult mergeParentIntoWorkspace(
       @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "id of the worktree to update") String worktreeId) {
+      @ToolArg(description = "id of the workspace to update") String workspaceId) {
     requireRepoInProject(repoId);
-    String output = worktreeService.updateWorktreeFromParent(repoId, worktreeId);
-    return new MergeParentResult(worktreeId, output);
+    String output = workspaceService.updateWorkspaceFromParent(repoId, workspaceId);
+    return new MergeParentResult(workspaceId, output);
   }
 
   // --- Run actions ----------------------------------------------------------
@@ -247,7 +247,7 @@ public class RepositoryMcpTools {
   @Tool(
       description =
           "List the non-interactive actions — one-off commands such as a test or build — that"
-              + " runAction can run in a worktree. Interactive actions (a shell, Claude Code) are"
+              + " runAction can run in a workspace. Interactive actions (a shell, Claude Code) are"
               + " excluded: those are for the human terminal, not for the model to run.")
   @Transactional
   public List<RunnableAction> listActions() {
@@ -260,17 +260,17 @@ public class RepositoryMcpTools {
   @McpServer("repository")
   @Tool(
       description =
-          "Run a non-interactive action (a one-off command, e.g. 'mvn test') in a worktree checkout"
+          "Run a non-interactive action (a one-off command, e.g. 'mvn test') in a workspace checkout"
               + " and return its combined stdout/stderr and exit code. The action's script runs in a"
-              + " login shell in the worktree directory with the action's environment. Refuses"
-              + " interactive actions. Get actionIds from listActions and worktreeIds from"
-              + " listWorktrees.")
+              + " login shell in the workspace directory with the action's environment. Refuses"
+              + " interactive actions. Get actionIds from listActions and workspaceIds from"
+              + " listWorkspaces.")
   public ActionRunService.RunResult runAction(
       @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "id of the worktree to run in") String worktreeId,
+      @ToolArg(description = "id of the workspace to run in") String workspaceId,
       @ToolArg(description = "id of a non-interactive action (see listActions)") String actionId) {
     requireRepoInProject(repoId);
-    return actionRunService.run(repoId, worktreeId, actionId);
+    return actionRunService.run(repoId, workspaceId, actionId);
   }
 
   // --- Scoping --------------------------------------------------------------

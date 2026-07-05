@@ -30,7 +30,7 @@ public class Repository extends PanacheEntityBase {
   public RepositoryArchetype archetype;
 
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
-  public List<Worktree> worktrees;
+  public List<Workspace> workspaces;
 
   /** Actions owned by (and only available in) this repository; cascade-deleted with it. */
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)

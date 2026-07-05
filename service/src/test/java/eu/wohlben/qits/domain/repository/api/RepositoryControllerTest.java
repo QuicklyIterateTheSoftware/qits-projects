@@ -104,7 +104,7 @@ public class RepositoryControllerTest {
   public void testDeleteLeafBranch() {
     String repoId = createProjectAndRepository();
 
-    // "feature" is a plain branch with no worktree forked from it, so it can be deleted.
+    // "feature" is a plain branch with no workspace forked from it, so it can be deleted.
     given()
         .contentType(ContentType.JSON)
         .queryParam("branch", "feature")
@@ -127,18 +127,18 @@ public class RepositoryControllerTest {
   public void testDeleteBranchWithChildrenRejected() {
     String repoId = createProjectAndRepository();
 
-    // Fork a worktree from "feature": now a worktree's parent points at "feature".
+    // Fork a workspace from "feature": now a workspace's parent points at "feature".
     given()
         .contentType(ContentType.JSON)
         .body(
-            new WorktreeController.CreateWorktreeRequest(
+            new WorkspaceController.CreateWorkspaceRequest(
                 "child-wt", "feature", "child-branch", null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
 
-    // Deleting "feature" would orphan that worktree, so it is rejected.
+    // Deleting "feature" would orphan that workspace, so it is rejected.
     given()
         .contentType(ContentType.JSON)
         .queryParam("branch", "feature")
@@ -397,22 +397,22 @@ public class RepositoryControllerTest {
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
 
-  private void createWorktree(String repoId, String id, String parent, String branch) {
+  private void createWorkspace(String repoId, String id, String parent, String branch) {
     given()
         .contentType(ContentType.JSON)
-        .body(new WorktreeController.CreateWorktreeRequest(id, parent, branch, null))
+        .body(new WorkspaceController.CreateWorkspaceRequest(id, parent, branch, null))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode());
   }
 
   @Test
-  public void testIntegrateAutoCleansUpEligibleWorktree() {
+  public void testIntegrateAutoCleansUpEligibleWorkspace() {
     String repoId = createProjectAndRepository();
-    createWorktree(repoId, "auto-wt", "master", "auto-b");
+    createWorkspace(repoId, "auto-wt", "master", "auto-b");
 
-    // Integrating a clean, dependent-free worktree into its parent removes it afterwards.
+    // Integrating a clean, dependent-free workspace into its parent removes it afterwards.
     given()
         .contentType(ContentType.JSON)
         .body(new RepositoryController.MergeBranchRequest("auto-b", "master", null))
@@ -426,19 +426,19 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.worktree.worktreeId", not(hasItem("auto-wt")));
+        .body("entries.workspace.workspaceId", not(hasItem("auto-wt")));
   }
 
   @Test
-  public void testIntegrateKeepsWorktreeWithChildren() {
+  public void testIntegrateKeepsWorkspaceWithChildren() {
     String repoId = createProjectAndRepository();
-    createWorktree(repoId, "pwt", "master", "pb");
-    createWorktree(repoId, "cwt", "pb", "cb");
+    createWorkspace(repoId, "pwt", "master", "pb");
+    createWorkspace(repoId, "cwt", "pb", "cb");
 
-    // pb still has a dependent worktree (cwt), so it must not be cleaned up after integration.
+    // pb still has a dependent workspace (cwt), so it must not be cleaned up after integration.
     given()
         .contentType(ContentType.JSON)
         .body(new RepositoryController.MergeBranchRequest("pb", "master", null))
@@ -451,18 +451,18 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.worktree.worktreeId", hasItem("pwt"));
+        .body("entries.workspace.workspaceId", hasItem("pwt"));
   }
 
   @Test
   public void testIntegratePlainBranchAutoCleansUp() {
     String repoId = createProjectAndRepository();
 
-    // "feature" is a plain branch (no worktree). Integrating it into master leaves it fully merged
-    // with no dependents, so it is deleted afterwards — the same behaviour as a worktree branch.
+    // "feature" is a plain branch (no workspace). Integrating it into master leaves it fully merged
+    // with no dependents, so it is deleted afterwards — the same behaviour as a workspace branch.
     given()
         .contentType(ContentType.JSON)
         .body(new RepositoryController.MergeBranchRequest("feature", "master", null))
@@ -485,7 +485,7 @@ public class RepositoryControllerTest {
   @Test
   public void testBranchesReportCanCleanup() {
     String repoId = createProjectAndRepository();
-    createWorktree(repoId, "cc-wt", "master", "cc-b");
+    createWorkspace(repoId, "cc-wt", "master", "cc-b");
 
     given()
         .contentType(ContentType.JSON)
@@ -501,9 +501,9 @@ public class RepositoryControllerTest {
   }
 
   @Test
-  public void testCleanupBranchRemovesEligibleWorktree() {
+  public void testCleanupBranchRemovesEligibleWorkspace() {
     String repoId = createProjectAndRepository();
-    createWorktree(repoId, "elig-wt", "master", "elig-b");
+    createWorkspace(repoId, "elig-wt", "master", "elig-b");
 
     given()
         .contentType(ContentType.JSON)
@@ -517,16 +517,16 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/worktrees")
+        .get("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.worktree.worktreeId", not(hasItem("elig-wt")));
+        .body("entries.workspace.workspaceId", not(hasItem("elig-wt")));
   }
 
   @Test
   public void testCleanupBranchRejectsUnmergedCommits() {
     String repoId = createProjectAndRepository();
-    createWorktree(repoId, "ahead-wt", "master", "ahead-b");
+    createWorkspace(repoId, "ahead-wt", "master", "ahead-b");
     // Advance ahead-b past master by integrating the diverged feature branch into it.
     given()
         .contentType(ContentType.JSON)
@@ -548,8 +548,8 @@ public class RepositoryControllerTest {
   @Test
   public void testCleanupBranchRejectsBranchWithChildren() {
     String repoId = createProjectAndRepository();
-    createWorktree(repoId, "par-wt", "master", "par-b");
-    createWorktree(repoId, "chi-wt", "par-b", "chi-b");
+    createWorkspace(repoId, "par-wt", "master", "par-b");
+    createWorkspace(repoId, "chi-wt", "par-b", "chi-b");
 
     given()
         .contentType(ContentType.JSON)

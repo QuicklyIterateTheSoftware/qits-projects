@@ -9,9 +9,9 @@ import eu.wohlben.qits.domain.repository.dto.CommitFileChangeDto;
 import eu.wohlben.qits.domain.repository.dto.CommitFileDiffDto;
 import eu.wohlben.qits.domain.repository.dto.CommitLogDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
-import eu.wohlben.qits.domain.repository.entity.Worktree;
+import eu.wohlben.qits.domain.repository.entity.Workspace;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
-import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.nio.file.Files;
@@ -22,8 +22,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Reads the commit log for a branch, scoped to the commits unique to it. The "parent" a branch is
- * compared against is the parent of the worktree that owns the branch, falling back to the
- * repository's main branch when the branch isn't worktree-backed.
+ * compared against is the parent of the workspace that owns the branch, falling back to the
+ * repository's main branch when the branch isn't workspace-backed.
  */
 @ApplicationScoped
 public class CommitService {
@@ -41,7 +41,7 @@ public class CommitService {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject WorktreeRepository worktreeRepository;
+  @Inject WorkspaceRepository workspaceRepository;
 
   @Inject GitExecutor git;
 
@@ -86,27 +86,27 @@ public class CommitService {
   }
 
   /**
-   * Lists the commits a fast-forward or merge would bring into a worktree's branch from its parent
+   * Lists the commits a fast-forward or merge would bring into a workspace's branch from its parent
    * — the commits the parent has that the branch doesn't yet ({@code git log branch..parent}),
-   * newest first. Returns an empty list when the worktree has no resolvable parent, is already up
+   * newest first. Returns an empty list when the workspace has no resolvable parent, is already up
    * to date, or the refs can't be read. Used for the "commits about to be pulled in" hover popover.
    */
-  public CommitLogDto listIncomingCommits(String repoId, String worktreeId) {
+  public CommitLogDto listIncomingCommits(String repoId, String workspaceId) {
     repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
-    Worktree worktree =
-        worktreeRepository
-            .findActiveByRepositoryAndWorktreeId(repoId, worktreeId)
-            .orElseThrow(() -> new NotFoundException("Worktree not found: " + worktreeId));
+    Workspace workspace =
+        workspaceRepository
+            .findActiveByRepositoryAndWorkspaceId(repoId, workspaceId)
+            .orElseThrow(() -> new NotFoundException("Workspace not found: " + workspaceId));
 
     Path originPath = requireOrigin(repoId);
 
-    // The branch is the worktree's stored column (there is no host checkout to read it from — the
+    // The branch is the workspace's stored column (there is no host checkout to read it from — the
     // checkout lives in the container). The log range below runs against the bare origin, which
-    // holds every worktree branch as a ref.
-    String branch = worktree.branch;
-    String parent = worktree.parent;
+    // holds every workspace branch as a ref.
+    String branch = workspace.branch;
+    String parent = workspace.parent;
     boolean usable =
         branch != null
             && !branch.isBlank()
@@ -277,12 +277,12 @@ public class CommitService {
   }
 
   /**
-   * The branch a worktree forked from, when {@code branch} is owned by a worktree; otherwise the
-   * repository's main branch. Matched against each worktree's stored {@code branch} column (the
+   * The branch a workspace forked from, when {@code branch} is owned by a workspace; otherwise the
+   * repository's main branch. Matched against each workspace's stored {@code branch} column (the
    * checkout lives in the container now — there is no host path to read the branch from).
    */
   private String resolveParent(String repoId, Repository repo, String branch) {
-    for (Worktree wt : worktreeRepository.findActiveByRepositoryId(repoId)) {
+    for (Workspace wt : workspaceRepository.findActiveByRepositoryId(repoId)) {
       if (branch.equals(wt.branch)) {
         return wt.parent;
       }

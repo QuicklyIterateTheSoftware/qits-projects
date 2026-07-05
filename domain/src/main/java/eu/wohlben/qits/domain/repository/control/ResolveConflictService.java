@@ -6,9 +6,9 @@ import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.repository.dto.CommitDto;
-import eu.wohlben.qits.domain.repository.entity.Worktree;
+import eu.wohlben.qits.domain.repository.entity.Workspace;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
-import eu.wohlben.qits.domain.repository.persistence.WorktreeRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -19,14 +19,14 @@ import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * The "resolve merge conflict" composed flow. When a worktree has diverged from its parent with
- * real conflicts, this forks a throwaway resolution worktree off the conflicting branch and
+ * The "resolve merge conflict" composed flow. When a workspace has diverged from its parent with
+ * real conflicts, this forks a throwaway resolution workspace off the conflicting branch and
  * launches an autonomous Claude agent to merge the parent in and resolve the conflicts — leaving
- * the original worktree untouched until the human reviews the result.
+ * the original workspace untouched until the human reviews the result.
  *
  * <p>The composed prompt (branch names and diverging commit lists) is handed to {@link
  * AgentLaunchService#launchAutonomous} as a plain string, which embeds it in the launch command via
- * the coding-agent builder — so there is no bespoke {@code claude} script or per-worktree prompt
+ * the coding-agent builder — so there is no bespoke {@code claude} script or per-workspace prompt
  * file here; it goes through the same agent path as every other Claude launch.
  */
 @ApplicationScoped
@@ -37,9 +37,9 @@ public class ResolveConflictService {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject WorktreeRepository worktreeRepository;
+  @Inject WorkspaceRepository workspaceRepository;
 
-  @Inject WorktreeService worktreeService;
+  @Inject WorkspaceService workspaceService;
 
   @Inject MetadataService metadataService;
 
@@ -53,21 +53,21 @@ public class ResolveConflictService {
   String dataDir;
 
   /** The outcome of starting a resolution: where the human should watch Claude work. */
-  public record ResolveResult(String worktreeId, String branch, String commandId) {}
+  public record ResolveResult(String workspaceId, String branch, String commandId) {}
 
-  /** The forked resolution worktree and the prompt to run in it, produced inside a transaction. */
+  /** The forked resolution workspace and the prompt to run in it, produced inside a transaction. */
   private record Resolution(String resolutionId, String branch, String prompt) {}
 
   /**
-   * The files that merging {@code parent} into a worktree's branch would conflict on, for the
+   * The files that merging {@code parent} into a workspace's branch would conflict on, for the
    * preview dialog. Runs the same {@code git merge-tree --write-tree} probe as the conflict
    * indicator (in the bare origin, no working tree touched) but with {@code --name-only} so the
    * conflicted-file section is just paths. Returns an empty list when there is no conflict.
    */
-  public List<String> listConflictingFiles(String repoId, String worktreeId) {
-    Worktree worktree = requireWorktree(repoId, worktreeId);
-    String branch = currentBranch(repoId, worktreeId);
-    String parent = worktree.parent;
+  public List<String> listConflictingFiles(String repoId, String workspaceId) {
+    Workspace workspace = requireWorkspace(repoId, workspaceId);
+    String branch = currentBranch(repoId, workspaceId);
+    String parent = workspace.parent;
     if (parent == null || parent.isBlank() || parent.startsWith("-") || branch.startsWith("-")) {
       return List.of();
     }
@@ -108,15 +108,15 @@ public class ResolveConflictService {
   }
 
   /**
-   * Starts resolving a worktree's conflict: forks a resolution worktree off the conflicting branch
-   * and launches an autonomous Claude agent to merge the parent in and resolve the conflicts. The
-   * caller opens a terminal on the returned command to watch it work. The fork is committed in its
-   * own transaction <em>before</em> the agent is spawned, so the resolution worktree's row is
-   * visible when the command registry validates it.
+   * Starts resolving a workspace's conflict: forks a resolution workspace off the conflicting
+   * branch and launches an autonomous Claude agent to merge the parent in and resolve the
+   * conflicts. The caller opens a terminal on the returned command to watch it work. The fork is
+   * committed in its own transaction <em>before</em> the agent is spawned, so the resolution
+   * workspace's row is visible when the command registry validates it.
    */
-  public ResolveResult resolveConflict(String repoId, String worktreeId) {
+  public ResolveResult resolveConflict(String repoId, String workspaceId) {
     Resolution resolution =
-        QuarkusTransaction.requiringNew().call(() -> prepareResolution(repoId, worktreeId));
+        QuarkusTransaction.requiringNew().call(() -> prepareResolution(repoId, workspaceId));
     CommandDto command =
         agentLaunchService.launchAutonomous(
             repoId, resolution.resolutionId(), RESOLVE_NAME, resolution.prompt());
@@ -124,41 +124,42 @@ public class ResolveConflictService {
   }
 
   /**
-   * Forks the resolution worktree off the conflicting branch, re-points it at the original parent,
+   * Forks the resolution workspace off the conflicting branch, re-points it at the original parent,
    * and composes the prompt Claude will run — all in one transaction. Returns what the spawn needs.
    */
-  private Resolution prepareResolution(String repoId, String worktreeId) {
+  private Resolution prepareResolution(String repoId, String workspaceId) {
     repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
-    Worktree worktree = requireWorktree(repoId, worktreeId);
+    Workspace workspace = requireWorkspace(repoId, workspaceId);
 
-    String branch = currentBranch(repoId, worktreeId);
-    String parent = worktree.parent;
+    String branch = currentBranch(repoId, workspaceId);
+    String parent = workspace.parent;
     if (parent == null || parent.isBlank()) {
-      throw new BadRequestException("Worktree '" + worktreeId + "' has no parent to merge in");
+      throw new BadRequestException("Workspace '" + workspaceId + "' has no parent to merge in");
     }
 
     // Capture the diverging commits before forking — they describe what Claude is about to
-    // reconcile. Computed against the original branch/parent, not the fresh resolution worktree.
-    List<CommitDto> incoming = commitService.listIncomingCommits(repoId, worktreeId).commits();
+    // reconcile. Computed against the original branch/parent, not the fresh resolution workspace.
+    List<CommitDto> incoming = commitService.listIncomingCommits(repoId, workspaceId).commits();
     List<CommitDto> outgoing = commitService.listCommits(repoId, branch).commits();
 
-    // Fork the resolution worktree off the conflicting branch (so it carries our work); Claude then
-    // merges the original parent into it. The composed prompt doubles as the worktree's preamble,
+    // Fork the resolution workspace off the conflicting branch (so it carries our work); Claude
+    // then
+    // merges the original parent into it. The composed prompt doubles as the workspace's preamble,
     // so
-    // the history records why this resolution worktree exists.
+    // the history records why this resolution workspace exists.
     String prompt = composePrompt(branch, parent, incoming, outgoing);
-    String resolutionId = uniqueWorktreeId(repoId, worktreeId);
-    Worktree resolution =
-        worktreeService.createWorktree(repoId, resolutionId, branch, resolutionId, prompt);
+    String resolutionId = uniqueWorkspaceId(repoId, workspaceId);
+    Workspace resolution =
+        workspaceService.createWorkspace(repoId, resolutionId, branch, resolutionId, prompt);
 
     // Re-point the resolution at the ORIGINAL parent (not the branch it forked from). Integrating
     // the resolved branch then lands the work in the parent and leaves the original branch fully
     // merged — so it becomes cleanable — instead of merging back into itself.
     retargetParent(repoId, resolution, parent);
 
-    // The resolution worktree owns the branch named after its id (see createWorktree).
+    // The resolution workspace owns the branch named after its id (see createWorkspace).
     return new Resolution(resolutionId, resolutionId, prompt);
   }
 
@@ -258,50 +259,51 @@ public class ResolveConflictService {
   }
 
   /**
-   * Records {@code parent} as the worktree's parent (the branch it integrates back into), distinct
+   * Records {@code parent} as the workspace's parent (the branch it integrates back into), distinct
    * from the branch it physically forked off. Updates both the entity and its metadata file.
    */
-  private void retargetParent(String repoId, Worktree worktree, String parent) {
-    worktree.parent = parent;
-    WorktreeMetadata metadata = new WorktreeMetadata();
-    metadata.worktreeId = worktree.worktreeId;
+  private void retargetParent(String repoId, Workspace workspace, String parent) {
+    workspace.parent = parent;
+    WorkspaceMetadata metadata = new WorkspaceMetadata();
+    metadata.workspaceId = workspace.workspaceId;
     metadata.parent = parent;
-    metadataService.writeWorktreeMetadata(repoId, metadata);
+    metadataService.writeWorkspaceMetadata(repoId, metadata);
   }
 
-  /** A unique {@code <worktreeId>-resolve[-n]} slug for the resolution worktree. */
-  private String uniqueWorktreeId(String repoId, String worktreeId) {
-    String base = worktreeId + "-resolve";
+  /** A unique {@code <workspaceId>-resolve[-n]} slug for the resolution workspace. */
+  private String uniqueWorkspaceId(String repoId, String workspaceId) {
+    String base = workspaceId + "-resolve";
     if (base.length() > 64) {
       base = base.substring(0, 64);
     }
-    if (!worktreeRepository.existsActiveByRepositoryAndWorktreeId(repoId, base)) {
+    if (!workspaceRepository.existsActiveByRepositoryAndWorkspaceId(repoId, base)) {
       return base;
     }
     for (int n = 2; n < 1000; n++) {
       String candidate = base + "-" + n;
       if (candidate.length() <= 64
-          && !worktreeRepository.existsActiveByRepositoryAndWorktreeId(repoId, candidate)) {
+          && !workspaceRepository.existsActiveByRepositoryAndWorkspaceId(repoId, candidate)) {
         return candidate;
       }
     }
-    throw new BadRequestException("Could not allocate a resolution worktree id for " + worktreeId);
+    throw new BadRequestException(
+        "Could not allocate a resolution workspace id for " + workspaceId);
   }
 
-  private Worktree requireWorktree(String repoId, String worktreeId) {
-    return worktreeRepository
-        .findActiveByRepositoryAndWorktreeId(repoId, worktreeId)
-        .orElseThrow(() -> new NotFoundException("Worktree not found: " + worktreeId));
+  private Workspace requireWorkspace(String repoId, String workspaceId) {
+    return workspaceRepository
+        .findActiveByRepositoryAndWorkspaceId(repoId, workspaceId)
+        .orElseThrow(() -> new NotFoundException("Workspace not found: " + workspaceId));
   }
 
-  private String currentBranch(String repoId, String worktreeId) {
-    // The branch is the worktree's stored column — the checkout lives in the container now, so
+  private String currentBranch(String repoId, String workspaceId) {
+    // The branch is the workspace's stored column — the checkout lives in the container now, so
     // there is no host path to read `git branch --show-current` from.
-    Worktree worktree = requireWorktree(repoId, worktreeId);
-    if (worktree.branch == null || worktree.branch.isBlank()) {
+    Workspace workspace = requireWorkspace(repoId, workspaceId);
+    if (workspace.branch == null || workspace.branch.isBlank()) {
       throw new InternalServerErrorException(
-          "Worktree '" + worktreeId + "' has no recorded branch");
+          "Workspace '" + workspaceId + "' has no recorded branch");
     }
-    return worktree.branch;
+    return workspace.branch;
   }
 }

@@ -55,46 +55,46 @@ public class MetadataServiceTest {
   }
 
   @Test
-  public void testWriteAndReadWorktreeMetadata() {
-    WorktreeMetadata wt = new WorktreeMetadata();
-    wt.worktreeId = "wt-01";
+  public void testWriteAndReadWorkspaceMetadata() {
+    WorkspaceMetadata wt = new WorkspaceMetadata();
+    wt.workspaceId = "wt-01";
     wt.parent = "master";
 
-    metadataService.writeWorktreeMetadata("test-repo", wt);
+    metadataService.writeWorkspaceMetadata("test-repo", wt);
 
-    Optional<WorktreeMetadata> read = metadataService.readWorktreeMetadata("test-repo", "wt-01");
+    Optional<WorkspaceMetadata> read = metadataService.readWorkspaceMetadata("test-repo", "wt-01");
     assertTrue(read.isPresent());
-    assertEquals("wt-01", read.get().worktreeId);
+    assertEquals("wt-01", read.get().workspaceId);
     assertEquals("master", read.get().parent);
   }
 
   @Test
-  public void testReadAllWorktreeMetadata() {
-    WorktreeMetadata wt1 = new WorktreeMetadata();
-    wt1.worktreeId = "wt-01";
+  public void testReadAllWorkspaceMetadata() {
+    WorkspaceMetadata wt1 = new WorkspaceMetadata();
+    wt1.workspaceId = "wt-01";
     wt1.parent = null;
 
-    WorktreeMetadata wt2 = new WorktreeMetadata();
-    wt2.worktreeId = "wt-02";
+    WorkspaceMetadata wt2 = new WorkspaceMetadata();
+    wt2.workspaceId = "wt-02";
     wt2.parent = "wt-01";
 
-    metadataService.writeWorktreeMetadata("test-repo", wt1);
-    metadataService.writeWorktreeMetadata("test-repo", wt2);
+    metadataService.writeWorkspaceMetadata("test-repo", wt1);
+    metadataService.writeWorkspaceMetadata("test-repo", wt2);
 
-    var all = metadataService.readAllWorktreeMetadata("test-repo");
+    var all = metadataService.readAllWorkspaceMetadata("test-repo");
     assertEquals(2, all.size());
   }
 
   @Test
-  public void testDeleteWorktreeMetadata() {
-    WorktreeMetadata wt = new WorktreeMetadata();
-    wt.worktreeId = "wt-01";
+  public void testDeleteWorkspaceMetadata() {
+    WorkspaceMetadata wt = new WorkspaceMetadata();
+    wt.workspaceId = "wt-01";
     wt.parent = null;
 
-    metadataService.writeWorktreeMetadata("test-repo", wt);
-    assertTrue(metadataService.readWorktreeMetadata("test-repo", "wt-01").isPresent());
+    metadataService.writeWorkspaceMetadata("test-repo", wt);
+    assertTrue(metadataService.readWorkspaceMetadata("test-repo", "wt-01").isPresent());
 
-    metadataService.deleteWorktreeMetadata("test-repo", "wt-01");
-    assertTrue(metadataService.readWorktreeMetadata("test-repo", "wt-01").isEmpty());
+    metadataService.deleteWorkspaceMetadata("test-repo", "wt-01");
+    assertTrue(metadataService.readWorkspaceMetadata("test-repo", "wt-01").isEmpty());
   }
 }

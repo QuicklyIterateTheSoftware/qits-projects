@@ -2,7 +2,7 @@ package eu.wohlben.qits.domain.repository.api;
 
 import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
-import eu.wohlben.qits.domain.repository.control.WorktreeService;
+import eu.wohlben.qits.domain.repository.control.WorkspaceService;
 import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.CommitChangesDto;
 import eu.wohlben.qits.domain.repository.dto.CommitFileDiffDto;
@@ -34,7 +34,7 @@ public class RepositoryController {
 
   @Inject CommitService commitService;
 
-  @Inject WorktreeService worktreeService;
+  @Inject WorkspaceService workspaceService;
 
   @Inject RepositoryMapper repositoryMapper;
 
@@ -87,8 +87,8 @@ public class RepositoryController {
 
   public static record MergeBranchRequest(@NotBlank String source, String target, String result) {
     /**
-     * @param cleanedUp whether the integrated source worktree+branch was removed afterwards (it was
-     *     fully merged with no dependents)
+     * @param cleanedUp whether the integrated source workspace+branch was removed afterwards (it
+     *     was fully merged with no dependents)
      */
     public record Response(
         String commitHash, boolean hasConflicts, String output, boolean cleanedUp) {}
@@ -99,7 +99,7 @@ public class RepositoryController {
   public MergeBranchRequest.Response mergeBranch(
       @PathParam("repoId") String repoId, @Valid MergeBranchRequest request) {
     var result =
-        worktreeService.mergeBranch(repoId, request.source(), request.target(), request.result());
+        workspaceService.mergeBranch(repoId, request.source(), request.target(), request.result());
     return new MergeBranchRequest.Response(
         result.commitHash(), result.hasConflicts(), result.output(), result.cleanedUp());
   }
@@ -112,7 +112,7 @@ public class RepositoryController {
   @Path("/{repoId}/branches/cleanup")
   public CleanupBranchRequest.Response cleanupBranch(
       @PathParam("repoId") String repoId, @Valid CleanupBranchRequest request) {
-    worktreeService.cleanupBranch(repoId, request.branch(), request.result());
+    workspaceService.cleanupBranch(repoId, request.branch(), request.result());
     return new CleanupBranchRequest.Response(true);
   }
 

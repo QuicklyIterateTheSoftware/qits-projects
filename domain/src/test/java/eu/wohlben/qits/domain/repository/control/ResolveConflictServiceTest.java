@@ -21,8 +21,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the resolve-merge-conflict composed flow against a real diverged-with-conflict
- * repository cloned from the fixture: a worktree and its parent both change the same new file. The
- * flow forks a resolution worktree and launches an autonomous Claude agent, with the composed
+ * repository cloned from the fixture: a workspace and its parent both change the same new file. The
+ * flow forks a resolution workspace and launches an autonomous Claude agent, with the composed
  * prompt embedded in the launched command.
  */
 @QuarkusTest
@@ -45,7 +45,7 @@ public class ResolveConflictServiceTest {
 
   @Inject RepositoryService repositoryService;
 
-  @Inject WorktreeService worktreeService;
+  @Inject WorkspaceService workspaceService;
 
   @Inject ResolveConflictService resolveConflictService;
 
@@ -68,8 +68,8 @@ public class ResolveConflictServiceTest {
     var project = projectService.create("Resolve Project", null);
     var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
 
-    // feat forks from master (the fixture's default branch, which gets a main worktree on clone).
-    worktreeService.createWorktree(repo.id, "feat", "master", "feat");
+    // feat forks from master (the fixture's default branch, which gets a main workspace on clone).
+    workspaceService.createWorkspace(repo.id, "feat", "master", "feat");
 
     // Both branches add the same new file with different content -> an add/add conflict.
     commitFile(repo.id, "master", "conflict.txt", "from master\n");
@@ -77,15 +77,15 @@ public class ResolveConflictServiceTest {
     return repo.id;
   }
 
-  private void commitFile(String repoId, String worktreeId, String name, String content)
+  private void commitFile(String repoId, String workspaceId, String name, String content)
       throws Exception {
-    // The worktree is a container-style clone at this path; committing here stays local until
+    // The workspace is a container-style clone at this path; committing here stays local until
     // pushed, and the origin-side conflict/divergence probes only see pushed commits — so push.
-    Path worktree = Path.of(dataDir, repoId, "worktrees", worktreeId);
-    Files.writeString(worktree.resolve(name), content, StandardCharsets.UTF_8);
-    git.exec(worktree.toFile(), "git", "add", name);
+    Path workspace = Path.of(dataDir, repoId, "workspaces", workspaceId);
+    Files.writeString(workspace.resolve(name), content, StandardCharsets.UTF_8);
+    git.exec(workspace.toFile(), "git", "add", name);
     git.exec(
-        worktree.toFile(),
+        workspace.toFile(),
         "git",
         "-c",
         "user.email=qits@local",
@@ -93,8 +93,8 @@ public class ResolveConflictServiceTest {
         "user.name=qits",
         "commit",
         "-m",
-        "change " + name + " on " + worktreeId);
-    git.exec(worktree.toFile(), "git", "push", "origin", worktreeId);
+        "change " + name + " on " + workspaceId);
+    git.exec(workspace.toFile(), "git", "push", "origin", workspaceId);
   }
 
   @Test
@@ -107,24 +107,24 @@ public class ResolveConflictServiceTest {
   }
 
   @Test
-  public void resolveForksAWorktreeAndLaunchesClaudeWithTheEmbeddedPrompt() throws Exception {
+  public void resolveForksAWorkspaceAndLaunchesClaudeWithTheEmbeddedPrompt() throws Exception {
     String repoId = divergedRepo();
 
     var result = resolveConflictService.resolveConflict(repoId, "feat");
 
-    assertEquals("feat-resolve", result.worktreeId());
+    assertEquals("feat-resolve", result.workspaceId());
     assertEquals("feat-resolve", result.branch());
     assertNotNull(result.commandId());
 
-    // The resolution worktree exists on disk, forked off feat (so it carries our work).
-    Path resolutionWorktree = Path.of(dataDir, repoId, "worktrees", "feat-resolve");
-    assertTrue(Files.exists(resolutionWorktree), "resolution worktree should be checked out");
+    // The resolution workspace exists on disk, forked off feat (so it carries our work).
+    Path resolutionWorkspace = Path.of(dataDir, repoId, "workspaces", "feat-resolve");
+    assertTrue(Files.exists(resolutionWorkspace), "resolution workspace should be checked out");
 
     // It targets the ORIGINAL parent (master), not the branch it forked off, so integrating it
     // lands the work in master and leaves feat cleanable.
     String resolutionParent =
-        worktreeService.listWorktrees(repoId).stream()
-            .filter(w -> "feat-resolve".equals(w.worktreeId()))
+        workspaceService.listWorkspaces(repoId).stream()
+            .filter(w -> "feat-resolve".equals(w.workspaceId()))
             .findFirst()
             .orElseThrow()
             .parent();
@@ -147,7 +147,7 @@ public class ResolveConflictServiceTest {
 
     // A malicious contributor's commit on feat tries to break out of the untrusted fence and issue
     // an instruction to the headless agent.
-    Path feat = Path.of(dataDir, repoId, "worktrees", "feat");
+    Path feat = Path.of(dataDir, repoId, "workspaces", "feat");
     Files.writeString(feat.resolve("evil.txt"), "x\n", StandardCharsets.UTF_8);
     git.exec(feat.toFile(), "git", "add", "evil.txt");
     String injection =
@@ -196,13 +196,13 @@ public class ResolveConflictServiceTest {
     String repoId = divergedRepo();
 
     var first = resolveConflictService.resolveConflict(repoId, "feat");
-    // A second resolution (e.g. another branch) spawns its own command in its own worktree.
-    worktreeService.createWorktree(repoId, "feat2", "master", "feat2");
+    // A second resolution (e.g. another branch) spawns its own command in its own workspace.
+    workspaceService.createWorkspace(repoId, "feat2", "master", "feat2");
     commitFile(repoId, "feat2", "other.txt", "feat2\n");
     var second = resolveConflictService.resolveConflict(repoId, "feat2");
 
     assertFalse(
         first.commandId().equals(second.commandId()), "each resolution gets its own command");
-    assertFalse(first.worktreeId().equals(second.worktreeId()), "each gets its own worktree");
+    assertFalse(first.workspaceId().equals(second.workspaceId()), "each gets its own workspace");
   }
 }

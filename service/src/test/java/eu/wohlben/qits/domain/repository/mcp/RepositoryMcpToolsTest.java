@@ -267,21 +267,21 @@ public class RepositoryMcpToolsTest {
                   java.util.Set.of(
                       "listRepositories",
                       "listBranches",
-                      "listWorktrees",
+                      "listWorkspaces",
                       "listCommits",
                       "listCommitChanges",
                       "getCommitFileDiff",
-                      "createWorktree",
+                      "createWorkspace",
                       "cleanupBranch",
                       "integrateBranch",
-                      "mergeParentIntoWorktree",
+                      "mergeParentIntoWorkspace",
                       "listActions",
                       "runAction",
                       "listDaemons",
                       "createDaemon",
                       "updateDaemon",
                       "deleteDaemon",
-                      "listWorktreeDaemons",
+                      "listWorkspaceDaemons",
                       "startDaemon",
                       "stopDaemon"),
                   java.util.Set.copyOf(names),
@@ -292,16 +292,16 @@ public class RepositoryMcpToolsTest {
 
   // --- Run actions ----------------------------------------------------------
 
-  private String createWorktree(String repoId, String worktreeId) {
+  private String createWorkspace(String repoId, String workspaceId) {
     return given()
         .contentType(ContentType.JSON)
-        .body(Map.of("id", worktreeId, "parent", "master"))
+        .body(Map.of("id", workspaceId, "parent", "master"))
         .when()
-        .post("/api/repositories/" + repoId + "/worktrees")
+        .post("/api/repositories/" + repoId + "/workspaces")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
-        .path("worktree.worktreeId");
+        .path("workspace.workspaceId");
   }
 
   private String createAction(String name, String executeScript, boolean interactive) {
@@ -317,17 +317,17 @@ public class RepositoryMcpToolsTest {
   }
 
   @Test
-  public void runsANonInteractiveActionInTheWorktree() {
+  public void runsANonInteractiveActionInTheWorkspace() {
     String project = createProject("Runner");
     String repoId = createRepository(project);
-    String worktreeId = createWorktree(repoId, "run-wt");
+    String workspaceId = createWorkspace(repoId, "run-wt");
     String actionId = createAction("Echo", "echo HELLO_FROM_ACTION", false);
 
     client(project)
         .when()
         .toolsCall(
             "runAction",
-            Map.of("repoId", repoId, "worktreeId", worktreeId, "actionId", actionId),
+            Map.of("repoId", repoId, "workspaceId", workspaceId, "actionId", actionId),
             response -> {
               assertFalse(response.isError(), "run should succeed: " + text(response));
               String text = text(response);
@@ -340,14 +340,14 @@ public class RepositoryMcpToolsTest {
   public void refusesInteractiveActions() {
     String project = createProject("NoInteractive");
     String repoId = createRepository(project);
-    String worktreeId = createWorktree(repoId, "i-wt");
+    String workspaceId = createWorkspace(repoId, "i-wt");
     String actionId = createAction("Shell", "exec bash", true);
 
     client(project)
         .when()
         .toolsCall(
             "runAction",
-            Map.of("repoId", repoId, "worktreeId", worktreeId, "actionId", actionId),
+            Map.of("repoId", repoId, "workspaceId", workspaceId, "actionId", actionId),
             response -> {
               assertTrue(response.isError(), "interactive actions must be refused");
               assertTrue(text(response).contains("interactive"), text(response));
@@ -380,7 +380,7 @@ public class RepositoryMcpToolsTest {
   public void runsARepositoryScopedActionInItsOwnRepository() {
     String project = createProject("RepoRunner");
     String repoId = createRepository(project);
-    String worktreeId = createWorktree(repoId, "repo-run-wt");
+    String workspaceId = createWorkspace(repoId, "repo-run-wt");
     // a repository-owned action (seeded directly via the service — there is no global REST for it)
     var action =
         repositoryActionService.create(
@@ -390,7 +390,7 @@ public class RepositoryMcpToolsTest {
         .when()
         .toolsCall(
             "runAction",
-            Map.of("repoId", repoId, "worktreeId", worktreeId, "actionId", action.id),
+            Map.of("repoId", repoId, "workspaceId", workspaceId, "actionId", action.id),
             response -> {
               assertFalse(response.isError(), "repo-scoped run should succeed: " + text(response));
               assertTrue(text(response).contains("REPO_ACTION_RAN"), text(response));

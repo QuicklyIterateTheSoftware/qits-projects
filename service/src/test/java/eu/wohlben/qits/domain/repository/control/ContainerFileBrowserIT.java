@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import eu.wohlben.qits.domain.repository.control.WorktreeFileAccess.Entry;
-import eu.wohlben.qits.domain.repository.control.WorktreeFileAccess.EntryType;
+import eu.wohlben.qits.domain.repository.control.WorkspaceFileAccess.Entry;
+import eu.wohlben.qits.domain.repository.control.WorkspaceFileAccess.EntryType;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -67,11 +67,11 @@ public class ContainerFileBrowserIT {
     access.containers = de;
 
     String repoId = UUID.randomUUID().toString();
-    String worktreeId = "it-files";
-    String container = de.containerName(worktreeId, repoId);
+    String workspaceId = "it-files";
+    String container = de.containerName(workspaceId, repoId);
     de.rm(container);
     try {
-      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
+      de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
 
       // Lay out a working tree via exec: a git repo, a tracked-ish text file, a nested subdir, and
       // a
@@ -84,50 +84,51 @@ public class ContainerFileBrowserIT {
       exec(de, container, "printf 'x\\000y' > blob.bin");
 
       // stat: types and sizes, symlinks unfollowed, missing reported as MISSING.
-      Entry readme = access.stat(repoId, worktreeId, "readme.md");
+      Entry readme = access.stat(repoId, workspaceId, "readme.md");
       assertEquals(EntryType.FILE, readme.type());
       assertEquals(6, readme.size(), "readme.md is 'hello\\n' = 6 bytes");
-      assertEquals(EntryType.DIRECTORY, access.stat(repoId, worktreeId, "dir1").type());
-      assertEquals(EntryType.MISSING, access.stat(repoId, worktreeId, "nope.txt").type());
+      assertEquals(EntryType.DIRECTORY, access.stat(repoId, workspaceId, "dir1").type());
+      assertEquals(EntryType.MISSING, access.stat(repoId, workspaceId, "nope.txt").type());
 
       // list one level deep, with the nested subdir's child count.
-      List<Entry> listing = access.list(repoId, worktreeId, "dir1");
+      List<Entry> listing = access.list(repoId, workspaceId, "dir1");
       assertEquals(EntryType.FILE, find(listing, "dir1/a.txt").type());
       Entry nested = find(listing, "dir1/nested");
       assertEquals(EntryType.DIRECTORY, nested.type());
       assertEquals(1, nested.childCount(), "dir1/nested holds one file");
 
       // childCount: immediate children of dir1 (a.txt + nested).
-      assertEquals(2, access.childCount(repoId, worktreeId, "dir1"));
+      assertEquals(2, access.childCount(repoId, workspaceId, "dir1"));
 
       // git: the untracked working-tree files show up (nothing committed yet).
       String untracked =
-          access.git(repoId, worktreeId, "ls-files", "--others", "--exclude-standard");
+          access.git(repoId, workspaceId, "ls-files", "--others", "--exclude-standard");
       assertTrue(untracked.contains("readme.md"), "untracked readme.md listed: " + untracked);
 
       // read: text is exact including the trailing newline the String exec path would strip.
       assertArrayEquals(
-          "hello\n".getBytes(StandardCharsets.UTF_8), access.read(repoId, worktreeId, "readme.md"));
+          "hello\n".getBytes(StandardCharsets.UTF_8),
+          access.read(repoId, workspaceId, "readme.md"));
 
       // binary round-trips byte-identical, NUL and all.
-      assertArrayEquals(new byte[] {'x', 0, 'y'}, access.read(repoId, worktreeId, "blob.bin"));
+      assertArrayEquals(new byte[] {'x', 0, 'y'}, access.read(repoId, workspaceId, "blob.bin"));
 
       // an uncommitted exec-made edit is visible on the next read (the whole point of exec reads).
       exec(de, container, "printf 'changed\\n' > readme.md");
       assertArrayEquals(
           "changed\n".getBytes(StandardCharsets.UTF_8),
-          access.read(repoId, worktreeId, "readme.md"));
+          access.read(repoId, workspaceId, "readme.md"));
 
       // containment: in-tree paths resolve inside the root; a committed symlink to an absolute path
       // outside /workspace does not — including when it is only an intermediate path segment.
-      assertTrue(access.resolvesInsideRoot(repoId, worktreeId, "dir1/a.txt"));
+      assertTrue(access.resolvesInsideRoot(repoId, workspaceId, "dir1/a.txt"));
       exec(de, container, "ln -s /etc escape");
       assertTrue(
-          !access.resolvesInsideRoot(repoId, worktreeId, "escape"),
-          "a symlink to /etc must not resolve inside the worktree");
+          !access.resolvesInsideRoot(repoId, workspaceId, "escape"),
+          "a symlink to /etc must not resolve inside the workspace");
       assertTrue(
-          !access.resolvesInsideRoot(repoId, worktreeId, "escape/passwd"),
-          "an intermediate symlink to /etc must not resolve inside the worktree");
+          !access.resolvesInsideRoot(repoId, workspaceId, "escape/passwd"),
+          "an intermediate symlink to /etc must not resolve inside the workspace");
     } finally {
       de.rm(container);
       assertTrue(!de.exists(container), "container should be removed");

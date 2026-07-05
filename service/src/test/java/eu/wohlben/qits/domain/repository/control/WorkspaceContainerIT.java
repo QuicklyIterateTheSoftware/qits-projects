@@ -285,4 +285,98 @@ public class WorkspaceContainerIT {
       de.rm(container);
     }
   }
+
+  /**
+   * The tmux-backed daemon interactive terminal (Increment 2) end-to-end against real tmux: a
+   * detached daemon session is started, then a {@code docker exec -it tmux attach} PTY (built from
+   * {@link DockerExecutor#attachDaemonCommand}) renders the live pane back through the client.
+   * Detaching (killing the attach client) must leave the daemon running — only {@code killDaemon}
+   * tears it down. This is the real-tmux behavior the fake-based unit test cannot exercise.
+   */
+  @Test
+  public void tmuxDaemonAttachStreamsThePaneAndDetachLeavesTheDaemonRunning() throws Exception {
+    DockerExecutor de = executor();
+    assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
+
+    String repoId = UUID.randomUUID().toString();
+    String worktreeId = "it-daemon";
+    String container = de.containerName(worktreeId, repoId);
+    String daemonId = "it-daemon-" + UUID.randomUUID();
+    de.rm(container);
+    try {
+      de.run(repoId, worktreeId, "it-branch", "main", java.util.List.of());
+
+      // Start the daemon as a detached tmux session that keeps printing a recognizable marker.
+      String script = "while true; do echo tmux-marker; sleep 0.3; done";
+      de.startDaemon(container, daemonId, script, Map.of("QITS_DAEMON_ID", daemonId));
+      assertTrue(de.daemonAlive(container, daemonId), "the tmux daemon session should be running");
+
+      // Attach exactly as DaemonTerminalSocket does: a docker exec -it PTY running the attach
+      // command, with TERM set container-side so tmux renders.
+      List<String> argv =
+          new ArrayList<>(
+              de.execArgv(container, true, "/workspace", Map.of("TERM", "xterm-256color")));
+      argv.add("bash");
+      argv.add("-lc");
+      argv.add(de.attachDaemonCommand(daemonId));
+
+      Map<String, String> env = new HashMap<>(System.getenv());
+      env.put("TERM", "xterm-256color");
+      PtyProcess attach =
+          new PtyProcessBuilder()
+              .setCommand(argv.toArray(new String[0]))
+              .setEnvironment(env)
+              .setInitialColumns(80)
+              .setInitialRows(24)
+              .start();
+      attach.setWinSize(new WinSize(120, 40)); // resize must not throw
+
+      StringBuilder out = new StringBuilder();
+      Thread reader =
+          new Thread(
+              () -> {
+                byte[] buf = new byte[4096];
+                try (InputStream in = attach.getInputStream()) {
+                  int n;
+                  while ((n = in.read(buf)) != -1) {
+                    synchronized (out) {
+                      out.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                    }
+                  }
+                } catch (Exception ignored) {
+                  // stream closed on detach
+                }
+              });
+      reader.setDaemon(true);
+      reader.start();
+
+      // tmux attach never exits on its own — poll the rendered pane for the marker, then detach.
+      long deadline = System.currentTimeMillis() + 15_000;
+      boolean rendered = false;
+      while (System.currentTimeMillis() < deadline) {
+        synchronized (out) {
+          if (out.toString().contains("tmux-marker")) {
+            rendered = true;
+            break;
+          }
+        }
+        Thread.sleep(100);
+      }
+      assertTrue(rendered, "the attach must render the daemon's live pane: " + out);
+
+      // Detach: killing the attach client only disconnects it from the tmux server.
+      attach.destroy();
+      attach.waitFor();
+      Thread.sleep(500);
+      assertTrue(
+          de.daemonAlive(container, daemonId), "detaching must leave the daemon session running");
+
+      // Only killDaemon tears the session down.
+      de.killDaemon(container, daemonId);
+      Thread.sleep(500);
+      assertTrue(!de.daemonAlive(container, daemonId), "killDaemon must stop the daemon session");
+    } finally {
+      de.rm(container);
+    }
+  }
 }

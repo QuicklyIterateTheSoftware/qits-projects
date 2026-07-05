@@ -13,15 +13,20 @@ import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 @ApplicationScoped
 public class RepositoryService {
+
+  private static final Logger LOG = Logger.getLogger(RepositoryService.class);
 
   @Inject RepositoryRepository repositoryRepository;
 
@@ -30,6 +35,8 @@ public class RepositoryService {
   @Inject MetadataService metadataService;
 
   @Inject WorkspaceService workspaceService;
+
+  @Inject ContainerRuntime containerRuntime;
 
   @Inject GitExecutor git;
 
@@ -374,6 +381,42 @@ public class RepositoryService {
   @Transactional
   public void delete(String repoId) {
     Repository repo = get(repoId);
+    // Delete the whole footprint, not just the DB row: otherwise every delete (and every seed
+    // reset, which deletes then recreates) leaks the repo's workspace containers and its on-disk
+    // clone directory as orphans. DB rows for workspaces/commands/events/daemons cascade off the
+    // repository row deletion below.
+    for (ContainerRuntime.ContainerInfo info : containerRuntime.listWorkspaceContainers(repoId)) {
+      try {
+        containerRuntime.rm(info.name());
+      } catch (RuntimeException e) {
+        LOG.warnf(
+            "Failed to remove container %s while deleting repository %s: %s",
+            info.name(), repoId, e.getMessage());
+      }
+    }
+    deleteDataDir(repoId);
     repositoryRepository.delete(repo);
+  }
+
+  /** Recursively remove {@code <data-dir>/<repoId>} (bare origin + any transient merge scratch). */
+  private void deleteDataDir(String repoId) {
+    Path repoDir = Path.of(dataDir, repoId);
+    if (!Files.exists(repoDir)) {
+      return;
+    }
+    try (var paths = Files.walk(repoDir)) {
+      paths
+          .sorted(Comparator.reverseOrder())
+          .forEach(
+              p -> {
+                try {
+                  Files.deleteIfExists(p);
+                } catch (IOException e) {
+                  LOG.warnf("Failed to delete %s: %s", p, e.getMessage());
+                }
+              });
+    } catch (IOException e) {
+      LOG.warnf("Failed to remove data dir for repository %s: %s", repoId, e.getMessage());
+    }
   }
 }

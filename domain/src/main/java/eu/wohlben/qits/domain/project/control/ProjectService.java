@@ -68,7 +68,12 @@ public class ProjectService {
   @Transactional
   public void delete(String id) {
     Project project = get(id);
-    repositoryRepository.find("project.id", id).list().forEach(repositoryRepository::delete);
+    // Delegate to RepositoryService.delete (not a raw row delete) so each repository's containers
+    // and on-disk clone are torn down too — otherwise deleting a project (e.g. a seed reset) leaks
+    // them as orphans.
+    repositoryRepository.find("project.id", id).list().stream()
+        .map(r -> r.id)
+        .forEach(repositoryService::delete);
     featureFlowConfigurationRepository
         .find("project.id", id)
         .list()

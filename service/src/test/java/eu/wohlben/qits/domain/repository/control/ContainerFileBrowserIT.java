@@ -38,7 +38,10 @@ public class ContainerFileBrowserIT {
   private DockerExecutor executor() {
     DockerExecutor de = new DockerExecutor();
     de.runtime = RUNTIME;
-    de.image = IMAGE;
+    // Manually wired (not @QuarkusTest), so seed the factory that owns the run-argv config too.
+    WorkspaceContainerFactory factory = new WorkspaceContainerFactory();
+    factory.image = IMAGE;
+    de.containerFactory = factory;
     return de;
   }
 

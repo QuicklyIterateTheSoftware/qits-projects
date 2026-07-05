@@ -43,7 +43,10 @@ public class WorkspaceContainerIT {
   private DockerExecutor executor() {
     DockerExecutor de = new DockerExecutor();
     de.runtime = RUNTIME;
-    de.image = IMAGE;
+    // Manually wired (not @QuarkusTest), so seed the factory that owns the run-argv config too.
+    WorkspaceContainerFactory factory = new WorkspaceContainerFactory();
+    factory.image = IMAGE;
+    de.containerFactory = factory;
     return de;
   }
 
@@ -182,8 +185,8 @@ public class WorkspaceContainerIT {
     DockerExecutor de = executor();
     assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
 
-    de.claudeVolume = "qits-it-dot-claude-" + UUID.randomUUID();
-    de.claudeMount = "/claude-home";
+    de.containerFactory.claudeVolume = "qits-it-dot-claude-" + UUID.randomUUID();
+    de.containerFactory.claudeMount = "/claude-home";
 
     String repoId = UUID.randomUUID().toString();
     String worktreeId = "it-claude";
@@ -216,7 +219,9 @@ public class WorkspaceContainerIT {
     } finally {
       de.rm(container);
       try {
-        new ProcessBuilder(RUNTIME, "volume", "rm", "-f", de.claudeVolume).start().waitFor();
+        new ProcessBuilder(RUNTIME, "volume", "rm", "-f", de.containerFactory.claudeVolume)
+            .start()
+            .waitFor();
       } catch (Exception ignored) {
         // best-effort cleanup of the throwaway volume
       }

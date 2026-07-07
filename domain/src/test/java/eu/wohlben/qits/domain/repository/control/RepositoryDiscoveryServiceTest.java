@@ -106,7 +106,7 @@ public class RepositoryDiscoveryServiceTest {
 
     // Workspace reconciliation is now keyed to live containers (their qits.* labels), not metadata
     // files: register a workspace container and discovery upserts its row.
-    containers.run(repoId, "wt-01", "wt-01", null, java.util.List.of());
+    containers.run(repoId, "wt-01", "wt-01", null);
 
     discoveryService.discover();
 
@@ -132,7 +132,7 @@ public class RepositoryDiscoveryServiceTest {
 
     metadataService.writeRepositoryMetadata(repo);
 
-    containers.run(repoId, "orphan-wt", "orphan-wt", null, java.util.List.of());
+    containers.run(repoId, "orphan-wt", "orphan-wt", null);
 
     discoveryService.discover();
     assertTrue(

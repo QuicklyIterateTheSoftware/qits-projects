@@ -43,10 +43,13 @@ public class WorkspaceContainerIT {
   private DockerExecutor executor() {
     DockerExecutor de = new DockerExecutor();
     de.runtime = RUNTIME;
+    de.containerNetwork = "network";
     // Manually wired (not @QuarkusTest), so seed the factory that owns the run-argv config too.
     WorkspaceContainerFactory factory = new WorkspaceContainerFactory();
     factory.image = IMAGE;
+    factory.network = "qits-net";
     de.containerFactory = factory;
+    de.ensureNetwork(); // no StartupEvent here; make the shared network exist before any container
     return de;
   }
 
@@ -60,12 +63,15 @@ public class WorkspaceContainerIT {
   }
 
   /**
-   * The host→container channel the daemon web-view proxy rides on: a port declared at {@code run}
-   * is published to an ephemeral localhost port, resolvable via {@code hostPort} and actually
-   * reachable from the host (this is the property bridge IPs lack under Docker Desktop).
+   * The host→container channel the daemon web-view proxy rides on: with qits and the container on
+   * the shared {@code qits-net}, {@code resolveTarget} yields the container's DNS name + the real
+   * port for <em>any</em> port — no host publish, no create-time port set — and the container
+   * publishes no host ports. (Host-side HTTP reachability isn't asserted: by design only a peer on
+   * {@code qits-net}, e.g. the containerized qits, reaches it — validated by the
+   * devcontainer/verify path, not a host-run IT.)
    */
   @Test
-  public void publishedPortIsResolvableAndReachableFromTheHost() throws Exception {
+  public void anyContainerPortResolvesOverTheSharedNetworkWithNoPublishing() throws Exception {
     DockerExecutor de = executor();
     assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
 
@@ -73,29 +79,19 @@ public class WorkspaceContainerIT {
     String container = de.containerName("it-wt-port", repoId);
     de.rm(container);
     try {
-      de.run(repoId, "it-wt-port", "it-branch", "main", java.util.List.of(8123));
-      assertEquals(null, de.hostPort(container, 9999), "undeclared port must resolve to null");
-      Integer hostPort = de.hostPort(container, 8123);
-      assertTrue(hostPort != null && hostPort > 0, "published port must map to a host port");
+      de.run(repoId, "it-wt-port", "it-branch", "main");
 
-      // A trivial in-container HTTP server (bound 0.0.0.0, as the daemon convention requires)
-      // must answer on the published localhost port.
-      de.exec(
-          container,
-          null,
-          Map.of(),
-          "bash",
-          "-lc",
-          "setsid python3 -m http.server 8123 --bind 0.0.0.0 >/dev/null 2>&1 & sleep 1");
-      java.net.http.HttpResponse<Void> response =
-          java.net.http.HttpClient.newHttpClient()
-              .send(
-                  java.net.http.HttpRequest.newBuilder()
-                      .uri(java.net.URI.create("http://127.0.0.1:" + hostPort + "/"))
-                      .timeout(java.time.Duration.ofSeconds(5))
-                      .build(),
-                  java.net.http.HttpResponse.BodyHandlers.discarding());
-      assertEquals(200, response.statusCode(), "published port must be reachable from the host");
+      // Network mode: any port resolves to the container's DNS name + that exact port, with no
+      // dependency on it having been "declared" at run time (the frozen-port bug is gone).
+      assertEquals(new ProxyOrigin(container, 8123), de.resolveTarget(container, 8123));
+      assertEquals(new ProxyOrigin(container, 4200), de.resolveTarget(container, 4200));
+
+      // No host ports are published — `docker port` lists nothing.
+      Process ports = new ProcessBuilder(RUNTIME, "port", container).start();
+      String bound =
+          new String(ports.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+      ports.waitFor();
+      assertEquals("", bound, "no host ports are published, was: " + bound);
     } finally {
       de.rm(container);
     }
@@ -114,7 +110,7 @@ public class WorkspaceContainerIT {
     try {
       // run: the container comes up with the qits.* labels, read back through
       // listWorkspaceContainers.
-      String name = de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
+      String name = de.run(repoId, workspaceId, "it-branch", "main");
       assertEquals(container, name);
       assertTrue(de.exists(container), "container should be running");
 
@@ -194,7 +190,7 @@ public class WorkspaceContainerIT {
     de.rm(container);
     try {
       de.ensureClaudeVolume(); // idempotent `docker volume create`
-      de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
+      de.run(repoId, workspaceId, "it-branch", "main");
 
       // The shared credential volume is mounted writable at the agent HOME.
       ContainerRuntime.ExecResult mount =
@@ -246,7 +242,7 @@ public class WorkspaceContainerIT {
     String container = de.containerName(workspaceId, repoId);
     de.rm(container);
     try {
-      de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
+      de.run(repoId, workspaceId, "it-branch", "main");
 
       // docker exec -it … bash -lc '<script>' — the exact argv shape the registry builds.
       List<String> argv = new ArrayList<>(de.execArgv(container, true, "/workspace", Map.of()));
@@ -304,7 +300,7 @@ public class WorkspaceContainerIT {
     String daemonId = "it-daemon-" + UUID.randomUUID();
     de.rm(container);
     try {
-      de.run(repoId, workspaceId, "it-branch", "main", java.util.List.of());
+      de.run(repoId, workspaceId, "it-branch", "main");
 
       // Start the daemon as a detached tmux session that keeps printing a recognizable marker.
       String script = "while true; do echo tmux-marker; sleep 0.3; done";

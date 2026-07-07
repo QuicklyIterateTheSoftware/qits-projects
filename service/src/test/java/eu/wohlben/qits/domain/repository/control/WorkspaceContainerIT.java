@@ -189,7 +189,7 @@ public class WorkspaceContainerIT {
     String container = de.containerName(workspaceId, repoId);
     de.rm(container);
     try {
-      de.ensureClaudeVolume(); // idempotent `docker volume create`
+      de.ensureVolume("qits_shared_dot_claude", "test"); // idempotent `docker volume create`
       de.run(repoId, workspaceId, "it-branch", "main");
 
       // The shared credential volume is mounted writable at the agent HOME.

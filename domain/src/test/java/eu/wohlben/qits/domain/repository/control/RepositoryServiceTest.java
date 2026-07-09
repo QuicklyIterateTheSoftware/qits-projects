@@ -62,6 +62,8 @@ public class RepositoryServiceTest {
     var project = projectService.create("Delete Cleanup Project", null);
     var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
     workspaceService.createWorkspace(repo.id, "work", "master", "work");
+    // Creation is lazy; provision so the delete below has a live container to tear down.
+    workspaceService.ensureContainer(repo.id, "work");
 
     Path repoDir = Path.of(dataDir, repo.id);
     assertTrue(Files.exists(repoDir), "clone dir should exist before delete");

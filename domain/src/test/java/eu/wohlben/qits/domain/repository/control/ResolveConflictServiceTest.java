@@ -79,6 +79,8 @@ public class ResolveConflictServiceTest {
 
   private void commitFile(String repoId, String workspaceId, String name, String content)
       throws Exception {
+    // Creation is lazy — provision first so the container-style clone exists at this path.
+    workspaceService.ensureContainer(repoId, workspaceId);
     // The workspace is a container-style clone at this path; committing here stays local until
     // pushed, and the origin-side conflict/divergence probes only see pushed commits — so push.
     Path workspace = Path.of(dataDir, repoId, "workspaces", workspaceId);

@@ -1,7 +1,7 @@
 package eu.wohlben.qits.domain.repository.entity;
 
 import eu.wohlben.qits.domain.daemon.entity.RepositoryDaemon;
-import eu.wohlben.qits.domain.featureflow.entity.RepositoryAction;
+import eu.wohlben.qits.domain.featureflow.entity.ActionConfiguration;
 import eu.wohlben.qits.domain.project.entity.Project;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.CascadeType;
@@ -34,7 +34,7 @@ public class Repository extends PanacheEntityBase {
 
   /** Actions owned by (and only available in) this repository; cascade-deleted with it. */
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
-  public List<RepositoryAction> actions;
+  public List<ActionConfiguration> actions;
 
   /** Daemons owned by (and only available in) this repository; cascade-deleted with it. */
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)

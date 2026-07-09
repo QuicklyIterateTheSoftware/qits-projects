@@ -1,6 +1,6 @@
 package eu.wohlben.qits.domain.repository.mcp;
 
-import eu.wohlben.qits.domain.featureflow.control.ActionConfigurationService;
+import eu.wohlben.qits.domain.featureflow.control.ActionResolutionService;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.repository.control.ActionRunService;
 import eu.wohlben.qits.domain.repository.control.CommitService;
@@ -68,7 +68,7 @@ public class RepositoryMcpTools {
 
   @Inject WorkspaceService workspaceService;
 
-  @Inject ActionConfigurationService actionConfigurationService;
+  @Inject ActionResolutionService actionResolutionService;
 
   @Inject ActionRunService actionRunService;
 
@@ -247,13 +247,16 @@ public class RepositoryMcpTools {
   @Tool(
       description =
           "List the non-interactive actions — one-off commands such as a test or build — that"
-              + " runAction can run in a workspace. Interactive actions (a shell, Claude Code) are"
-              + " excluded: those are for the human terminal, not for the model to run.")
+              + " runAction can run in a workspace of the given repository: the repository's own"
+              + " actions plus the global ones it inherits. Interactive actions (a shell, Claude"
+              + " Code) are excluded: those are for the human terminal, not for the model to run.")
   @Transactional
-  public List<RunnableAction> listActions() {
-    return actionConfigurationService.list().stream()
-        .filter(a -> !a.interactive)
-        .map(a -> new RunnableAction(a.id, a.name, a.description))
+  public List<RunnableAction> listActions(
+      @ToolArg(description = "id of a repository in this project") String repoId) {
+    requireRepoInProject(repoId);
+    return actionResolutionService.effectiveActions(repoId).stream()
+        .filter(a -> !a.interactive())
+        .map(a -> new RunnableAction(a.id(), a.name(), a.description()))
         .toList();
   }
 

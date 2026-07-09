@@ -3,6 +3,7 @@ package eu.wohlben.qits.domain.repository.control;
 import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
+import eu.wohlben.qits.domain.featureflow.control.FeatureFlowPhaseActionService;
 import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
@@ -39,6 +40,8 @@ public class RepositoryService {
   @Inject ContainerRuntime containerRuntime;
 
   @Inject GitExecutor git;
+
+  @Inject FeatureFlowPhaseActionService featureFlowPhaseActionService;
 
   @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
   String dataDir;
@@ -395,6 +398,9 @@ public class RepositoryService {
       }
     }
     deleteDataDir(repoId);
+    // The repository row cascade-deletes its own actions; unbind them from any feature flow first
+    // (the phase-action FK has no cascade, so a still-bound action would fail the delete).
+    featureFlowPhaseActionService.deleteBindingsForRepository(repoId);
     repositoryRepository.delete(repo);
   }
 

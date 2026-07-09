@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import eu.wohlben.qits.domain.featureflow.control.RepositoryActionService;
+import eu.wohlben.qits.domain.featureflow.control.ActionConfigurationService;
 import eu.wohlben.qits.domain.project.api.ProjectController;
 import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
@@ -47,7 +47,7 @@ public class RepositoryMcpToolsTest {
 
   private final String fixtureUrl;
 
-  @Inject RepositoryActionService repositoryActionService;
+  @Inject ActionConfigurationService actionConfigurationService;
 
   public RepositoryMcpToolsTest() throws Exception {
     fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
@@ -356,22 +356,33 @@ public class RepositoryMcpToolsTest {
   }
 
   @Test
-  public void listActionsExcludesInteractiveOnes() {
+  public void listActionsExcludesInteractiveOnesAndOtherRepositoriesActions() {
     String project = createProject("Listing");
+    String repoId = createRepository(project);
+    String otherProject = createProject("Listing Other");
+    String otherRepoId = createRepository(otherProject);
     createAction("Run Tests XYZ", "mvn test", false);
     createAction("Interactive Shell XYZ", "exec bash", true);
+    actionConfigurationService.createForRepository(
+        repoId, "Own Repo Action XYZ", null, "echo own", null, false, null);
+    actionConfigurationService.createForRepository(
+        otherRepoId, "Foreign Repo Action XYZ", null, "echo foreign", null, false, null);
 
     client(project)
         .when()
         .toolsCall(
             "listActions",
-            Map.of(),
+            Map.of("repoId", repoId),
             response -> {
               assertFalse(response.isError());
               String text = text(response);
               assertTrue(text.contains("Run Tests XYZ"), "should list non-interactive: " + text);
+              assertTrue(text.contains("Own Repo Action XYZ"), "should list repo-scoped: " + text);
               assertFalse(
                   text.contains("Interactive Shell XYZ"), "must exclude interactive: " + text);
+              assertFalse(
+                  text.contains("Foreign Repo Action XYZ"),
+                  "must exclude other repositories: " + text);
             })
         .thenAssertResults();
   }
@@ -383,7 +394,7 @@ public class RepositoryMcpToolsTest {
     String workspaceId = createWorkspace(repoId, "repo-run-wt");
     // a repository-owned action (seeded directly via the service — there is no global REST for it)
     var action =
-        repositoryActionService.create(
+        actionConfigurationService.createForRepository(
             repoId, "Repo Echo", null, "echo REPO_ACTION_RAN", null, false, null);
 
     client(project)

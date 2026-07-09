@@ -68,16 +68,19 @@ public class ProjectService {
   @Transactional
   public void delete(String id) {
     Project project = get(id);
+    // Flow configurations go first: their phase actions may bind repository-scoped actions, and
+    // that FK has no cascade — deleting a repository (which cascades its actions) while a flow
+    // still binds them would fail.
+    featureFlowConfigurationRepository
+        .find("project.id", id)
+        .list()
+        .forEach(featureFlowConfigurationRepository::delete);
     // Delegate to RepositoryService.delete (not a raw row delete) so each repository's containers
     // and on-disk clone are torn down too — otherwise deleting a project (e.g. a seed reset) leaks
     // them as orphans.
     repositoryRepository.find("project.id", id).list().stream()
         .map(r -> r.id)
         .forEach(repositoryService::delete);
-    featureFlowConfigurationRepository
-        .find("project.id", id)
-        .list()
-        .forEach(featureFlowConfigurationRepository::delete);
     projectRepository.delete(project);
   }
 

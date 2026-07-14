@@ -9,7 +9,9 @@ import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.repository.entity.RepositorySubmodule;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
+import eu.wohlben.qits.domain.repository.persistence.RepositorySubmoduleRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -18,8 +20,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
@@ -41,13 +45,48 @@ public class RepositoryService {
 
   @Inject GitExecutor git;
 
+  @Inject GitSubmoduleParser submoduleParser;
+
+  @Inject RepositorySubmoduleRepository repositorySubmoduleRepository;
+
   @Inject FeatureFlowPhaseActionService featureFlowPhaseActionService;
 
   @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
   String dataDir;
 
+  /**
+   * A backstop against pathological submodule chains; deduplication already terminates real ones.
+   */
+  private static final int MAX_SUBMODULE_DEPTH = 10;
+
   @Transactional
   public Repository cloneRepository(String url, RepositoryArchetype archetype, Project project) {
+    return cloneRepository(url, archetype, project, new HashSet<>(), 0, true);
+  }
+
+  /**
+   * The recursive workhorse behind {@link #cloneRepository(String, RepositoryArchetype, Project)}.
+   * Clones the repository, then imports each of its {@code .gitmodules} submodules as a sibling
+   * repository under the same project (deduplicated by resolved url) and links them with a {@link
+   * RepositorySubmodule} edge. Runs entirely within the caller's single transaction — children join
+   * it, so a mid-tree failure rolls the whole import back (leaving at most orphan on-disk clones,
+   * cleaned on retry, the same failure mode as a single clone).
+   *
+   * @param createMainWorkspace whether to give the repository its default main-branch workspace —
+   *     {@code true} for the top-level superproject, {@code false} for an imported child (a
+   *     submodule materializes inside its superproject's container, not as an independent sibling
+   *     workspace; the child stays usable standalone since {@code createMainWorkspace} is
+   *     idempotent).
+   * @param visitedUrls resolved urls already on the current import path (cycle backstop).
+   * @param depth recursion depth ({@link #MAX_SUBMODULE_DEPTH} backstop).
+   */
+  private Repository cloneRepository(
+      String url,
+      RepositoryArchetype archetype,
+      Project project,
+      Set<String> visitedUrls,
+      int depth,
+      boolean createMainWorkspace) {
     if (url == null || url.isBlank()) {
       throw new BadRequestException("url is required");
     }
@@ -83,9 +122,65 @@ public class RepositoryService {
 
     // Every repository starts with a default workspace checked out on its main branch, so the main
     // branch is immediately workable and appears as a workspace-backed root in the branch tree.
-    workspaceService.createMainWorkspace(repo.id, repo.mainBranch);
+    // Suppressed for imported children — they materialize inside their superproject's container.
+    if (createMainWorkspace) {
+      workspaceService.createMainWorkspace(repo.id, repo.mainBranch);
+    }
+
+    importSubmodules(repo, project, originPath, visitedUrls, depth);
 
     return repo;
+  }
+
+  /**
+   * Imports {@code repo}'s {@code .gitmodules} submodules as sibling repositories under {@code
+   * project}, deduplicated by resolved url within the project, each linked by a {@link
+   * RepositorySubmodule} edge. A submodule-free repository (no {@code .gitmodules}) reads an empty
+   * list here, so this is a strict no-op for it.
+   */
+  private void importSubmodules(
+      Repository repo, Project project, Path originPath, Set<String> visitedUrls, int depth) {
+    if (depth >= MAX_SUBMODULE_DEPTH) {
+      LOG.warnf(
+          "Reached max submodule depth %d at %s; not recursing further",
+          MAX_SUBMODULE_DEPTH, repo.url);
+      return;
+    }
+    visitedUrls.add(normalizeUrl(repo.url));
+
+    for (GitSubmoduleParser.Submodule sub :
+        submoduleParser.readSubmodules(originPath.toFile(), repo.mainBranch)) {
+      String childUrl = submoduleParser.resolveSubmoduleUrl(repo.url, sub.url());
+
+      // Dedup within the project: reuse an existing sibling with the same url (the diamond case),
+      // else clone-and-recurse. Panache auto-flushes before this query, so a child imported earlier
+      // in this same transaction is already visible.
+      Repository child = repositoryRepository.findByUrlInProject(childUrl, project.id).orElse(null);
+      if (child == null) {
+        if (visitedUrls.contains(normalizeUrl(childUrl))) {
+          // Cycle backstop: url is on the current import path but not yet a persisted row.
+          continue;
+        }
+        child =
+            cloneRepository(
+                childUrl, RepositoryArchetype.SERVICE, project, visitedUrls, depth + 1, false);
+      }
+
+      if (!repositorySubmoduleRepository.existsByParentAndPath(repo.id, sub.path())) {
+        RepositorySubmodule edge = new RepositorySubmodule();
+        edge.parent = repo;
+        edge.child = child;
+        edge.path = sub.path();
+        edge.name = sub.name();
+        repositorySubmoduleRepository.persist(edge);
+      }
+    }
+  }
+
+  /** Normalizes a url for cycle detection: trims and drops a single trailing slash. */
+  private String normalizeUrl(String url) {
+    String u = url.trim();
+    return u.endsWith("/") ? u.substring(0, u.length() - 1) : u;
   }
 
   private Path originPath(String repoId) {
@@ -299,6 +394,12 @@ public class RepositoryService {
     return repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+  }
+
+  /** The submodule edges whose superproject is {@code repoId} (its imported child repositories). */
+  public List<RepositorySubmodule> listSubmodules(String repoId) {
+    get(repoId); // verify the repository exists
+    return repositorySubmoduleRepository.findByParentId(repoId);
   }
 
   public List<String> listBranches(String repoId) {

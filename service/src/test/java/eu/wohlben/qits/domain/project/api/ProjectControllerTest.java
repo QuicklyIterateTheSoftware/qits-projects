@@ -150,7 +150,7 @@ public class ProjectControllerTest {
     String repoId =
         given()
             .contentType(ContentType.JSON)
-            .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null))
+            .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, null))
             .when()
             .post("/api/projects/" + projectId + "/repositories")
             .then()
@@ -202,7 +202,7 @@ public class ProjectControllerTest {
     String repoId =
         given()
             .contentType(ContentType.JSON)
-            .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null))
+            .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, null))
             .when()
             .post("/api/projects/" + projectId + "/repositories")
             .then()

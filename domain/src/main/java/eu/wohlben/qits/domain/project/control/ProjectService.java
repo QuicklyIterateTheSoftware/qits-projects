@@ -91,9 +91,9 @@ public class ProjectService {
 
   @Transactional
   public Repository createRepositoryUnderProject(
-      String projectId, String url, RepositoryArchetype archetype) {
+      String projectId, String url, RepositoryArchetype archetype, boolean importSubmodules) {
     Project project = get(projectId);
 
-    return repositoryService.cloneRepository(url, archetype, project);
+    return repositoryService.cloneRepository(url, archetype, project, importSubmodules);
   }
 }

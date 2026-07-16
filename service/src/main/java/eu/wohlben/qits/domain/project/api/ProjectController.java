@@ -120,9 +120,15 @@ public class ProjectController {
     return new ListProjectRepositoriesRequest.Response(entries);
   }
 
+  /**
+   * {@code importSubmodules} (default true) imports the repository's DIRECT {@code .gitmodules}
+   * submodules as sibling repositories — one level only; deeper levels are imported layer by layer
+   * via the repository's own {@code POST /submodules/import} action.
+   */
   public static record CreateProjectRepositoryRequest(
       @NotBlank String url,
-      eu.wohlben.qits.domain.repository.entity.RepositoryArchetype archetype) {
+      eu.wohlben.qits.domain.repository.entity.RepositoryArchetype archetype,
+      Boolean importSubmodules) {
     public record Response(RepositoryDto repository, String projectId) {}
   }
 
@@ -131,7 +137,11 @@ public class ProjectController {
   public CreateProjectRepositoryRequest.Response createRepository(
       @PathParam("projectId") String projectId, @Valid CreateProjectRepositoryRequest request) {
     var repo =
-        projectService.createRepositoryUnderProject(projectId, request.url(), request.archetype());
+        projectService.createRepositoryUnderProject(
+            projectId,
+            request.url(),
+            request.archetype(),
+            request.importSubmodules() == null || request.importSubmodules());
     return new CreateProjectRepositoryRequest.Response(repositoryMapper.toDto(repo), projectId);
   }
 

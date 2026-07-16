@@ -20,7 +20,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -54,39 +53,41 @@ public class RepositoryService {
   @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
   String dataDir;
 
-  /**
-   * A backstop against pathological submodule chains; deduplication already terminates real ones.
-   */
-  private static final int MAX_SUBMODULE_DEPTH = 10;
-
+  /** Clones without importing submodules — the plain primitive (also what child imports use). */
   @Transactional
   public Repository cloneRepository(String url, RepositoryArchetype archetype, Project project) {
-    return cloneRepository(url, archetype, project, new HashSet<>(), 0, true);
+    return cloneOne(url, archetype, project, true);
   }
 
   /**
-   * The recursive workhorse behind {@link #cloneRepository(String, RepositoryArchetype, Project)}.
-   * Clones the repository, then imports each of its {@code .gitmodules} submodules as a sibling
-   * repository under the same project (deduplicated by resolved url) and links them with a {@link
-   * RepositorySubmodule} edge. Runs entirely within the caller's single transaction — children join
-   * it, so a mid-tree failure rolls the whole import back (leaving at most orphan on-disk clones,
-   * cleaned on retry, the same failure mode as a single clone).
+   * Clones and, when {@code importSubmodules}, imports the repository's DIRECT submodules as
+   * sibling repositories (one level — submodule import is user-driven layer by layer; each imported
+   * child's own submodules stay unimported until {@link #importDirectSubmodules} is invoked on it,
+   * e.g. via the repository detail view's "import submodules" action).
+   */
+  @Transactional
+  public Repository cloneRepository(
+      String url, RepositoryArchetype archetype, Project project, boolean importSubmodules) {
+    Repository repo = cloneOne(url, archetype, project, true);
+    if (importSubmodules) {
+      importDirectSubmodules(repo);
+    }
+    return repo;
+  }
+
+  /**
+   * Clones one repository under {@code project} — no submodule handling here; that is {@link
+   * #importDirectSubmodules}'s job, always explicit and one level at a time. Runs within the
+   * caller's transaction.
    *
    * @param createMainWorkspace whether to give the repository its default main-branch workspace —
-   *     {@code true} for the top-level superproject, {@code false} for an imported child (a
+   *     {@code true} for a user-created repository, {@code false} for an imported child (a
    *     submodule materializes inside its superproject's container, not as an independent sibling
    *     workspace; the child stays usable standalone since {@code createMainWorkspace} is
    *     idempotent).
-   * @param visitedUrls resolved urls already on the current import path (cycle backstop).
-   * @param depth recursion depth ({@link #MAX_SUBMODULE_DEPTH} backstop).
    */
-  private Repository cloneRepository(
-      String url,
-      RepositoryArchetype archetype,
-      Project project,
-      Set<String> visitedUrls,
-      int depth,
-      boolean createMainWorkspace) {
+  private Repository cloneOne(
+      String url, RepositoryArchetype archetype, Project project, boolean createMainWorkspace) {
     if (url == null || url.isBlank()) {
       throw new BadRequestException("url is required");
     }
@@ -127,43 +128,40 @@ public class RepositoryService {
       workspaceService.createMainWorkspace(repo.id, repo.mainBranch);
     }
 
-    importSubmodules(repo, project, originPath, visitedUrls, depth);
-
     return repo;
   }
 
   /**
-   * Imports {@code repo}'s {@code .gitmodules} submodules as sibling repositories under {@code
-   * project}, deduplicated by resolved url within the project, each linked by a {@link
-   * RepositorySubmodule} edge. A submodule-free repository (no {@code .gitmodules}) reads an empty
-   * list here, so this is a strict no-op for it.
+   * Imports {@code repoId}'s DIRECT {@code .gitmodules} submodules as sibling repositories under
+   * the same project, each linked by a {@link RepositorySubmodule} edge, and returns the
+   * repository's full edge list afterwards. One level only, by design: submodule import is
+   * user-driven layer by layer — a "want it deeper" recursion is the user invoking this on the
+   * imported child (the repository detail view's "import submodules" action), as far down as they
+   * care to go. Idempotent: children dedup by resolved url within the project, edges by (parent,
+   * path), so re-invoking imports only what's missing. Cycles need no special guard anymore — a
+   * cyclic pair simply links back to the already-imported row on the second, user-invoked step.
    */
-  private void importSubmodules(
-      Repository repo, Project project, Path originPath, Set<String> visitedUrls, int depth) {
-    if (depth >= MAX_SUBMODULE_DEPTH) {
-      LOG.warnf(
-          "Reached max submodule depth %d at %s; not recursing further",
-          MAX_SUBMODULE_DEPTH, repo.url);
-      return;
-    }
-    visitedUrls.add(normalizeUrl(repo.url));
+  @Transactional
+  public List<RepositorySubmodule> importDirectSubmodules(String repoId) {
+    Repository repo = get(repoId);
+    importDirectSubmodules(repo);
+    return repositorySubmoduleRepository.findByParentId(repoId);
+  }
 
+  private void importDirectSubmodules(Repository repo) {
+    Path originPath = originPath(repo.id);
     for (GitSubmoduleParser.Submodule sub :
         submoduleParser.readSubmodules(originPath.toFile(), repo.mainBranch)) {
       String childUrl = submoduleParser.resolveSubmoduleUrl(repo.url, sub.url());
 
-      // Dedup within the project: reuse an existing sibling with the same url (the diamond case),
-      // else clone-and-recurse. Panache auto-flushes before this query, so a child imported earlier
-      // in this same transaction is already visible.
-      Repository child = repositoryRepository.findByUrlInProject(childUrl, project.id).orElse(null);
+      // Dedup within the project: reuse an existing sibling with the same url (the diamond case —
+      // and what terminates a cyclic pair: its second import finds the first repo already there).
+      // Panache auto-flushes before this query, so a child imported earlier in this same
+      // transaction is already visible.
+      Repository child =
+          repositoryRepository.findByUrlInProject(childUrl, repo.project.id).orElse(null);
       if (child == null) {
-        if (visitedUrls.contains(normalizeUrl(childUrl))) {
-          // Cycle backstop: url is on the current import path but not yet a persisted row.
-          continue;
-        }
-        child =
-            cloneRepository(
-                childUrl, RepositoryArchetype.SERVICE, project, visitedUrls, depth + 1, false);
+        child = cloneOne(childUrl, RepositoryArchetype.SERVICE, repo.project, false);
       }
 
       if (!repositorySubmoduleRepository.existsByParentAndPath(repo.id, sub.path())) {
@@ -177,10 +175,27 @@ public class RepositoryService {
     }
   }
 
-  /** Normalizes a url for cycle detection: trims and drops a single trailing slash. */
-  private String normalizeUrl(String url) {
-    String u = url.trim();
-    return u.endsWith("/") ? u.substring(0, u.length() - 1) : u;
+  /**
+   * The DIRECT {@code .gitmodules} submodules of {@code repoId} that are not yet imported (no edge
+   * at their path) — what the repository detail view's "import submodules" action offers. Urls come
+   * back resolved (relative names folded against the repository's own url).
+   */
+  public List<GitSubmoduleParser.Submodule> listUnimportedSubmodules(String repoId) {
+    Repository repo = get(repoId);
+    Set<String> importedPaths =
+        repositorySubmoduleRepository.findByParentId(repoId).stream()
+            .map(edge -> edge.path)
+            .collect(java.util.stream.Collectors.toSet());
+    return submoduleParser.readSubmodules(originPath(repo.id).toFile(), repo.mainBranch).stream()
+        .filter(sub -> !importedPaths.contains(sub.path()))
+        .map(
+            sub ->
+                new GitSubmoduleParser.Submodule(
+                    sub.name(),
+                    sub.path(),
+                    submoduleParser.resolveSubmoduleUrl(repo.url, sub.url()),
+                    sub.branch()))
+        .toList();
   }
 
   private Path originPath(String repoId) {

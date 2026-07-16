@@ -48,6 +48,13 @@ public class WorkspaceContainerIT {
     WorkspaceContainerFactory factory = new WorkspaceContainerFactory();
     factory.image = IMAGE;
     factory.network = "qits-net";
+    // Config-injected fields that manual wiring must seed too: TZ propagation reads timezone
+    // unconditionally, and the commit-identity env is applied to every container.
+    factory.timezone = java.util.Optional.empty();
+    GitIdentity gitIdentity = new GitIdentity();
+    gitIdentity.name = "qits";
+    gitIdentity.email = "qits@local";
+    factory.gitIdentity = gitIdentity;
     de.containerFactory = factory;
     de.ensureNetwork(); // no StartupEvent here; make the shared network exist before any container
     return de;

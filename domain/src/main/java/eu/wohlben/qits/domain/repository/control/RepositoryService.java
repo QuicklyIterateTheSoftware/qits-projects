@@ -46,6 +46,8 @@ public class RepositoryService {
 
   @Inject GitSubmoduleParser submoduleParser;
 
+  @Inject QitsConfigReconciler qitsConfigReconciler;
+
   @Inject RepositorySubmoduleRepository repositorySubmoduleRepository;
 
   @Inject FeatureFlowPhaseActionService featureFlowPhaseActionService;
@@ -118,6 +120,12 @@ public class RepositoryService {
 
     // The main branch defaults to the remote's default branch (the mirror's HEAD).
     repo.mainBranch = detectDefaultBranch(originPath);
+
+    // Ingest the committed .qits-config.yml (if any) before the main workspace is created, so the
+    // workspace lands on the possibly-config-overridden main branch, and before metadata is written
+    // so it captures the final branch/archetype. Never fails the clone (degrade loudly, never
+    // block).
+    ingestConfigQuietly(repo.id);
 
     metadataService.writeRepositoryMetadata(repo);
 
@@ -202,6 +210,20 @@ public class RepositoryService {
     return Path.of(dataDir, repoId, "origin");
   }
 
+  /**
+   * Reconciles the repository's {@code .qits-config.yml} without ever letting a config problem
+   * break the clone/sync. The reconciler already records parse/validation issues as a repository
+   * warning rather than throwing; this only guards against an unexpected failure, matching the
+   * "degrade loudly, never block" posture of framework detection and submodule import.
+   */
+  private void ingestConfigQuietly(String repoId) {
+    try {
+      qitsConfigReconciler.ingest(repoId);
+    } catch (RuntimeException e) {
+      LOG.warnf(e, "Failed to ingest .qits-config.yml for repository %s", repoId);
+    }
+  }
+
   /** The mirror's HEAD points at the remote's default branch (e.g. "master"/"main"). */
   private String detectDefaultBranch(Path originPath) {
     try {
@@ -259,6 +281,9 @@ public class RepositoryService {
         } else {
           git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + branch, remoteSha);
         }
+        // The main branch advanced — re-ingest .qits-config.yml from its new tip in the bare
+        // origin.
+        ingestConfigQuietly(repoId);
         return fetchOutput;
       }
       throw new BadRequestException(

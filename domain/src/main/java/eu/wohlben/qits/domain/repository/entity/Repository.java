@@ -29,6 +29,15 @@ public class Repository extends PanacheEntityBase {
   @Enumerated(EnumType.STRING)
   public RepositoryArchetype archetype;
 
+  /**
+   * The last {@code .qits-config.yml} ingestion problem, if any — a parse or per-entry validation
+   * failure, shown as a repository-level warning in the detail view. {@code null} when the file is
+   * absent or ingested cleanly. Config ingestion "degrades loudly, never blocks": on any problem
+   * the last-good rows are kept and the message lands here instead of failing the clone/sync.
+   */
+  @Column(name = "config_warning", length = 4000)
+  public String configWarning;
+
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
   public List<Workspace> workspaces;
 

@@ -54,6 +54,10 @@ public class RepositoryServiceSubmoduleTest {
   @Inject RepositoryRepository repositoryRepository;
   @Inject RepositorySubmoduleRepository submoduleRepository;
   @Inject WorkspaceRepository workspaceRepository;
+  @Inject GitExecutor git;
+
+  @org.eclipse.microprofile.config.inject.ConfigProperty(name = "qits.repositories.data-dir")
+  String dataDir;
 
   private String fixture(String name) throws Exception {
     return getClass().getResource("/fixtures/" + name).toURI().getPath();
@@ -235,6 +239,145 @@ public class RepositoryServiceSubmoduleTest {
         0,
         submoduleRepository.count("parent.id in ?1", repoIds),
         "all submodule edges cascaded away");
+  }
+
+  @Test
+  public void pullRefreshesImportedSubmoduleSiblingRepositories() throws Exception {
+    // Private mutable upstreams: mirror the fixture bares side by side (so the super's relative
+    // `../submodule-shared.git` keeps resolving), then advance them like a real remote would.
+    Path upstreams = Files.createTempDirectory("qits-submodule-upstreams");
+    Path superUpstream = upstreams.resolve("submodule-simple-super.git");
+    Path childUpstream = upstreams.resolve("submodule-shared.git");
+    git.exec(
+        null,
+        "git",
+        "clone",
+        "--mirror",
+        fixture("submodule-simple-super.git"),
+        superUpstream.toString());
+    git.exec(
+        null,
+        "git",
+        "clone",
+        "--mirror",
+        fixture("submodule-shared.git"),
+        childUpstream.toString());
+
+    var project = projectService.create("Submodule Pull", null);
+    var superRepo =
+        repositoryService.cloneRepository(superUpstream.toString(), null, project, true);
+    Repository child = reposByName(project.id).get("submodule-shared.git");
+
+    // Advance the child upstream and bump the super upstream's gitlink to the new tip — the exact
+    // shape of an "update from main" arriving with a submodule pointer bump.
+    String newChildSha = advanceUpstream(childUpstream);
+    bumpGitlink(superUpstream, "lib", newChildSha);
+    assertFalse(
+        originHasCommit(child.id, newChildSha),
+        "the imported sibling's origin is stale before the pull");
+
+    repositoryService.pullRepository(superRepo.id);
+
+    // Without the child refresh, the container's `submodule update` would fail with "Server does
+    // not allow request for unadvertised object <sha>" — the git host can only serve what the
+    // sibling's origin has.
+    assertTrue(
+        originHasCommit(child.id, newChildSha),
+        "pulling the superproject refreshes the imported sibling, so the bumped gitlink is servable");
+  }
+
+  @Test
+  public void childPullFailureWarnsWithoutFailingTheSuperprojectPull() throws Exception {
+    Path upstreams = Files.createTempDirectory("qits-submodule-upstreams-gone");
+    Path superUpstream = upstreams.resolve("submodule-simple-super.git");
+    Path childUpstream = upstreams.resolve("submodule-shared.git");
+    git.exec(
+        null,
+        "git",
+        "clone",
+        "--mirror",
+        fixture("submodule-simple-super.git"),
+        superUpstream.toString());
+    git.exec(
+        null,
+        "git",
+        "clone",
+        "--mirror",
+        fixture("submodule-shared.git"),
+        childUpstream.toString());
+
+    var project = projectService.create("Submodule Pull Degrade", null);
+    var superRepo =
+        repositoryService.cloneRepository(superUpstream.toString(), null, project, true);
+
+    // The child's upstream vanishes: its pull must degrade loudly (a WARNING line in the output),
+    // never block the superproject's own — already successful — pull.
+    deleteRecursively(childUpstream);
+    String output = repositoryService.pullRepository(superRepo.id);
+    assertTrue(
+        output.contains("WARNING: pull of imported submodule 'lib'"),
+        "the unreachable child surfaces as a warning, not a failure: " + output);
+  }
+
+  @Test
+  public void pullTerminatesOnCyclicSubmoduleImports() throws Exception {
+    var project = projectService.create("Cycle Pull", null);
+    // a -> b -> a, fully imported: the pull's visited guard must terminate the recursion.
+    var cycleA =
+        repositoryService.cloneRepository(fixture("submodule-cycle-a.git"), null, project, true);
+    Repository cycleB = reposByName(project.id).get("submodule-cycle-b.git");
+    repositoryService.importDirectSubmodules(cycleB.id);
+
+    repositoryService.pullRepository(cycleA.id);
+  }
+
+  /** Pushes a new commit to the bare {@code upstream} and returns its sha. */
+  private String advanceUpstream(Path upstream) throws Exception {
+    Path worktree = Files.createTempDirectory("qits-upstream-worktree");
+    git.exec(null, "git", "clone", upstream.toString(), worktree.toString());
+    git.exec(worktree.toFile(), "git", "config", "user.email", "t@example.com");
+    git.exec(worktree.toFile(), "git", "config", "user.name", "Test");
+    Files.writeString(worktree.resolve("advanced.txt"), "advanced");
+    git.exec(worktree.toFile(), "git", "add", "-A");
+    git.exec(worktree.toFile(), "git", "commit", "-m", "advance upstream");
+    git.exec(worktree.toFile(), "git", "push", "origin", "HEAD");
+    return git.exec(worktree.toFile(), "git", "rev-parse", "HEAD").trim();
+  }
+
+  /** Commits a gitlink bump ({@code path} -> {@code sha}) to the bare super {@code upstream}. */
+  private void bumpGitlink(Path upstream, String path, String sha) throws Exception {
+    Path worktree = Files.createTempDirectory("qits-super-worktree");
+    git.exec(null, "git", "clone", upstream.toString(), worktree.toString());
+    git.exec(worktree.toFile(), "git", "config", "user.email", "t@example.com");
+    git.exec(worktree.toFile(), "git", "config", "user.name", "Test");
+    // The gitlink is bumped straight in the index — no need to materialize the submodule.
+    git.exec(
+        worktree.toFile(),
+        "git",
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "160000," + sha + "," + path);
+    git.exec(worktree.toFile(), "git", "commit", "-m", "bump gitlink");
+    git.exec(worktree.toFile(), "git", "push", "origin", "HEAD");
+  }
+
+  /** Whether the qits-side origin of {@code repoId} contains {@code sha}. */
+  private boolean originHasCommit(String repoId, String sha) throws Exception {
+    return git.execAllowNonZero(
+                Path.of(dataDir, repoId, "origin").toFile(),
+                "git",
+                "cat-file",
+                "-e",
+                sha + "^{commit}")
+            .exitCode()
+        == 0;
+  }
+
+  private void deleteRecursively(Path dir) throws Exception {
+    try (var paths = Files.walk(dir)) {
+      paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+    }
   }
 
   private void assertEdge(String parentId, String path, String expectedChildId) {

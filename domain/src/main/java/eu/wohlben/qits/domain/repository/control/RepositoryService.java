@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -244,9 +245,26 @@ public class RepositoryService {
   /**
    * Pulls the remote's main branch into the local mirror. Fetches the branch and fast-forwards the
    * local ref only when the remote is strictly ahead; a no-op when already up to date or locally
-   * ahead, and an error when the histories have diverged (manual merge needed).
+   * ahead, and an error when the histories have diverged (manual merge needed). After its own pull,
+   * recursively pulls the repository's IMPORTED submodule children (sibling repositories) — a
+   * gitlink bump arriving on the superproject's main branch must never point at a commit the child
+   * sibling's origin does not yet have, or the workspace container's {@code submodule update}
+   * (which clones from that origin via the git host) fails with "Server does not allow request for
+   * unadvertised object".
    */
   public String pullRepository(String repoId) {
+    return pullRepository(repoId, new HashSet<>());
+  }
+
+  /**
+   * {@link #pullRepository(String)} with the recursion state over the imported submodule edge
+   * graph: {@code visited} both terminates cycles (the {@code submodule-cycle-*} pair) and dedups
+   * the diamond (a shared child is pulled once per invocation).
+   */
+  private String pullRepository(String repoId, Set<String> visited) {
+    if (!visited.add(repoId)) {
+      return "";
+    }
     Repository repo = get(repoId);
     Path originPath = requireOrigin(repoId);
     String branch = resolveMainBranch(repo, originPath);
@@ -270,8 +288,8 @@ public class RepositoryService {
           git.exec(workdir.toFile(), "git", "rev-parse", "refs/heads/" + branch).trim();
 
       if (remoteSha.equals(localSha) || isAncestor(workdir, remoteSha, localSha)) {
-        // Already up to date, or local is ahead — nothing to pull.
-        return fetchOutput;
+        // Already up to date, or local is ahead — nothing to pull; children may still be stale.
+        return withImportedChildPulls(repoId, fetchOutput, visited);
       }
       if (isAncestor(workdir, localSha, remoteSha)) {
         // Remote is strictly ahead — fast-forward.
@@ -284,7 +302,7 @@ public class RepositoryService {
         // The main branch advanced — re-ingest .qits-config.yml from its new tip in the bare
         // origin.
         ingestConfigQuietly(repoId);
-        return fetchOutput;
+        return withImportedChildPulls(repoId, fetchOutput, visited);
       }
       throw new BadRequestException(
           "Branch '" + branch + "' has diverged from the remote; manual merge required");
@@ -293,6 +311,34 @@ public class RepositoryService {
     } catch (Exception e) {
       throw new InternalServerErrorException("Git pull failed: " + e.getMessage());
     }
+  }
+
+  /**
+   * Pulls each imported submodule child after {@code repoId}'s own successful pull, appending their
+   * outputs. A child failure (diverged, unreachable remote) degrades loudly, never blocks: the
+   * superproject's pull already succeeded, so the child's error becomes a WARNING line in the
+   * returned output instead of failing the whole operation.
+   */
+  private String withImportedChildPulls(String repoId, String ownOutput, Set<String> visited) {
+    StringBuilder output = new StringBuilder(ownOutput.trim());
+    for (RepositorySubmodule edge : repositorySubmoduleRepository.findByParentId(repoId)) {
+      try {
+        String childOutput = pullRepository(edge.child.id, visited).trim();
+        if (!childOutput.isBlank()) {
+          output.append('\n').append(childOutput);
+        }
+      } catch (Exception e) {
+        LOG.warnf(e, "Pull of imported submodule '%s' of repository %s failed", edge.path, repoId);
+        output
+            .append("\nWARNING: pull of imported submodule '")
+            .append(edge.path)
+            .append("' (")
+            .append(edge.child.url)
+            .append(") failed: ")
+            .append(e.getMessage());
+      }
+    }
+    return output.toString();
   }
 
   /**

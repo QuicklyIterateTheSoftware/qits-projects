@@ -4,6 +4,7 @@ import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.featureflow.control.FeatureFlowPhaseActionService;
+import eu.wohlben.qits.domain.process.control.RepoProcessLease;
 import eu.wohlben.qits.domain.process.control.TechnicalProcess;
 import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.domain.project.entity.Project;
@@ -290,6 +291,12 @@ public class RepositoryService {
    * pulled repository; failures surface there (live, untruncated), not as an HTTP error. Throws 404
    * in-request when the repository doesn't exist, so a bad id still fails fast. Mirrors {@code
    * WorkspaceService.beginEnsureContainer}.
+   *
+   * <p>Kind-aware single-flight (see {@link TechnicalProcessRegistry#beginForRepository}): a live
+   * pull for this repo is reused (its id is returned, no second walk — two walks race the bare
+   * origin's ref-locks); a live <em>sync</em> is a conflict (a pull can't ride a sync's push
+   * semantics), rejected with a 400. This closes the race even for a client that never learned a
+   * pull was running (dialog closed, button clicked again).
    */
   public String beginPullRepository(String repoId) {
     // Validate in-request (unknown id → plain 404, not a process) and name the root segment by the
@@ -298,31 +305,51 @@ public class RepositoryService {
     String rootSegment =
         QuarkusTransaction.requiringNew()
             .call(() -> "pull:" + Path.of(get(repoId).url).getFileName().toString());
-    // Segment names double as the segment key, so they must be unique across the whole walk: two
-    // repos reached under the same relative path (nested levels, or a child path equal to the root
-    // basename) would otherwise collide and a failed one's verdict would be swallowed by the
-    // first's
-    // `ok`. Threaded through the recursion, this allocator disambiguates a repeat with a suffix.
-    Set<String> usedSegments = new HashSet<>();
-    usedSegments.add(rootSegment);
-    TechnicalProcess process = processes.beginForRepository(repoId);
-    processExecutor.submit(
-        () -> {
-          try {
-            pullRepository(repoId, new HashSet<>(), process, rootSegment, usedSegments);
-            // No asynchronous second phase: declare an empty daemon set and settle the provision so
-            // `done` fires immediately. A child segment settled `failed` still makes finish()
-            // compute overall `done failed`.
-            process.expectDaemons(List.of());
-            process.finishProvision(true);
-          } catch (RuntimeException e) {
-            // Root failure (diverged branch, unreachable remote): settle the open root segment
-            // failed (appending the message) and emit `done failed`. Idempotent.
-            process.failProvision(e.getMessage());
-            LOG.debugf(e, "Streamed pull failed for repository %s", repoId);
-          }
-        });
-    return process.id();
+    return switch (processes.beginForRepository(repoId, "pull")) {
+      case RepoProcessLease.Reused r -> r.processId();
+      case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
+      case RepoProcessLease.Fresh f -> {
+        TechnicalProcess process = f.process();
+        // Segment names double as the segment key, so they must be unique across the whole walk:
+        // two
+        // repos reached under the same relative path (nested levels, or a child path equal to the
+        // root basename) would otherwise collide and a failed one's verdict would be swallowed by
+        // the first's `ok`. Threaded through the recursion, this allocator disambiguates a repeat
+        // with a suffix.
+        Set<String> usedSegments = new HashSet<>();
+        usedSegments.add(rootSegment);
+        processExecutor.submit(
+            () -> {
+              try {
+                pullRepository(repoId, new HashSet<>(), process, rootSegment, usedSegments);
+                // No asynchronous second phase: declare an empty daemon set and settle the
+                // provision
+                // so `done` fires immediately. A child segment settled `failed` still makes
+                // finish()
+                // compute overall `done failed`.
+                process.expectDaemons(List.of());
+                process.finishProvision(true);
+              } catch (RuntimeException e) {
+                // Root failure (diverged branch, unreachable remote): settle the open root segment
+                // failed (appending the message) and emit `done failed`. Idempotent.
+                process.failProvision(e.getMessage());
+                LOG.debugf(e, "Streamed pull failed for repository %s", repoId);
+              }
+            });
+        yield process.id();
+      }
+    };
+  }
+
+  /**
+   * A pull and a sync can't share a walk (a pull would skip the push) nor safely run concurrently
+   * against the same bare origin, so a cross-kind request while one is live is rejected. In
+   * practice the frontend guard disables the buttons while any repo process is live, so this only
+   * ever fires for a second tab / API client that hasn't yet learned a process is running.
+   */
+  private BadRequestException repositoryBusy(String runningKind) {
+    return new BadRequestException(
+        "A " + runningKind + " is already running for this repository; wait for it to finish.");
   }
 
   /** The scalar snapshot a single repo's pull needs, read in one short transaction. */
@@ -584,6 +611,10 @@ public class RepositoryService {
    * segment opens ({@link TechnicalProcess#failProvision}); a push failure settles only the {@code
    * push} segment {@code failed} and lets {@code finish()} compute overall {@code done failed}, so
    * a green pull with a red push reads exactly that way.
+   *
+   * <p>Kind-aware single-flight (see {@link #beginPullRepository}): a live sync is reused; a live
+   * <em>pull</em> is a conflict (attaching a sync to a pull would silently skip the push), rejected
+   * with a 400 rather than letting a sync report success without pushing.
    */
   public String beginSyncRepository(String repoId) {
     // Validate in-request (unknown id → plain 404, not a process) and derive the url basename
@@ -592,39 +623,49 @@ public class RepositoryService {
     String basename =
         QuarkusTransaction.requiringNew()
             .call(() -> Path.of(get(repoId).url).getFileName().toString());
-    String rootSegment = "pull:" + basename;
-    // Segment names double as the segment key: seed the allocator with the root name so the push
-    // segment (and any child pull) can't collide with it.
-    Set<String> usedSegments = new HashSet<>();
-    usedSegments.add(rootSegment);
-    TechnicalProcess process = processes.beginForRepository(repoId);
-    processExecutor.submit(
-        () -> {
-          try {
-            pullRepository(repoId, new HashSet<>(), process, rootSegment, usedSegments);
-            // Pull walk done — append the push as its own segment, opened before the push so
-            // "now pushing" is visible while it blocks on the network.
-            String pushSegment = allocateSegment("push:" + basename, usedSegments);
-            process.openSegment(pushSegment);
-            try {
-              streamLines(process, pushSegment, pushRepository(repoId));
-              settleOk(process, pushSegment);
-            } catch (RuntimeException e) {
-              // A push failure degrades this segment only (not failProvision): the pull segments
-              // stay green and finish() computes overall `done failed` from the red push segment.
-              process.appendLine(pushSegment, "push failed: " + e.getMessage());
-              process.settleSegment(pushSegment, false);
-            }
-            process.expectDaemons(List.of());
-            process.finishProvision(true);
-          } catch (RuntimeException e) {
-            // Root pull failure (diverged branch, unreachable remote): settle the open pull segment
-            // failed and emit `done failed` before the push segment ever opens. Idempotent.
-            process.failProvision(e.getMessage());
-            LOG.debugf(e, "Streamed sync failed for repository %s", repoId);
-          }
-        });
-    return process.id();
+    return switch (processes.beginForRepository(repoId, "sync")) {
+      case RepoProcessLease.Reused r -> r.processId();
+      case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
+      case RepoProcessLease.Fresh f -> {
+        TechnicalProcess process = f.process();
+        String rootSegment = "pull:" + basename;
+        // Segment names double as the segment key: seed the allocator with the root name so the
+        // push
+        // segment (and any child pull) can't collide with it.
+        Set<String> usedSegments = new HashSet<>();
+        usedSegments.add(rootSegment);
+        processExecutor.submit(
+            () -> {
+              try {
+                pullRepository(repoId, new HashSet<>(), process, rootSegment, usedSegments);
+                // Pull walk done — append the push as its own segment, opened before the push so
+                // "now pushing" is visible while it blocks on the network.
+                String pushSegment = allocateSegment("push:" + basename, usedSegments);
+                process.openSegment(pushSegment);
+                try {
+                  streamLines(process, pushSegment, pushRepository(repoId));
+                  settleOk(process, pushSegment);
+                } catch (RuntimeException e) {
+                  // A push failure degrades this segment only (not failProvision): the pull
+                  // segments
+                  // stay green and finish() computes overall `done failed` from the red push
+                  // segment.
+                  process.appendLine(pushSegment, "push failed: " + e.getMessage());
+                  process.settleSegment(pushSegment, false);
+                }
+                process.expectDaemons(List.of());
+                process.finishProvision(true);
+              } catch (RuntimeException e) {
+                // Root pull failure (diverged branch, unreachable remote): settle the open pull
+                // segment failed and emit `done failed` before the push segment ever opens.
+                // Idempotent.
+                process.failProvision(e.getMessage());
+                LOG.debugf(e, "Streamed sync failed for repository %s", repoId);
+              }
+            });
+        yield process.id();
+      }
+    };
   }
 
   /** Sets the branch this repository syncs with the remote. The branch must exist locally. */

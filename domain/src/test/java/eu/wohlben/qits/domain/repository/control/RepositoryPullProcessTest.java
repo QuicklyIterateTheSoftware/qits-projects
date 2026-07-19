@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.NotFoundException;
+import eu.wohlben.qits.domain.process.control.RepoProcessLease;
 import eu.wohlben.qits.domain.process.control.TechnicalProcess;
 import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.domain.process.dto.TechnicalProcessFrame;
@@ -135,6 +137,26 @@ public class RepositoryPullProcessTest {
   private static boolean hasLineContaining(Replay replay, String needle) {
     return replay.frames.stream()
         .anyMatch(f -> "line".equals(f.kind()) && f.line() != null && f.line().contains(needle));
+  }
+
+  @Test
+  public void aSecondPullReusesTheLiveWalkWhileASyncConflicts() throws Exception {
+    var project = projectService.create("Pull Single Flight", null);
+    var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project, false);
+
+    // Simulate a live pull holding the repo's origin.
+    TechnicalProcess active =
+        ((RepoProcessLease.Fresh) registry.beginForRepository(repo.id, "pull")).process();
+    try {
+      // A second pull reuses the live process id — no second walk against the same bare origin.
+      assertEquals(active.id(), repositoryService.beginPullRepository(repo.id));
+      // A sync CANNOT ride the pull (it would skip the push) — it is rejected, not silently reused.
+      assertThrows(BadRequestException.class, () -> repositoryService.beginSyncRepository(repo.id));
+      // Still exactly one active process for the repository.
+      assertEquals(active.id(), registry.activeForRepository(repo.id).orElseThrow());
+    } finally {
+      active.forceFinish();
+    }
   }
 
   @Test

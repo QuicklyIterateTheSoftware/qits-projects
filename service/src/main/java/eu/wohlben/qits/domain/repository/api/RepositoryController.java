@@ -1,5 +1,6 @@
 package eu.wohlben.qits.domain.repository.api;
 
+import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.QitsConfigReconciler;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
@@ -40,6 +41,8 @@ public class RepositoryController {
   @Inject QitsConfigReconciler qitsConfigReconciler;
 
   @Inject RepositoryMapper repositoryMapper;
+
+  @Inject TechnicalProcessRegistry technicalProcesses;
 
   public static record GetRepositoryRequest() {
     public record Response(RepositoryDto repository) {}
@@ -179,6 +182,28 @@ public class RepositoryController {
   @Path("/{repoId}/sync-status")
   public SyncStatusDto syncStatus(@PathParam("repoId") String repoId) {
     return repositoryService.syncStatus(repoId);
+  }
+
+  public static record ActiveProcessRequest() {
+    /**
+     * The repository's currently-running technical process (pull/sync), or null when none is live.
+     */
+    public record Response(String technicalProcessId) {}
+  }
+
+  /**
+   * The id of the repository's live pull/sync process, if any — the reattach discovery endpoint for
+   * the repository detail route (a reload / second tab reopens the streamed log from it). Returns
+   * null when the repository exists but no process is live; an unknown/deleted repo is a 404 like
+   * the sibling repository GETs, so a stale tab surfaces the gone repository rather than a silent
+   * "none". Activeness changes ride the repository {@code PROCESS} SSE hint.
+   */
+  @GET
+  @Path("/{repoId}/active-process")
+  public ActiveProcessRequest.Response activeProcess(@PathParam("repoId") String repoId) {
+    repositoryService.get(repoId); // 404 on an unknown/deleted repository
+    return new ActiveProcessRequest.Response(
+        technicalProcesses.activeForRepository(repoId).orElse(null));
   }
 
   public static record SetMainBranchRequest(@NotBlank String branch) {

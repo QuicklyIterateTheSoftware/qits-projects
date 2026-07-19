@@ -530,32 +530,101 @@ public class RepositoryService {
     }
   }
 
+  /** The scalar snapshot a push needs, read in one short transaction. */
+  private record PushContext(String url, String branch, Path originPath) {}
+
   /**
    * Pushes the local main branch to the remote. Pushes to the URL directly rather than the "origin"
    * remote, whose {@code mirror=true} config forbids the single-branch refspec.
+   *
+   * <p>Reads its inputs in a short transaction and runs {@code git push} outside it (the pull's
+   * {@link PullContext} pattern), so it is safe on a worker thread with no request context — the
+   * streamed sync ({@link #beginSyncRepository}) calls it there.
    */
   public String pushRepository(String repoId) {
-    Repository repo = get(repoId);
-    Path originPath = requireOrigin(repoId);
-    String branch = resolveMainBranch(repo, originPath);
-
+    PushContext ctx =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  Repository repo = get(repoId);
+                  Path originPath = requireOrigin(repoId);
+                  return new PushContext(repo.url, resolveMainBranch(repo, originPath), originPath);
+                });
     try {
       return git.exec(
-          originPath.toFile(),
+          ctx.originPath().toFile(),
           "git",
           "push",
-          repo.url,
-          "refs/heads/" + branch + ":refs/heads/" + branch);
+          ctx.url(),
+          "refs/heads/" + ctx.branch() + ":refs/heads/" + ctx.branch());
     } catch (Exception e) {
       throw new InternalServerErrorException("Git push failed: " + e.getMessage());
     }
   }
 
-  /** Pull then push the main branch. */
+  /**
+   * Pull then push the main branch, synchronously. Kept as the throwing, request-thread variant for
+   * internal callers; the browser-facing sync endpoint uses the streamed {@link
+   * #beginSyncRepository}.
+   */
   public String syncRepository(String repoId) {
     String pullOutput = pullRepository(repoId);
     String pushOutput = pushRepository(repoId);
     return (pullOutput + "\n" + pushOutput).trim();
+  }
+
+  /**
+   * The streamed sync: the {@link #beginPullRepository} walk (one {@code pull:<repo>} segment per
+   * repository) followed by a single {@code push:<basename>} segment wrapping {@link
+   * #pushRepository}. Registers the {@link TechnicalProcess} before any git runs and returns its id
+   * immediately; the browser watches pull-then-push over SSE. Throws 404 in-request for an unknown
+   * id.
+   *
+   * <p>Failure semantics carry over: a diverged/unreachable pull fails the process before the push
+   * segment opens ({@link TechnicalProcess#failProvision}); a push failure settles only the {@code
+   * push} segment {@code failed} and lets {@code finish()} compute overall {@code done failed}, so
+   * a green pull with a red push reads exactly that way.
+   */
+  public String beginSyncRepository(String repoId) {
+    // Validate in-request (unknown id → plain 404, not a process) and derive the url basename
+    // shared
+    // by the root pull segment and the final push segment.
+    String basename =
+        QuarkusTransaction.requiringNew()
+            .call(() -> Path.of(get(repoId).url).getFileName().toString());
+    String rootSegment = "pull:" + basename;
+    // Segment names double as the segment key: seed the allocator with the root name so the push
+    // segment (and any child pull) can't collide with it.
+    Set<String> usedSegments = new HashSet<>();
+    usedSegments.add(rootSegment);
+    TechnicalProcess process = processes.beginForRepository(repoId);
+    processExecutor.submit(
+        () -> {
+          try {
+            pullRepository(repoId, new HashSet<>(), process, rootSegment, usedSegments);
+            // Pull walk done — append the push as its own segment, opened before the push so
+            // "now pushing" is visible while it blocks on the network.
+            String pushSegment = allocateSegment("push:" + basename, usedSegments);
+            process.openSegment(pushSegment);
+            try {
+              streamLines(process, pushSegment, pushRepository(repoId));
+              settleOk(process, pushSegment);
+            } catch (RuntimeException e) {
+              // A push failure degrades this segment only (not failProvision): the pull segments
+              // stay green and finish() computes overall `done failed` from the red push segment.
+              process.appendLine(pushSegment, "push failed: " + e.getMessage());
+              process.settleSegment(pushSegment, false);
+            }
+            process.expectDaemons(List.of());
+            process.finishProvision(true);
+          } catch (RuntimeException e) {
+            // Root pull failure (diverged branch, unreachable remote): settle the open pull segment
+            // failed and emit `done failed` before the push segment ever opens. Idempotent.
+            process.failProvision(e.getMessage());
+            LOG.debugf(e, "Streamed sync failed for repository %s", repoId);
+          }
+        });
+    return process.id();
   }
 
   /** Sets the branch this repository syncs with the remote. The branch must exist locally. */

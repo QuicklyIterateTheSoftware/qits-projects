@@ -205,16 +205,33 @@ public class RepositoryControllerTest {
   }
 
   @Test
-  public void testSyncPullsThenPushes() {
+  public void testSyncReturnsTechnicalProcessIdImmediately() {
     String repoId = createProjectAndRepository();
 
+    // Sync is asynchronous like pull: the POST registers a technical process and returns its id
+    // right away — the pull walk plus the final push stream over the process's SSE, not the HTTP
+    // response.
     given()
         .contentType(ContentType.JSON)
         .body(new RepositoryController.SyncRepositoryRequest())
         .when()
         .post("/api/repositories/" + repoId + "/sync")
         .then()
-        .statusCode(Response.Status.OK.getStatusCode());
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("technicalProcessId", not(emptyOrNullString()));
+  }
+
+  @Test
+  public void testSyncUnknownRepositoryIs404InRequest() {
+    // The repo id is validated in-request before any process is registered, so a bad id is a plain
+    // 404, not a streamed failure.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.SyncRepositoryRequest())
+        .when()
+        .post("/api/repositories/does-not-exist/sync")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
 
   @Test

@@ -165,14 +165,14 @@ public class RepositoryController {
   }
 
   public static record SyncRepositoryRequest() {
-    public record Response(String output) {}
+    public record Response(String technicalProcessId) {}
   }
 
   @POST
   @Path("/{repoId}/sync")
   public SyncRepositoryRequest.Response sync(@PathParam("repoId") String repoId) {
-    String output = repositoryService.syncRepository(repoId);
-    return new SyncRepositoryRequest.Response(output);
+    String technicalProcessId = repositoryService.beginSyncRepository(repoId);
+    return new SyncRepositoryRequest.Response(technicalProcessId);
   }
 
   @GET

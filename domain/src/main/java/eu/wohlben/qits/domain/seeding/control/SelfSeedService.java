@@ -17,7 +17,7 @@ import org.jboss.logging.Logger;
 /**
  * Reconciles a packaged qits deployment into a seeded "qits" project holding the qits repositories
  * themselves — the startup counterpart to the cli {@code seed}/{@code seed-webapp} demos (see
- * {@code docs/features/2026-07-19_startup-qits-self-seed.md}). Where those seeds define a demo
+ * {@code docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}). Where those seeds define a demo
  * world programmatically, this one only registers the real repositories: their daemons, actions and
  * bootstrap chain all arrive declaratively from each repo's committed {@code .qits-config.yml} on
  * clone.
@@ -64,7 +64,7 @@ public class SelfSeedService {
   static final String PROJECT_NAME = "qits";
   private static final String PROJECT_DESCRIPTION =
       "The qits repositories themselves, registered automatically at startup"
-          + " (docs/features/2026-07-19_startup-qits-self-seed.md).";
+          + " (docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md).";
 
   private static final String QITS_BACKEND_URL = "https://github.com/wohlben/qits-backend.git";
   private static final String QITS_ANGULAR_URL =

@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Reconcile coverage for the startup self-seed (see {@code
- * docs/features/2026-07-19_startup-qits-self-seed.md}), offline through the module's global {@code
+ * docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}), offline through the module's global {@code
  * FakeContainerRuntime} — no docker, no GitHub. The manifest urls are redirected to committed
  * fixtures: the qits-backend slot to {@code submodule-super.git} (direct children child-a + shared,
  * and child-a nests grandchild — the depth that exercises the one-level deep import, standing in

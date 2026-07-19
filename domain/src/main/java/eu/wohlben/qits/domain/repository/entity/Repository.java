@@ -1,5 +1,6 @@
 package eu.wohlben.qits.domain.repository.entity;
 
+import eu.wohlben.qits.domain.bootstrap.entity.BootstrapCommand;
 import eu.wohlben.qits.domain.daemon.entity.RepositoryDaemon;
 import eu.wohlben.qits.domain.featureflow.entity.ActionConfiguration;
 import eu.wohlben.qits.domain.project.entity.Project;
@@ -48,6 +49,10 @@ public class Repository extends PanacheEntityBase {
   /** Daemons owned by (and only available in) this repository; cascade-deleted with it. */
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
   public List<RepositoryDaemon> daemons;
+
+  /** The ordered bootstrap chain owned by this repository; cascade-deleted with it. */
+  @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
+  public List<BootstrapCommand> bootstrapCommands;
 
   @ManyToOne
   @JoinColumn(name = "project_id", nullable = false)

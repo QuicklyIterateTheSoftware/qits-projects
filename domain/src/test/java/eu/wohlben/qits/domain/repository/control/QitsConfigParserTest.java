@@ -10,6 +10,7 @@ import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
 import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
+import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.DaemonDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
@@ -167,6 +168,42 @@ class QitsConfigParserTest {
   }
 
   @Test
+  void parsesOrderedBootstrapSection() {
+    QitsConfig config =
+        parser.parse(
+            """
+            version: 1
+            bootstrap:
+              - name: install
+                description: Build the reactor
+                execute: ./mvnw install -DskipTests
+                environment:
+                  MAVEN_OPTS: -Xmx2g
+              - name: seed
+                execute: ./mvnw -pl cli quarkus:run -Dcli.args=seed
+                check: test ! -f ~/.qits/data/h2/qits.mv.db
+            """);
+    assertEquals(2, config.bootstrap().size());
+    BootstrapDecl install = config.bootstrap().get(0);
+    assertEquals("install", install.name());
+    assertEquals("Build the reactor", install.description());
+    assertEquals("./mvnw install -DskipTests", install.execute());
+    assertNull(install.check());
+    assertEquals("-Xmx2g", install.environment().get("MAVEN_OPTS"));
+    BootstrapDecl seed = config.bootstrap().get(1);
+    assertEquals("seed", seed.name());
+    assertEquals("test ! -f ~/.qits/data/h2/qits.mv.db", seed.check());
+    assertTrue(seed.environment().isEmpty());
+  }
+
+  @Test
+  void bootstrapEntryMissingNameThrows() {
+    assertThrows(
+        QitsConfigException.class,
+        () -> parser.parse("version: 1\nbootstrap:\n  - execute: ./go\n"));
+  }
+
+  @Test
   void unknownEnumInDaemonThrows() {
     assertThrows(
         QitsConfigException.class,
@@ -198,6 +235,10 @@ class QitsConfigParserTest {
     assertEquals(5, config.actions().size());
     assertTrue(config.actions().stream().anyMatch(a -> a.name().equals("build-project")));
     assertTrue(config.actions().stream().anyMatch(a -> a.name().equals("Stack info")));
+    // The minimal check-guarded bootstrap chain — the E2E regression carrier for the feature.
+    assertEquals(1, config.bootstrap().size());
+    assertEquals("prepare-workspace", config.bootstrap().get(0).name());
+    assertTrue(config.bootstrap().get(0).check().contains("/tmp/qits-bootstrap-marker"));
   }
 
   @Test

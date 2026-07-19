@@ -5,6 +5,7 @@ import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
 import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
+import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.DaemonDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.FrameworkDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.HealthCheckDecl;
@@ -110,7 +111,8 @@ public class QitsConfigParser {
         repositorySection(map.get("repository")),
         frameworks(map.get("frameworks")),
         actions(map.get("actions")),
-        daemons(map.get("daemons")));
+        daemons(map.get("daemons")),
+        bootstrap(map.get("bootstrap")));
   }
 
   private RepositorySection repositorySection(Object raw) {
@@ -143,6 +145,21 @@ public class QitsConfigParser {
               str(m, "check"),
               bool(m, "interactive", false),
               strMap(m.get("environment"), "actions[].environment")));
+    }
+    return out;
+  }
+
+  private List<BootstrapDecl> bootstrap(Object raw) {
+    List<BootstrapDecl> out = new ArrayList<>();
+    for (Object item : asList(raw, "bootstrap")) {
+      Map<String, Object> m = asMap(item, "bootstrap[]");
+      out.add(
+          new BootstrapDecl(
+              reqStr(m, "name", "bootstrap[]"),
+              str(m, "description"),
+              str(m, "execute"),
+              str(m, "check"),
+              strMap(m.get("environment"), "bootstrap[].environment")));
     }
     return out;
   }

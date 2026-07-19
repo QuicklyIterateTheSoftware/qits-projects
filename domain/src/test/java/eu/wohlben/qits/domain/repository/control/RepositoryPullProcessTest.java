@@ -139,6 +139,12 @@ public class RepositoryPullProcessTest {
         .anyMatch(f -> "line".equals(f.kind()) && f.line() != null && f.line().contains(needle));
   }
 
+  private static long countLinesContaining(Replay replay, String needle) {
+    return replay.frames.stream()
+        .filter(f -> "line".equals(f.kind()) && f.line() != null && f.line().contains(needle))
+        .count();
+  }
+
   @Test
   public void aSecondPullReusesTheLiveWalkWhileASyncConflicts() throws Exception {
     var project = projectService.create("Pull Single Flight", null);
@@ -266,10 +272,19 @@ public class RepositoryPullProcessTest {
 
     assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
     assertEquals("ok", doneFrame(replay).status());
-    assertTrue(hasLineContaining(replay, "Fast-forwarded to"), "the fast-forward verdict is shown");
+    // The git fetch output now streams into the segment line by line (via the GitExecutor tap), so
+    // the fetch's own "From <origin>" line is present alongside the post-hoc verdict/config lines —
+    // and each appears exactly once (no double delivery now that streamLines was dropped here).
     assertTrue(
-        hasLineContaining(replay, "Re-ingested .qits-config.yml"),
-        "a main-branch advance re-ingests .qits-config.yml and reports it in the segment");
+        hasLineContaining(replay, "From "), "the streamed git fetch output lands in the segment");
+    assertEquals(
+        1,
+        countLinesContaining(replay, "Fast-forwarded to"),
+        "the fast-forward verdict, exactly once");
+    assertEquals(
+        1,
+        countLinesContaining(replay, "Re-ingested .qits-config.yml"),
+        "a main-branch advance re-ingests .qits-config.yml and reports it once in the segment");
   }
 
   @Test

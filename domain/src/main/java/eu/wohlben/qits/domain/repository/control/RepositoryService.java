@@ -32,6 +32,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -406,10 +407,18 @@ public class RepositoryService {
     try {
       // `--end-of-options`: url and branch are positional, never parsed as flags, so neither a
       // dash-leading url (already rejected at clone) nor branch can smuggle a git flag.
+      // Stream the fetch line by line into the segment (live progress on a slow fetch; every line
+      // stamps the process's activity clock so a long-but-active fetch can't trip the idle reaper).
+      // The other pull verbs below are single-line and stay post-hoc via streamLine.
       String fetchOutput =
           git.exec(
-              ctx.workdir().toFile(), "git", "fetch", "--end-of-options", ctx.url(), ctx.branch());
-      streamLines(process, segmentName, fetchOutput);
+              ctx.workdir().toFile(),
+              lineSink(process, segmentName),
+              "git",
+              "fetch",
+              "--end-of-options",
+              ctx.url(),
+              ctx.branch());
       String remoteSha = git.exec(ctx.workdir().toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
       String localSha =
           git.exec(ctx.workdir().toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch()).trim();
@@ -525,6 +534,17 @@ public class RepositoryService {
     if (process != null && segmentName != null) {
       process.appendLine(segmentName, line);
     }
+  }
+
+  /**
+   * A per-line tap that appends each line to the segment as a git command emits it (for {@link
+   * GitExecutor#exec(java.io.File, Consumer, String...)}), or {@code null} when there is no process
+   * to stream into — so the synchronous callers keep the plain blocking exec.
+   */
+  private static Consumer<String> lineSink(TechnicalProcess process, String segmentName) {
+    return (process == null || segmentName == null)
+        ? null
+        : line -> process.appendLine(segmentName, line);
   }
 
   /**

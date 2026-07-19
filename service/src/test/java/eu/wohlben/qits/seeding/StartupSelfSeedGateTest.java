@@ -10,10 +10,11 @@ import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 /**
- * The startup self-seed gate (see {@code docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}): the
- * reconcile fires only on a packaged deployment ({@link LaunchMode#NORMAL}) with the kill-switch
- * on. The pure predicate is unit-tested directly; the {@code @QuarkusTest} boot (which runs in
- * {@link LaunchMode#TEST}) confirms the observer stayed inert — no "qits" project was seeded.
+ * The startup self-seed gate (see {@code
+ * docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}): the reconcile
+ * fires only on a packaged deployment ({@link LaunchMode#NORMAL}) with the kill-switch on. The pure
+ * predicate is unit-tested directly; the {@code @QuarkusTest} boot (which runs in {@link
+ * LaunchMode#TEST}) confirms the observer stayed inert — no "qits" project was seeded.
  */
 @QuarkusTest
 public class StartupSelfSeedGateTest {

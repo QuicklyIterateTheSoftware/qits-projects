@@ -17,10 +17,10 @@ import org.jboss.logging.Logger;
 /**
  * Reconciles a packaged qits deployment into a seeded "qits" project holding the qits repositories
  * themselves — the startup counterpart to the cli {@code seed}/{@code seed-webapp} demos (see
- * {@code docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}). Where those seeds define a demo
- * world programmatically, this one only registers the real repositories: their daemons, actions and
- * bootstrap chain all arrive declaratively from each repo's committed {@code .qits-config.yml} on
- * clone.
+ * {@code docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}). Where
+ * those seeds define a demo world programmatically, this one only registers the real repositories:
+ * their daemons, actions and bootstrap chain all arrive declaratively from each repo's committed
+ * {@code .qits-config.yml} on clone.
  *
  * <p>The seed is a small in-code {@linkplain #manifest() manifest} — the project name plus an
  * ordered list of desired repositories — <b>reconciled additively on every boot</b>. Growing the

@@ -26,14 +26,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Reconcile coverage for the startup self-seed (see {@code
- * docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}), offline through the module's global {@code
- * FakeContainerRuntime} — no docker, no GitHub. The manifest urls are redirected to committed
- * fixtures: the qits-backend slot to {@code submodule-super.git} (direct children child-a + shared,
- * and child-a nests grandchild — the depth that exercises the one-level deep import, standing in
- * for the real quarkus-angular child's nested {@code webui} edge), the qits-angular slot to the
- * plain {@code testing-repo.git}. Asserts the additive, per-item-idempotent reconcile: creates the
- * project + both repos + siblings + the nested edge, a re-run is a full no-op, a half-seeded state
- * is completed, and rows the manifest does not own are untouched.
+ * docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}), offline through
+ * the module's global {@code FakeContainerRuntime} — no docker, no GitHub. The manifest urls are
+ * redirected to committed fixtures: the qits-backend slot to {@code submodule-super.git} (direct
+ * children child-a + shared, and child-a nests grandchild — the depth that exercises the one-level
+ * deep import, standing in for the real quarkus-angular child's nested {@code webui} edge), the
+ * qits-angular slot to the plain {@code testing-repo.git}. Asserts the additive,
+ * per-item-idempotent reconcile: creates the project + both repos + siblings + the nested edge, a
+ * re-run is a full no-op, a half-seeded state is completed, and rows the manifest does not own are
+ * untouched.
  */
 @QuarkusTest
 @TestProfile(SelfSeedServiceTest.TestProfile.class)

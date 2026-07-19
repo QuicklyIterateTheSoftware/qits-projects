@@ -11,11 +11,11 @@ import org.jboss.logging.Logger;
 
 /**
  * Startup gate for the {@link SelfSeedService} reconcile (see {@code
- * docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}). Runs only on a packaged deployment ({@link
- * LaunchMode#NORMAL} — jar / native / prod image), never under {@code quarkus:dev} or tests, and
- * only when the kill-switch is on. Startup is the deliberate home: reconciliation must run on every
- * release rollout so manifest additions land, and boot is a deployment's only guaranteed "new code
- * is now running" moment.
+ * docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}). Runs only on a
+ * packaged deployment ({@link LaunchMode#NORMAL} — jar / native / prod image), never under {@code
+ * quarkus:dev} or tests, and only when the kill-switch is on. Startup is the deliberate home:
+ * reconciliation must run on every release rollout so manifest additions land, and boot is a
+ * deployment's only guaranteed "new code is now running" moment.
  *
  * <p>Living in {@code service} (not {@code domain}) means it fires only when the web app boots —
  * the {@code cli} command-mode app, which also boots {@code domain}, never self-seeds. The

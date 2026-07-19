@@ -143,14 +143,14 @@ public class RepositoryController {
   }
 
   public static record PullRepositoryRequest() {
-    public record Response(String output) {}
+    public record Response(String technicalProcessId) {}
   }
 
   @POST
   @Path("/{repoId}/pull")
   public PullRepositoryRequest.Response pull(@PathParam("repoId") String repoId) {
-    String output = repositoryService.pullRepository(repoId);
-    return new PullRepositoryRequest.Response(output);
+    String technicalProcessId = repositoryService.beginPullRepository(repoId);
+    return new PullRepositoryRequest.Response(technicalProcessId);
   }
 
   public static record PushRepositoryRequest() {

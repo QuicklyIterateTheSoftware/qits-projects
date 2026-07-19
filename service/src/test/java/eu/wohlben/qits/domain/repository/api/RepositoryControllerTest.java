@@ -163,16 +163,37 @@ public class RepositoryControllerTest {
   }
 
   @Test
-  public void testPullAndPush() {
+  public void testPullReturnsTechnicalProcessIdImmediately() {
     String repoId = createProjectAndRepository();
 
+    // Pull is asynchronous: the POST registers a technical process and returns its id right away —
+    // the recursive walk streams over the process's SSE, not the HTTP response.
     given()
         .contentType(ContentType.JSON)
         .body(new RepositoryController.PullRepositoryRequest())
         .when()
         .post("/api/repositories/" + repoId + "/pull")
         .then()
-        .statusCode(Response.Status.OK.getStatusCode());
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("technicalProcessId", not(emptyOrNullString()));
+  }
+
+  @Test
+  public void testPullUnknownRepositoryIs404InRequest() {
+    // The repo id is validated in-request before any process is registered, so a bad id is a plain
+    // 404, not a streamed failure.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new RepositoryController.PullRepositoryRequest())
+        .when()
+        .post("/api/repositories/does-not-exist/pull")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  @Test
+  public void testPush() {
+    String repoId = createProjectAndRepository();
 
     given()
         .contentType(ContentType.JSON)

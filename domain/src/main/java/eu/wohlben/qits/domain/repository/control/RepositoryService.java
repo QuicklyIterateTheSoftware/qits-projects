@@ -4,6 +4,8 @@ import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.featureflow.control.FeatureFlowPhaseActionService;
+import eu.wohlben.qits.domain.process.control.TechnicalProcess;
+import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
@@ -13,6 +15,8 @@ import eu.wohlben.qits.domain.repository.entity.RepositorySubmodule;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.RepositorySubmoduleRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
+import io.quarkus.narayana.jta.QuarkusTransaction;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -25,6 +29,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -52,6 +58,26 @@ public class RepositoryService {
   @Inject RepositorySubmoduleRepository repositorySubmoduleRepository;
 
   @Inject FeatureFlowPhaseActionService featureFlowPhaseActionService;
+
+  @Inject TechnicalProcessRegistry processes;
+
+  /**
+   * Runs {@link #beginPullRepository}'s recursive pull off the request thread — the HTTP call
+   * returns the technical-process id immediately and the browser watches the walk repo by repo over
+   * SSE. Mirrors {@code WorkspaceService}'s provision executor.
+   */
+  private final ExecutorService processExecutor =
+      Executors.newCachedThreadPool(
+          runnable -> {
+            Thread thread = new Thread(runnable, "repository-pull");
+            thread.setDaemon(true);
+            return thread;
+          });
+
+  @PreDestroy
+  void shutdown() {
+    processExecutor.shutdownNow();
+  }
 
   @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
   String dataDir;
@@ -253,59 +279,143 @@ public class RepositoryService {
    * unadvertised object".
    */
   public String pullRepository(String repoId) {
-    return pullRepository(repoId, new HashSet<>());
+    return pullRepository(repoId, new HashSet<>(), null, null, new HashSet<>());
   }
 
   /**
-   * {@link #pullRepository(String)} with the recursion state over the imported submodule edge
-   * graph: {@code visited} both terminates cycles (the {@code submodule-cycle-*} pair) and dedups
-   * the diamond (a shared child is pulled once per invocation).
+   * The streamed pull: registers a repository-scoped {@link TechnicalProcess} <em>before</em> any
+   * git runs (so the currently-fetching repo is visible while its {@code git fetch} blocks on the
+   * network), runs the recursive walk on a worker thread, and returns the process id immediately.
+   * The browser watches the walk repo by repo over the process's SSE stream — one segment per
+   * pulled repository; failures surface there (live, untruncated), not as an HTTP error. Throws 404
+   * in-request when the repository doesn't exist, so a bad id still fails fast. Mirrors {@code
+   * WorkspaceService.beginEnsureContainer}.
    */
-  private String pullRepository(String repoId, Set<String> visited) {
+  public String beginPullRepository(String repoId) {
+    // Validate in-request (unknown id → plain 404, not a process) and name the root segment by the
+    // repo's url basename — Repository has no display name; this is the identity the WARNING lines
+    // (and reposByName in tests) already use.
+    String rootSegment =
+        QuarkusTransaction.requiringNew()
+            .call(() -> "pull:" + Path.of(get(repoId).url).getFileName().toString());
+    // Segment names double as the segment key, so they must be unique across the whole walk: two
+    // repos reached under the same relative path (nested levels, or a child path equal to the root
+    // basename) would otherwise collide and a failed one's verdict would be swallowed by the
+    // first's
+    // `ok`. Threaded through the recursion, this allocator disambiguates a repeat with a suffix.
+    Set<String> usedSegments = new HashSet<>();
+    usedSegments.add(rootSegment);
+    TechnicalProcess process = processes.beginForRepository(repoId);
+    processExecutor.submit(
+        () -> {
+          try {
+            pullRepository(repoId, new HashSet<>(), process, rootSegment, usedSegments);
+            // No asynchronous second phase: declare an empty daemon set and settle the provision so
+            // `done` fires immediately. A child segment settled `failed` still makes finish()
+            // compute overall `done failed`.
+            process.expectDaemons(List.of());
+            process.finishProvision(true);
+          } catch (RuntimeException e) {
+            // Root failure (diverged branch, unreachable remote): settle the open root segment
+            // failed (appending the message) and emit `done failed`. Idempotent.
+            process.failProvision(e.getMessage());
+            LOG.debugf(e, "Streamed pull failed for repository %s", repoId);
+          }
+        });
+    return process.id();
+  }
+
+  /** The scalar snapshot a single repo's pull needs, read in one short transaction. */
+  private record PullContext(String url, String branch, Path workdir, boolean hasMainWorkspace) {}
+
+  /** A submodule edge flattened to scalars, so it outlives the transaction that loaded it. */
+  private record ChildEdge(String path, String childId, String childUrl) {}
+
+  /**
+   * {@link #pullRepository(String)} with the recursion state over the imported submodule edge graph
+   * and an optional {@link TechnicalProcess} sink: {@code visited} both terminates cycles (the
+   * {@code submodule-cycle-*} pair) and dedups the diamond (a shared child is pulled once per
+   * invocation — so it gets exactly one segment, under the first edge that reached it, and a cycle
+   * never reopens one). With a process, this repo's own pull is streamed as {@code segmentName}
+   * (opened at entry, settled when it completes); {@code process}/{@code segmentName} are null for
+   * the synchronous callers ({@code syncRepository}), leaving them untouched.
+   *
+   * <p>Runs on a worker thread when streaming, so every DB touch opens its own transaction.
+   */
+  private String pullRepository(
+      String repoId,
+      Set<String> visited,
+      TechnicalProcess process,
+      String segmentName,
+      Set<String> usedSegments) {
     if (!visited.add(repoId)) {
       return "";
     }
-    Repository repo = get(repoId);
-    Path originPath = requireOrigin(repoId);
-    String branch = resolveMainBranch(repo, originPath);
+    if (process != null && segmentName != null) {
+      process.openSegment(segmentName);
+    }
 
     // The main branch lives in its default workspace, so pull there: git refuses to fetch-update a
     // ref that is checked out, and updating it behind the workspace's back would desync the working
     // tree. We fetch by URL (into FETCH_HEAD, not refs/heads/*) and fast-forward the workspace,
-    // which
-    // moves the ref and the checkout together. Fall back to the bare origin for a repo with no main
-    // workspace.
-    Optional<Path> mainWorkspace = workspaceService.workspacePathForBranch(repoId, branch);
-    Path workdir = mainWorkspace.orElse(originPath);
+    // which moves the ref and the checkout together. Fall back to the bare origin for a repo with
+    // no main workspace.
+    PullContext ctx =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  Repository repo = get(repoId);
+                  Path originPath = requireOrigin(repoId);
+                  String branch = resolveMainBranch(repo, originPath);
+                  Optional<Path> mainWorkspace =
+                      workspaceService.workspacePathForBranch(repoId, branch);
+                  return new PullContext(
+                      repo.url,
+                      branch,
+                      mainWorkspace.orElse(originPath),
+                      mainWorkspace.isPresent());
+                });
 
     try {
       // `--end-of-options`: url and branch are positional, never parsed as flags, so neither a
       // dash-leading url (already rejected at clone) nor branch can smuggle a git flag.
       String fetchOutput =
-          git.exec(workdir.toFile(), "git", "fetch", "--end-of-options", repo.url, branch);
-      String remoteSha = git.exec(workdir.toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
+          git.exec(
+              ctx.workdir().toFile(), "git", "fetch", "--end-of-options", ctx.url(), ctx.branch());
+      streamLines(process, segmentName, fetchOutput);
+      String remoteSha = git.exec(ctx.workdir().toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
       String localSha =
-          git.exec(workdir.toFile(), "git", "rev-parse", "refs/heads/" + branch).trim();
+          git.exec(ctx.workdir().toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch()).trim();
 
-      if (remoteSha.equals(localSha) || isAncestor(workdir, remoteSha, localSha)) {
+      if (remoteSha.equals(localSha) || isAncestor(ctx.workdir(), remoteSha, localSha)) {
         // Already up to date, or local is ahead — nothing to pull; children may still be stale.
-        return withImportedChildPulls(repoId, fetchOutput, visited);
+        streamLine(
+            process,
+            segmentName,
+            remoteSha.equals(localSha) ? "Already up to date" : "Local branch is ahead of remote");
+        settleOk(process, segmentName);
+        return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
       }
-      if (isAncestor(workdir, localSha, remoteSha)) {
+      if (isAncestor(ctx.workdir(), localSha, remoteSha)) {
         // Remote is strictly ahead — fast-forward.
-        if (mainWorkspace.isPresent()) {
+        if (ctx.hasMainWorkspace()) {
           // Update the ref and the working tree together (the branch is checked out here).
-          git.exec(workdir.toFile(), "git", "merge", "--ff-only", "--end-of-options", remoteSha);
+          git.exec(
+              ctx.workdir().toFile(), "git", "merge", "--ff-only", "--end-of-options", remoteSha);
         } else {
-          git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + branch, remoteSha);
+          git.exec(
+              ctx.workdir().toFile(), "git", "update-ref", "refs/heads/" + ctx.branch(), remoteSha);
         }
+        streamLine(process, segmentName, "Fast-forwarded to " + shortSha(remoteSha));
         // The main branch advanced — re-ingest .qits-config.yml from its new tip in the bare
         // origin.
         ingestConfigQuietly(repoId);
-        return withImportedChildPulls(repoId, fetchOutput, visited);
+        streamConfigOutcome(process, segmentName, repoId);
+        settleOk(process, segmentName);
+        return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
       }
       throw new BadRequestException(
-          "Branch '" + branch + "' has diverged from the remote; manual merge required");
+          "Branch '" + ctx.branch() + "' has diverged from the remote; manual merge required");
     } catch (BadRequestException e) {
       throw e;
     } catch (Exception e) {
@@ -317,28 +427,107 @@ public class RepositoryService {
    * Pulls each imported submodule child after {@code repoId}'s own successful pull, appending their
    * outputs. A child failure (diverged, unreachable remote) degrades loudly, never blocks: the
    * superproject's pull already succeeded, so the child's error becomes a WARNING line in the
-   * returned output instead of failing the whole operation.
+   * returned output (for the synchronous callers) and, when streaming, settles the child's segment
+   * {@code failed} while the walk continues to the remaining children.
    */
-  private String withImportedChildPulls(String repoId, String ownOutput, Set<String> visited) {
+  private String withImportedChildPulls(
+      String repoId,
+      String ownOutput,
+      Set<String> visited,
+      TechnicalProcess process,
+      Set<String> usedSegments) {
+    List<ChildEdge> edges =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () ->
+                    repositorySubmoduleRepository.findByParentId(repoId).stream()
+                        .map(e -> new ChildEdge(e.path, e.child.id, e.child.url))
+                        .toList());
     StringBuilder output = new StringBuilder(ownOutput.trim());
-    for (RepositorySubmodule edge : repositorySubmoduleRepository.findByParentId(repoId)) {
+    for (ChildEdge edge : edges) {
+      String childSegment = allocateSegment("pull:" + edge.path(), usedSegments);
       try {
-        String childOutput = pullRepository(edge.child.id, visited).trim();
+        String childOutput =
+            pullRepository(edge.childId(), visited, process, childSegment, usedSegments).trim();
         if (!childOutput.isBlank()) {
           output.append('\n').append(childOutput);
         }
       } catch (Exception e) {
-        LOG.warnf(e, "Pull of imported submodule '%s' of repository %s failed", edge.path, repoId);
+        LOG.warnf(
+            e, "Pull of imported submodule '%s' of repository %s failed", edge.path(), repoId);
         output
             .append("\nWARNING: pull of imported submodule '")
-            .append(edge.path)
+            .append(edge.path())
             .append("' (")
-            .append(edge.child.url)
+            .append(edge.childUrl())
             .append(") failed: ")
             .append(e.getMessage());
+        if (process != null) {
+          process.appendLine(childSegment, "pull failed: " + e.getMessage());
+          process.settleSegment(childSegment, false);
+        }
       }
     }
     return output.toString();
+  }
+
+  private static String shortSha(String sha) {
+    return sha.length() > 12 ? sha.substring(0, 12) : sha;
+  }
+
+  /**
+   * A segment name for {@code base} unique within {@code usedSegments} (registering it): the plain
+   * base, or {@code base (2)}, {@code base (3)}, … when two repos in one walk share a relative
+   * path.
+   */
+  private static String allocateSegment(String base, Set<String> usedSegments) {
+    String name = base;
+    for (int n = 2; !usedSegments.add(name); n++) {
+      name = base + " (" + n + ")";
+    }
+    return name;
+  }
+
+  private static void settleOk(TechnicalProcess process, String segmentName) {
+    if (process != null && segmentName != null) {
+      process.settleSegment(segmentName, true);
+    }
+  }
+
+  private static void streamLine(TechnicalProcess process, String segmentName, String line) {
+    if (process != null && segmentName != null) {
+      process.appendLine(segmentName, line);
+    }
+  }
+
+  /**
+   * Splits captured git output into lines and appends them to the segment (a no-op sans process).
+   */
+  private static void streamLines(TechnicalProcess process, String segmentName, String output) {
+    if (process == null || segmentName == null || output == null || output.isBlank()) {
+      return;
+    }
+    // Default limit drops trailing empty lines (git output usually ends in a newline) while keeping
+    // interior blank lines, so a fetch blob doesn't add a stray blank line to the segment.
+    for (String line : output.split("\n")) {
+      process.appendLine(segmentName, line);
+    }
+  }
+
+  /**
+   * Reports the .qits-config.yml re-ingestion outcome into the segment after a main-branch advance.
+   */
+  private void streamConfigOutcome(TechnicalProcess process, String segmentName, String repoId) {
+    if (process == null || segmentName == null) {
+      return;
+    }
+    String warning = QuarkusTransaction.requiringNew().call(() -> get(repoId).configWarning);
+    if (warning == null || warning.isBlank()) {
+      process.appendLine(segmentName, "Re-ingested .qits-config.yml");
+    } else {
+      process.appendLine(segmentName, "Re-ingested .qits-config.yml with warnings:");
+      streamLines(process, segmentName, warning);
+    }
   }
 
   /**

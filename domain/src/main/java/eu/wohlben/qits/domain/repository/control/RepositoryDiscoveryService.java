@@ -8,6 +8,8 @@ import eu.wohlben.qits.domain.repository.entity.WorkspaceRuntimeStatus;
 import eu.wohlben.qits.domain.repository.entity.WorkspaceStatus;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceEventRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspacePromptAttachmentRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspacePromptDraftRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -43,6 +45,10 @@ public class RepositoryDiscoveryService {
   @Inject WorkspaceRepository workspaceRepository;
 
   @Inject WorkspaceEventRepository workspaceEventRepository;
+
+  @Inject WorkspacePromptDraftRepository workspacePromptDraftRepository;
+
+  @Inject WorkspacePromptAttachmentRepository workspacePromptAttachmentRepository;
 
   @Transactional
   void onStart(@Observes StartupEvent event) {
@@ -138,6 +144,12 @@ public class RepositoryDiscoveryService {
             existing.status = WorkspaceStatus.ABANDONED;
             existing.resolvedAt = Instant.now();
             existing.runtimeStatus = WorkspaceRuntimeStatus.STOPPED;
+            // Abandonment is a soft-delete, so the workspace-child FK cascade never fires — hard
+            // delete the pre-launch prompt draft + its attachment BLOBs here too, exactly as the
+            // other termination paths (doDiscard, ensureContainer branch-gone) do, or they orphan
+            // and leak storage forever.
+            workspacePromptDraftRepository.deleteByWorkspaceId(existing.id);
+            workspacePromptAttachmentRepository.deleteByWorkspaceId(existing.id);
             workspaceEventRepository.persist(
                 WorkspaceEvent.builder()
                     .workspace(existing)

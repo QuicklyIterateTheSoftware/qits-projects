@@ -4,10 +4,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.project.persistence.ProjectRepository;
+import eu.wohlben.qits.domain.repository.entity.PromptAttachmentSource;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.repository.entity.Workspace;
+import eu.wohlben.qits.domain.repository.entity.WorkspacePromptAttachment;
+import eu.wohlben.qits.domain.repository.entity.WorkspacePromptDraft;
 import eu.wohlben.qits.domain.repository.entity.WorkspaceStatus;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspacePromptAttachmentRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspacePromptDraftRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
@@ -41,6 +47,10 @@ public class RepositoryDiscoveryServiceTest {
   @Inject RepositoryRepository repositoryRepository;
 
   @Inject WorkspaceRepository workspaceRepository;
+
+  @Inject WorkspacePromptDraftRepository promptDraftRepository;
+
+  @Inject WorkspacePromptAttachmentRepository promptAttachmentRepository;
 
   @Inject MetadataService metadataService;
 
@@ -151,5 +161,66 @@ public class RepositoryDiscoveryServiceTest {
             .anyMatch(
                 w -> "orphan-wt".equals(w.workspaceId) && w.status == WorkspaceStatus.ABANDONED),
         "orphaned workspace should be kept as ABANDONED history");
+  }
+
+  @Test
+  @Transactional
+  public void testDiscoveryAbandonmentDeletesPromptDraftAndAttachments() throws Exception {
+    String repoId = "repo-abandon-draft";
+    Path repoDir = Path.of(metadataService.getDataDir(), repoId);
+    Files.createDirectories(repoDir.resolve("origin"));
+
+    Project project = createProject();
+
+    Repository repo = new Repository();
+    repo.id = repoId;
+    repo.url = "https://example.com/abandon-draft.git";
+    repo.archetype = RepositoryArchetype.SERVICE;
+    repo.project = project;
+    repositoryRepository.persist(repo);
+
+    metadataService.writeRepositoryMetadata(repo);
+
+    containers.run(repoId, "draft-wt", "draft-wt", null);
+    discoveryService.discover();
+    Workspace workspace =
+        workspaceRepository.findActiveByRepositoryAndWorkspaceId(repoId, "draft-wt").orElseThrow();
+
+    // Seed the pre-launch composition state (a draft blob + an image attachment) that the
+    // other termination paths hard-delete on abandon.
+    WorkspacePromptDraft draft = new WorkspacePromptDraft();
+    draft.workspaceId = workspace.id;
+    draft.content = "{\"v\":1}";
+    promptDraftRepository.persist(draft);
+
+    WorkspacePromptAttachment attachment = new WorkspacePromptAttachment();
+    attachment.id = UUID.randomUUID().toString();
+    attachment.workspaceId = workspace.id;
+    attachment.mimeType = "image/png";
+    attachment.label = "Sketch 1";
+    attachment.source = PromptAttachmentSource.SKETCH;
+    attachment.bytes = new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47};
+    promptAttachmentRepository.persist(attachment);
+
+    // The container vanishes and the workspace has no branch to recreate from, so the next
+    // discovery reconciliation takes the ABANDONED path — which must leave no orphaned draft/BLOB.
+    containers.rm(containers.containerName("draft-wt", repoId));
+    discoveryService.discover();
+
+    // discover()'s cleanup is a bulk DELETE, which bypasses the L1 persistence cache — flush +
+    // clear
+    // so the assertions below read the DB, not the still-managed seeded entities (this whole test
+    // shares one transaction; in production discover() runs in its own).
+    promptDraftRepository.getEntityManager().flush();
+    promptDraftRepository.getEntityManager().clear();
+
+    assertTrue(
+        workspaceRepository.findActiveByRepositoryAndWorkspaceId(repoId, "draft-wt").isEmpty());
+    assertTrue(
+        promptDraftRepository.findByWorkspaceId(workspace.id).isEmpty(),
+        "draft row must be gone after discovery abandonment");
+    assertTrue(
+        promptAttachmentRepository.listByWorkspaceId(workspace.id).isEmpty(),
+        "attachment rows must be gone after discovery abandonment");
   }
 }

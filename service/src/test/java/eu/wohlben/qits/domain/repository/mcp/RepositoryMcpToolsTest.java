@@ -237,6 +237,59 @@ public class RepositoryMcpToolsTest {
         .thenAssertResults();
   }
 
+  /**
+   * A client on the repository server carrying the {@code agentReadOnly=true} query-param marker an
+   * autonomous (unattended, skip-permissions) launch stamps into its MCP URL.
+   */
+  private McpStreamableTestClient readOnlyClient(String projectId) {
+    return McpAssured.newStreamableClient()
+        .setMcpPath("/mcp/repository?" + ReadOnlyRepositoryToolFilter.READ_ONLY_PARAM + "=true")
+        .setAdditionalHeaders(
+            msg -> {
+              MultiMap headers = MultiMap.caseInsensitiveMultiMap();
+              if (projectId != null) {
+                headers.add(ProjectScope.PROJECT_HEADER, projectId);
+              }
+              return headers;
+            })
+        .build()
+        .connect();
+  }
+
+  @Test
+  public void readOnlyMarkerHidesEveryMutatingToolIncludingRunAction() {
+    // An unattended read-only run (conflict resolution) attaches this server only for taskPrompt;
+    // it
+    // must not be able to drive host-side mutations — runAction (execute a configured action
+    // script)
+    // included, the gap this test guards.
+    String project = createProject("ReadOnly");
+    readOnlyClient(project)
+        .when()
+        .toolsList(
+            page -> {
+              var names = page.tools().stream().map(t -> t.name()).toList();
+              for (String mutating :
+                  java.util.List.of(
+                      "createWorkspace",
+                      "cleanupBranch",
+                      "integrateBranch",
+                      "mergeParentIntoWorkspace",
+                      "runAction")) {
+                assertFalse(
+                    names.contains(mutating),
+                    "read-only run still exposes mutating tool " + mutating + ": " + names);
+              }
+              // The read-only tools stay available (the run still needs to inspect the repository).
+              // taskPrompt is absent for a different reason — it needs workspace scope this
+              // project-only client doesn't carry — so it isn't asserted here.
+              assertTrue(
+                  names.contains("listRepositories"), "read-only tool wrongly hidden: " + names);
+              assertTrue(names.contains("listActions"), "read-only tool wrongly hidden: " + names);
+            })
+        .thenAssertResults();
+  }
+
   @Test
   public void discoveryToolsAreNotExposedOnTheRepositoryServer() {
     // The discovery tools live only on the default server; the repository server stays focused.

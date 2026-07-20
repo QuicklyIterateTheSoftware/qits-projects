@@ -2,6 +2,7 @@ package eu.wohlben.qits.domain.repository.api;
 
 import eu.wohlben.qits.domain.repository.control.WorkspacePromptAttachmentService;
 import eu.wohlben.qits.domain.repository.control.WorkspacePromptDraftService;
+import eu.wohlben.qits.domain.repository.dto.WorkspacePromptAttachmentDataDto;
 import eu.wohlben.qits.domain.repository.dto.WorkspacePromptDraftDto;
 import eu.wohlben.qits.domain.repository.entity.WorkspacePromptAttachment;
 import eu.wohlben.qits.domain.repository.entity.WorkspacePromptDraft;
@@ -19,6 +20,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * The workspace's persisted prompt draft — one row per workspace, autosaved as the operator
@@ -73,6 +75,13 @@ public class WorkspacePromptDraftController {
       @NotNull String source,
       @NotNull String dataBase64) {
     public record Response(String id) {}
+  }
+
+  @GET
+  @Path("attachments")
+  public List<WorkspacePromptAttachmentDataDto> listAttachments(
+      @PathParam("repoId") String repoId, @PathParam("workspaceId") String workspaceId) {
+    return attachmentService.listAttachments(repoId, workspaceId);
   }
 
   @POST

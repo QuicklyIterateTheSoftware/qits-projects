@@ -299,6 +299,71 @@ public class WorkspacePromptAttachmentControllerTest {
   }
 
   @Test
+  public void listReturnsRowsOldestFirstWithDataBase64Roundtripped() {
+    String repoId = createProjectAndRepository();
+
+    String firstData = Base64.getEncoder().encodeToString(PNG);
+    String secondData = Base64.getEncoder().encodeToString(JPEG);
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new WorkspacePromptDraftController.AddAttachmentRequest(
+                "image/png", "Sketch 1", "sketch", firstData))
+        .when()
+        .post(attachmentsUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new WorkspacePromptDraftController.AddAttachmentRequest(
+                "image/jpeg", "Pasted image 1", "paste", secondData))
+        .when()
+        .post(attachmentsUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    given()
+        .when()
+        .get(attachmentsUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("size()", is(2))
+        // Oldest first (attach order); each row carries its base64 payload byte-identical to input.
+        .body("[0].label", is("Sketch 1"))
+        .body("[0].mimeType", is("image/png"))
+        .body("[0].source", is("SKETCH"))
+        .body("[0].dataBase64", is(firstData))
+        .body("[1].label", is("Pasted image 1"))
+        .body("[1].source", is("PASTE"))
+        .body("[1].dataBase64", is(secondData));
+  }
+
+  @Test
+  public void listReturnsEmptyArrayWhenNoneAttached() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .when()
+        .get(attachmentsUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("size()", is(0));
+  }
+
+  @Test
+  public void listUnknownWorkspaceReturns404() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .when()
+        .get(attachmentsUrl(repoId, "no-such-workspace"))
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  @Test
   public void deleteRemovesTheAttachment() {
     String repoId = createProjectAndRepository();
 

@@ -32,10 +32,18 @@ public class ReadOnlyRepositoryToolFilter implements ToolFilter {
   /**
    * The mutating tools of the "repository" MCP server (see {@code RepositoryMcpTools}); everything
    * else it exposes is read-only. Kept explicit so a newly added mutating tool is a conscious
-   * choice to add here.
+   * choice to add here. {@code runAction} executes a configured action script in a workspace
+   * container — a host-side side effect — so it must be hidden from an unattended read-only run
+   * just like the branch/workspace mutators, else a conflict-resolution agent steered by an
+   * untrusted commit message could run arbitrary actions with no human in the loop.
    */
   private static final Set<String> MUTATING_TOOLS =
-      Set.of("createWorkspace", "cleanupBranch", "integrateBranch", "mergeParentIntoWorkspace");
+      Set.of(
+          "createWorkspace",
+          "cleanupBranch",
+          "integrateBranch",
+          "mergeParentIntoWorkspace",
+          "runAction");
 
   @Inject HttpServerRequest request;
 

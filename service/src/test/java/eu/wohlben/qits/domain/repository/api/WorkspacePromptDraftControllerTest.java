@@ -20,7 +20,15 @@ import jakarta.ws.rs.core.Response;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 @QuarkusTest
@@ -197,6 +205,63 @@ public class WorkspacePromptDraftControllerTest {
         .statusCode(Response.Status.OK.getStatusCode())
         .body("content", equalTo("{\"v\":2}"))
         .body("serializedPrompt", equalTo("two"));
+  }
+
+  @Test
+  public void concurrentFirstSavesUpsertWithoutRacingToA500() throws Exception {
+    String repoId = createProjectAndRepository();
+
+    // Two+ clients (two tabs / two devices — the exact cross-device flow the feature targets)
+    // autosave the *very first* draft for a draftless workspace at the same instant. Before the
+    // atomic MERGE upsert, all of them found no row, all built the same shared PK, and every insert
+    // but the winner's 500'd on the primary-key violation (dropping that autosave). Regression: the
+    // upsert serializes them under the row lock, so every concurrent first-save is a clean 200.
+    int n = 8;
+    ExecutorService pool = Executors.newFixedThreadPool(n);
+    CountDownLatch ready = new CountDownLatch(n);
+    CountDownLatch go = new CountDownLatch(1);
+    List<Future<Integer>> futures = new ArrayList<>();
+    try {
+      for (int i = 0; i < n; i++) {
+        final int v = i;
+        futures.add(
+            pool.submit(
+                () -> {
+                  ready.countDown();
+                  go.await(); // release all requests together to maximize the collision window
+                  return given()
+                      .contentType(ContentType.JSON)
+                      .body(
+                          new WorkspacePromptDraftController.SaveDraftRequest(
+                              "{\"v\":" + v + "}", "p" + v))
+                      .when()
+                      .put(draftUrl(repoId, "master"))
+                      .then()
+                      .extract()
+                      .statusCode();
+                }));
+      }
+      ready.await();
+      go.countDown();
+      for (Future<Integer> f : futures) {
+        int status = f.get(20, TimeUnit.SECONDS);
+        Assertions.assertEquals(
+            200,
+            status,
+            "a concurrent first-save must upsert cleanly, not error (got " + status + ")");
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+
+    // Exactly one row survived, holding one of the concurrent writes (last-write-wins).
+    given()
+        .when()
+        .get(draftUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("content", startsWith("{\"v\":"))
+        .body("serializedPrompt", startsWith("p"));
   }
 
   @Test

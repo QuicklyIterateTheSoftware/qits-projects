@@ -7,6 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.domain.repository.persistence.WorkspacePromptDraftRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
+import eu.wohlben.qits.domain.workspace.api.HintCollector;
+import eu.wohlben.qits.domain.workspace.control.WorkspaceChangeHint;
+import eu.wohlben.qits.domain.workspace.control.WorkspaceChangeHint.Topic;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
@@ -44,6 +47,8 @@ public class WorkspacePromptDraftControllerTest {
   @Inject WorkspaceRepository workspaceRepository;
 
   @Inject WorkspacePromptDraftRepository draftRepository;
+
+  @Inject HintCollector hintCollector;
 
   @org.eclipse.microprofile.config.inject.ConfigProperty(name = "qits.repositories.data-dir")
   String dataDir;
@@ -84,6 +89,27 @@ public class WorkspacePromptDraftControllerTest {
   /** The draft endpoint for a workspace (the fresh repo always has a "master" main workspace). */
   private String draftUrl(String repoId, String workspaceId) {
     return "/api/repositories/" + repoId + "/workspaces/" + workspaceId + "/prompt-draft";
+  }
+
+  /**
+   * Drain the async hint bus until a {@link Topic#PROMPT_DRAFT} hint for {@code repoId} arrives
+   * (ignoring unrelated hints from fixture setup), or time out. Clear the collector right before
+   * the mutation under test so this only sees the hint that mutation fired.
+   */
+  private WorkspaceChangeHint awaitPromptDraftHint(String repoId, long timeoutMs)
+      throws InterruptedException {
+    long deadline = System.currentTimeMillis() + timeoutMs;
+    long remaining;
+    while ((remaining = deadline - System.currentTimeMillis()) > 0) {
+      WorkspaceChangeHint hint = hintCollector.poll(remaining);
+      if (hint == null) {
+        return null;
+      }
+      if (hint.repoId().equals(repoId) && hint.topic() == Topic.PROMPT_DRAFT) {
+        return hint;
+      }
+    }
+    return null;
   }
 
   private void createWorkspace(String repoId, String id, String parent, String branch) {
@@ -195,6 +221,48 @@ public class WorkspacePromptDraftControllerTest {
         .get(draftUrl(repoId, "master"))
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  @Test
+  public void putFiresAPromptDraftHint() throws InterruptedException {
+    String repoId = createProjectAndRepository();
+    // Clear fixture-setup noise so the drain only sees the hint this PUT fires.
+    hintCollector.clear();
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new WorkspacePromptDraftController.SaveDraftRequest("{\"v\":1}", "x"))
+        .when()
+        .put(draftUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    WorkspaceChangeHint hint = awaitPromptDraftHint(repoId, 2000);
+    org.junit.jupiter.api.Assertions.assertNotNull(hint, "PUT should fire a PROMPT_DRAFT hint");
+    org.junit.jupiter.api.Assertions.assertEquals("master", hint.workspaceId());
+  }
+
+  @Test
+  public void deleteFiresAPromptDraftHint() throws InterruptedException {
+    String repoId = createProjectAndRepository();
+    given()
+        .contentType(ContentType.JSON)
+        .body(new WorkspacePromptDraftController.SaveDraftRequest("{\"v\":1}", "x"))
+        .when()
+        .put(draftUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+    hintCollector.clear();
+
+    given()
+        .when()
+        .delete(draftUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.NO_CONTENT.getStatusCode());
+
+    WorkspaceChangeHint hint = awaitPromptDraftHint(repoId, 2000);
+    org.junit.jupiter.api.Assertions.assertNotNull(hint, "DELETE should fire a PROMPT_DRAFT hint");
+    org.junit.jupiter.api.Assertions.assertEquals("master", hint.workspaceId());
   }
 
   @Test

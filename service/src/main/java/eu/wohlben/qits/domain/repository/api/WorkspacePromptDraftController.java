@@ -1,7 +1,9 @@
 package eu.wohlben.qits.domain.repository.api;
 
+import eu.wohlben.qits.domain.repository.control.WorkspacePromptAttachmentService;
 import eu.wohlben.qits.domain.repository.control.WorkspacePromptDraftService;
 import eu.wohlben.qits.domain.repository.dto.WorkspacePromptDraftDto;
+import eu.wohlben.qits.domain.repository.entity.WorkspacePromptAttachment;
 import eu.wohlben.qits.domain.repository.entity.WorkspacePromptDraft;
 import eu.wohlben.qits.domain.repository.mapper.WorkspacePromptDraftMapper;
 import jakarta.inject.Inject;
@@ -10,6 +12,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -32,6 +35,8 @@ public class WorkspacePromptDraftController {
   @Inject WorkspacePromptDraftService promptDraftService;
 
   @Inject WorkspacePromptDraftMapper promptDraftMapper;
+
+  @Inject WorkspacePromptAttachmentService attachmentService;
 
   @GET
   public WorkspacePromptDraftDto get(
@@ -60,5 +65,39 @@ public class WorkspacePromptDraftController {
   public void delete(
       @PathParam("repoId") String repoId, @PathParam("workspaceId") String workspaceId) {
     promptDraftService.deleteDraft(repoId, workspaceId);
+  }
+
+  public static record AddAttachmentRequest(
+      @NotNull String mimeType,
+      @NotNull String label,
+      @NotNull String source,
+      @NotNull String dataBase64) {
+    public record Response(String id) {}
+  }
+
+  @POST
+  @Path("attachments")
+  public AddAttachmentRequest.Response addAttachment(
+      @PathParam("repoId") String repoId,
+      @PathParam("workspaceId") String workspaceId,
+      @Valid @NotNull AddAttachmentRequest request) {
+    WorkspacePromptAttachment attachment =
+        attachmentService.addAttachment(
+            repoId,
+            workspaceId,
+            request.mimeType(),
+            request.label(),
+            request.source(),
+            request.dataBase64());
+    return new AddAttachmentRequest.Response(attachment.id);
+  }
+
+  @DELETE
+  @Path("attachments/{attachmentId}")
+  public void deleteAttachment(
+      @PathParam("repoId") String repoId,
+      @PathParam("workspaceId") String workspaceId,
+      @PathParam("attachmentId") String attachmentId) {
+    attachmentService.deleteAttachment(repoId, workspaceId, attachmentId);
   }
 }

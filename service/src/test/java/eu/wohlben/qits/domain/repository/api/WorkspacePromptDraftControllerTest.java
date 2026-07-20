@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.domain.repository.control.WorkspacePromptDraftService;
 import eu.wohlben.qits.domain.repository.persistence.WorkspacePromptDraftRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import eu.wohlben.qits.domain.workspace.api.HintCollector;
@@ -55,6 +56,8 @@ public class WorkspacePromptDraftControllerTest {
   @Inject WorkspaceRepository workspaceRepository;
 
   @Inject WorkspacePromptDraftRepository draftRepository;
+
+  @Inject WorkspacePromptDraftService promptDraftService;
 
   @Inject HintCollector hintCollector;
 
@@ -262,6 +265,73 @@ public class WorkspacePromptDraftControllerTest {
         .statusCode(Response.Status.OK.getStatusCode())
         .body("content", startsWith("{\"v\":"))
         .body("serializedPrompt", startsWith("p"));
+  }
+
+  /** PUT a draft for a workspace, asserting the 200. */
+  private void putDraft(String repoId, String workspaceId, String content, String serialized) {
+    given()
+        .contentType(ContentType.JSON)
+        .body(new WorkspacePromptDraftController.SaveDraftRequest(content, serialized))
+        .when()
+        .put(draftUrl(repoId, workspaceId))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+  }
+
+  @Test
+  public void draftExposesAMonotonicVersionAndUnsetRunTrackingUntilRun() {
+    String repoId = createProjectAndRepository();
+    putDraft(repoId, "master", "{\"v\":1}", "one");
+
+    // First save = version 1; nothing has been handed to an agent yet.
+    given()
+        .when()
+        .get(draftUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("promptVersion", equalTo(1))
+        .body("lastRunAt", nullValue())
+        .body("lastRunPromptVersion", nullValue())
+        .body("lastRunCommandId", nullValue());
+
+    // A content-changing save bumps the version monotonically.
+    putDraft(repoId, "master", "{\"v\":2}", "two");
+    given()
+        .when()
+        .get(draftUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("promptVersion", equalTo(2));
+  }
+
+  @Test
+  public void recordRunStampsTheDeliveredVersionAndCommand() {
+    String repoId = createProjectAndRepository();
+    putDraft(repoId, "master", "{\"v\":1}", "the task");
+
+    // A composed prompt is deliverable, and recording a run stamps the version + command that got
+    // it.
+    assertTrue(promptDraftService.hasDeliverablePrompt(repoId, "master"));
+    promptDraftService.recordRun(repoId, "master", "cmd-xyz");
+
+    given()
+        .when()
+        .get(draftUrl(repoId, "master"))
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("lastRunPromptVersion", equalTo(1))
+        .body("lastRunCommandId", equalTo("cmd-xyz"))
+        .body("lastRunAt", not(emptyOrNullString()));
+  }
+
+  @Test
+  public void hasDeliverablePromptIsFalseWithoutMarkdownOrAttachments() {
+    String repoId = createProjectAndRepository();
+    // No draft row at all.
+    assertFalse(promptDraftService.hasDeliverablePrompt(repoId, "master"));
+    // A draft whose serialized prompt is blank and which has no attachments is not deliverable.
+    putDraft(repoId, "master", "{\"v\":1}", "   ");
+    assertFalse(promptDraftService.hasDeliverablePrompt(repoId, "master"));
   }
 
   @Test

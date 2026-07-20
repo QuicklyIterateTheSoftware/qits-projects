@@ -22,8 +22,9 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies the resolve-merge-conflict composed flow against a real diverged-with-conflict
  * repository cloned from the fixture: a workspace and its parent both change the same new file. The
- * flow forks a resolution workspace and launches an autonomous Claude agent, with the composed
- * prompt embedded in the launched command.
+ * flow forks a resolution workspace, persists the composed prompt as that workspace's prompt draft,
+ * and launches a fetch-model autonomous Claude run that pulls the prompt back over MCP via {@code
+ * taskPrompt} — so the launched command carries only the bootstrap turn, not the prompt itself.
  */
 @QuarkusTest
 @TestProfile(ResolveConflictServiceTest.TestProfile.class)
@@ -51,15 +52,23 @@ public class ResolveConflictServiceTest {
 
   @Inject CommandRepository commandRepository;
 
+  @Inject WorkspacePromptDraftService promptDraftService;
+
   @Inject GitExecutor git;
 
   @ConfigProperty(name = "qits.repositories.data-dir")
   String dataDir;
 
-  /** The exact shell line a launched command ran — where the resolve prompt is now embedded. */
+  /** The exact shell line a launched command ran — now the bootstrap turn, not the prompt. */
   private String executeScriptOf(String commandId) {
     return QuarkusTransaction.requiringNew()
         .call(() -> commandRepository.findById(commandId).executeScript);
+  }
+
+  /** The composed prompt now lives in the resolution workspace's draft (its serialized_prompt). */
+  private String serializedPromptOf(String repoId, String workspaceId) {
+    return QuarkusTransaction.requiringNew()
+        .call(() -> promptDraftService.getDraft(repoId, workspaceId).serializedPrompt);
   }
 
   /** Clones the fixture and builds a conflict on {@code feat} vs its parent {@code master}. */
@@ -109,7 +118,8 @@ public class ResolveConflictServiceTest {
   }
 
   @Test
-  public void resolveForksAWorkspaceAndLaunchesClaudeWithTheEmbeddedPrompt() throws Exception {
+  public void resolveForksAWorkspacePersistsThePromptAsItsDraftAndLaunchesAFetchRun()
+      throws Exception {
     String repoId = divergedRepo();
 
     var result = resolveConflictService.resolveConflict(repoId, "feat");
@@ -132,15 +142,23 @@ public class ResolveConflictServiceTest {
             .parent();
     assertEquals("master", resolutionParent);
 
-    // The composed prompt is embedded in the launched command (autonomous claude -p run), naming
-    // the
-    // parent and the divergence.
+    // The launched command is the fetch-model autonomous run: it carries the one-sentence bootstrap
+    // turn (not the prompt) and attaches the repository MCP server scoped to feat-resolve, so
+    // taskPrompt is reachable and workspace-narrowed.
     String script = executeScriptOf(result.commandId());
     assertTrue(script.startsWith("claude -p '"), script);
     assertTrue(script.endsWith(" --dangerously-skip-permissions"), script);
-    assertTrue(script.contains("diverged"), script);
-    assertTrue(script.contains("master"), "command should name the parent: " + script);
-    assertTrue(script.contains("Merge `master`"), "command should instruct the merge: " + script);
+    assertTrue(script.contains("/mcp/repository?"), script);
+    assertTrue(script.contains("&workspaceId=feat-resolve"), script);
+    assertFalse(
+        script.contains("diverged"), "the prompt must NOT be in the command line: " + script);
+
+    // The composed prompt lives in the resolution workspace's draft (serialized_prompt), naming the
+    // parent and the divergence — this is what the run fetches via taskPrompt.
+    String prompt = serializedPromptOf(repoId, "feat-resolve");
+    assertTrue(prompt.contains("diverged"), prompt);
+    assertTrue(prompt.contains("master"), "prompt should name the parent: " + prompt);
+    assertTrue(prompt.contains("Merge `master`"), "prompt should instruct the merge: " + prompt);
   }
 
   @Test
@@ -167,7 +185,7 @@ public class ResolveConflictServiceTest {
     git.exec(feat.toFile(), "git", "push", "origin", "feat");
 
     var result = resolveConflictService.resolveConflict(repoId, "feat");
-    String text = executeScriptOf(result.commandId());
+    String text = serializedPromptOf(repoId, "feat-resolve");
 
     // Exactly one BEGIN and one END marker — the forged closing marker the attacker embedded was
     // defused (its hyphen run collapsed), so it can't end the untrusted block early.

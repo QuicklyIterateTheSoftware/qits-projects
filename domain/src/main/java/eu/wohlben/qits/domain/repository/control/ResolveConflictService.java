@@ -8,6 +8,7 @@ import eu.wohlben.qits.domain.error.NotFoundException;
 import eu.wohlben.qits.domain.repository.dto.CommitDto;
 import eu.wohlben.qits.domain.repository.entity.Workspace;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
+import eu.wohlben.qits.domain.repository.persistence.WorkspacePromptDraftRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -24,10 +25,11 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * launches an autonomous Claude agent to merge the parent in and resolve the conflicts — leaving
  * the original workspace untouched until the human reviews the result.
  *
- * <p>The composed prompt (branch names and diverging commit lists) is handed to {@link
- * AgentLaunchService#launchAutonomous} as a plain string, which embeds it in the launch command via
- * the coding-agent builder — so there is no bespoke {@code claude} script or per-workspace prompt
- * file here; it goes through the same agent path as every other Claude launch.
+ * <p>The composed prompt (branch names and diverging commit lists) is persisted as the resolution
+ * workspace's prompt draft, and {@link AgentLaunchService#launchAutonomous} spawns a fetch-model
+ * run that pulls it back over MCP via {@code taskPrompt} — the same push→fetch delivery every other
+ * Claude launch now uses, so there is no bespoke {@code claude} script or per-workspace prompt file
+ * here.
  */
 @ApplicationScoped
 public class ResolveConflictService {
@@ -47,6 +49,8 @@ public class ResolveConflictService {
 
   @Inject AgentLaunchService agentLaunchService;
 
+  @Inject WorkspacePromptDraftRepository promptDraftRepository;
+
   @Inject GitExecutor git;
 
   @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
@@ -55,8 +59,8 @@ public class ResolveConflictService {
   /** The outcome of starting a resolution: where the human should watch Claude work. */
   public record ResolveResult(String workspaceId, String branch, String commandId) {}
 
-  /** The forked resolution workspace and the prompt to run in it, produced inside a transaction. */
-  private record Resolution(String resolutionId, String branch, String prompt) {}
+  /** The forked resolution workspace (its prompt is persisted as its draft), produced in a tx. */
+  private record Resolution(String resolutionId, String branch) {}
 
   /**
    * The files that merging {@code parent} into a workspace's branch would conflict on, for the
@@ -117,9 +121,10 @@ public class ResolveConflictService {
   public ResolveResult resolveConflict(String repoId, String workspaceId) {
     Resolution resolution =
         QuarkusTransaction.requiringNew().call(() -> prepareResolution(repoId, workspaceId));
+    // The draft was committed with the fork above, so the fetch-model autonomous run reads it back
+    // via taskPrompt; the launch attaches the narrowed repository MCP server for exactly that.
     CommandDto command =
-        agentLaunchService.launchAutonomous(
-            repoId, resolution.resolutionId(), RESOLVE_NAME, resolution.prompt());
+        agentLaunchService.launchAutonomous(repoId, resolution.resolutionId(), RESOLVE_NAME);
     return new ResolveResult(resolution.resolutionId(), resolution.branch(), command.id());
   }
 
@@ -159,8 +164,15 @@ public class ResolveConflictService {
     // merged — so it becomes cleanable — instead of merging back into itself.
     retargetParent(repoId, resolution, parent);
 
+    // Persist the composed prompt as the resolution workspace's draft — its serialized_prompt is
+    // what the autonomous run fetches via taskPrompt. The fork's workspace row already exists (its
+    // id is the draft's shared PK/FK), and this commits with the enclosing transaction, so the run
+    // spawned after it sees the draft. content is a minimal valid-JSON marker (the tool reads only
+    // serialized_prompt). The commit-message context inside the prompt keeps its untrusted fence.
+    promptDraftRepository.upsert(resolution.id, "{}", prompt);
+
     // The resolution workspace owns the branch named after its id (see createWorkspace).
-    return new Resolution(resolutionId, resolutionId, prompt);
+    return new Resolution(resolutionId, resolutionId);
   }
 
   /** How many characters of a commit subject we echo into the (untrusted) prompt context. */

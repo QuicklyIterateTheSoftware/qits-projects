@@ -133,6 +133,23 @@ public class TaskPromptMcpToolsTest {
         .toList();
   }
 
+  /**
+   * A repository-scoped client on an explicit path (so a {@code ?agentReadOnly=true} can be set).
+   */
+  private McpStreamableTestClient repoClientAtPath(String projectId, String repoId, String path) {
+    return McpAssured.newStreamableClient()
+        .setMcpPath(path)
+        .setAdditionalHeaders(
+            msg -> {
+              io.vertx.core.MultiMap headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
+              headers.add(ProjectScope.PROJECT_HEADER, projectId);
+              headers.add(ProjectScope.REPOSITORY_HEADER, repoId);
+              return headers;
+            })
+        .build()
+        .connect();
+  }
+
   private McpStreamableTestClient client(String projectId, String repoId, String workspaceId) {
     return McpAssured.newStreamableClient()
         .setMcpPath("/mcp/repository")
@@ -220,6 +237,43 @@ public class TaskPromptMcpToolsTest {
               assertFalse(
                   out.contains("OTHER: delete production."),
                   "another workspace's prompt leaked: " + out);
+            })
+        .thenAssertResults();
+  }
+
+  @Test
+  public void mutatingRepositoryToolsAreHiddenFromAReadOnlySession() {
+    String project = createProject("Read Only Filter");
+    String repoId = createRepository(project);
+
+    // A normal repository session sees the mutating repository tools...
+    repoClientAtPath(project, repoId, "/mcp/repository")
+        .when()
+        .toolsList(
+            page -> {
+              var names = page.tools().stream().map(t -> t.name()).collect(Collectors.toSet());
+              assertTrue(names.contains("integrateBranch"), "sanity: " + names);
+              assertTrue(names.contains("createWorkspace"), "sanity: " + names);
+            })
+        .thenAssertResults();
+
+    // ...but the read-only session an autonomous run connects with (agentReadOnly=true) does not,
+    // while the read-only tools (and taskPrompt's siblings) stay.
+    repoClientAtPath(project, repoId, "/mcp/repository?agentReadOnly=true")
+        .when()
+        .toolsList(
+            page -> {
+              var names = page.tools().stream().map(t -> t.name()).collect(Collectors.toSet());
+              assertFalse(
+                  names.contains("integrateBranch"), "mutating tool must be hidden: " + names);
+              assertFalse(
+                  names.contains("createWorkspace"), "mutating tool must be hidden: " + names);
+              assertFalse(
+                  names.contains("mergeParentIntoWorkspace"),
+                  "mutating tool must be hidden: " + names);
+              assertFalse(
+                  names.contains("cleanupBranch"), "mutating tool must be hidden: " + names);
+              assertTrue(names.contains("listBranches"), "read tools stay: " + names);
             })
         .thenAssertResults();
   }

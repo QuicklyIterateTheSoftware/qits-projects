@@ -23,15 +23,19 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
  * The streamed push ({@code beginPushRepository}): a single {@code push:<basename>} segment — the
  * sync's push segment without the preceding pull walk. A clean push settles the segment {@code ok}
- * and overall {@code done ok}; a rejected push settles it {@code failed} with git's message in the
- * stream and overall {@code done failed}. Kind-aware single-flight: a second push reuses the live
- * process while a cross-kind pull/sync is rejected, and vice versa. Runs host-side against the bare
- * origins, so no docker is needed.
+ * and overall {@code done ok}; a hook-rejected push settles it {@code failed} with git's message in
+ * the stream and overall {@code done failed}. A non-fast-forward rejection is reconciled instead of
+ * failed: remote-ahead fast-forwards the mirror (nothing to push), a cleanly-mergeable divergence
+ * merges the remote in and pushes the merge commit, and a conflicting one parks the remote tip on
+ * the {@code merge/<branch>-origin-<branch>} branch. Kind-aware single-flight: a second push reuses
+ * the live process while a cross-kind pull/sync is rejected, and vice versa. Runs host-side against
+ * the bare origins, so no docker is needed.
  */
 @QuarkusTest
 @TestProfile(RepositoryPushProcessTest.TestProfile.class)
@@ -55,6 +59,9 @@ public class RepositoryPushProcessTest {
   @Inject RepositoryService repositoryService;
   @Inject TechnicalProcessRegistry registry;
   @Inject GitExecutor git;
+
+  @ConfigProperty(name = "qits.repositories.data-dir")
+  String dataDir;
 
   /** Records a terminal process's full replay (attach on a terminal process replays + done). */
   private static final class Replay implements TechnicalProcess.Listener {
@@ -201,6 +208,118 @@ public class RepositoryPushProcessTest {
     assertEquals("failed", settled.status());
     assertEquals(TechnicalProcessFrame.HINT_REMOTE_AUTH, settled.hint());
     assertEquals("failed", doneFrame(replay).status());
+  }
+
+  /** A writable bare clone of the shared testing-repo fixture (which itself stays immutable). */
+  private Path writableRemote(String prefix) throws Exception {
+    Path remoteParent = Files.createTempDirectory(prefix);
+    Path remote = remoteParent.resolve("testing-repo.git");
+    git.exec(
+        remoteParent.toFile(),
+        "git",
+        "clone",
+        "--bare",
+        fixture("testing-repo.git"),
+        remote.toString());
+    return remote;
+  }
+
+  /** Clones {@code bareRepo}, rewrites {@code file}, commits, and pushes back to its master. */
+  private void pushCommit(Path bareRepo, String file, String content, String message)
+      throws Exception {
+    Path work = Files.createTempDirectory("qits-push-work-clone");
+    git.exec(null, "git", "clone", bareRepo.toString(), work.toString());
+    Files.writeString(work.resolve(file), content);
+    git.exec(
+        work.toFile(),
+        "git",
+        "-c",
+        "user.email=test@test",
+        "-c",
+        "user.name=test",
+        "commit",
+        "-am",
+        message);
+    git.exec(work.toFile(), "git", "push", "origin", "HEAD:master");
+  }
+
+  private Path originOf(String repoId) {
+    return Path.of(dataDir, repoId, "origin");
+  }
+
+  @Test
+  public void aPushBehindTheRemoteFastForwardsTheMirrorInsteadOfFailing() throws Exception {
+    var project = projectService.create("Push Behind", null);
+    Path remote = writableRemote("qits-push-behind-remote");
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
+    // The remote gains a commit the mirror doesn't have; the push's ref update is rejected as
+    // non-fast-forward — the reconcile then fast-forwards the mirror instead of failing.
+    pushCommit(remote, "hello.txt", "remote change\n", "remote change");
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
+
+    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", doneFrame(replay).status());
+    assertTrue(hasLineContaining(replay, "nothing to push"), "the fast-forward verdict lands");
+    assertEquals(
+        git.exec(remote.toFile(), "git", "rev-parse", "master").trim(),
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        "the mirror caught up to the remote");
+  }
+
+  @Test
+  public void aDivergedPushMergesTheRemoteInAndPushesTheMergeCommit() throws Exception {
+    var project = projectService.create("Push Diverged", null);
+    Path remote = writableRemote("qits-push-diverged-remote");
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
+    // Both sides gain a commit, touching different files — diverged but cleanly mergeable.
+    pushCommit(remote, "hello.txt", "remote change\n", "remote change");
+    pushCommit(originOf(repo.id), "README.md", "local change\n", "local change");
+    String localSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+    String remoteSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
+
+    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", doneFrame(replay).status());
+    assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
+    // The mirror's branch became a merge commit (local tip first parent, remote tip second) and
+    // the retried push landed it on the remote.
+    String parents =
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master^1", "master^2").trim();
+    assertEquals(localSha + "\n" + remoteSha, parents);
+    assertEquals(
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        git.exec(remote.toFile(), "git", "rev-parse", "master").trim());
+  }
+
+  @Test
+  public void aConflictingPushParksTheRemoteTipAndFails() throws Exception {
+    var project = projectService.create("Push Conflict", null);
+    Path remote = writableRemote("qits-push-conflict-remote");
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
+    // Both sides rewrite hello.txt differently — a REAL conflict.
+    pushCommit(remote, "hello.txt", "remote change\n", "remote change");
+    pushCommit(originOf(repo.id), "hello.txt", "local change\n", "local change");
+    String localSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+    String remoteSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
+
+    assertEquals("failed", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("failed", doneFrame(replay).status());
+    assertTrue(
+        hasLineContaining(replay, "merge/master-origin-master"),
+        "the parked merge branch is named in the stream");
+    assertEquals(
+        localSha,
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        "the local branch stays untouched");
+    assertEquals(
+        remoteSha,
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
+            .trim(),
+        "the merge branch holds the remote tip");
   }
 
   @Test

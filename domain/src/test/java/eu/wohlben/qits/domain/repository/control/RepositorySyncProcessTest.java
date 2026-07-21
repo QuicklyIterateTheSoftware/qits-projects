@@ -28,9 +28,10 @@ import org.junit.jupiter.api.Test;
  * pull:<repo>} segment per repository) followed by a single {@code push:<basename>} segment. The
  * process's replay tells the whole story — the push segment opens after the pull segments and
  * settles {@code ok} on a clean sync; a push failure settles only the push segment {@code failed}
- * while the pull segment stays green and overall is {@code done failed}; a diverged pull fails the
- * process before the push segment ever opens. Runs host-side against the bare origins, so no docker
- * is needed.
+ * while the pull segment stays green and overall is {@code done failed}; a cleanly-mergeable
+ * divergence is merged and the merge commit pushed, while a conflicting one parks the remote tip on
+ * the merge branch and fails the process before the push segment ever opens. Runs host-side against
+ * the bare origins, so no docker is needed.
  */
 @QuarkusTest
 @TestProfile(RepositorySyncProcessTest.TestProfile.class)
@@ -178,22 +179,84 @@ public class RepositorySyncProcessTest {
     assertEquals("failed", doneFrame(replay).status());
   }
 
+  /** A writable bare clone of the shared testing-repo fixture (which itself stays immutable). */
+  private Path writableRemote(String prefix) throws Exception {
+    Path remoteParent = Files.createTempDirectory(prefix);
+    Path remote = remoteParent.resolve("testing-repo.git");
+    git.exec(
+        remoteParent.toFile(),
+        "git",
+        "clone",
+        "--bare",
+        fixture("testing-repo.git"),
+        remote.toString());
+    return remote;
+  }
+
+  /** Clones {@code bareRepo}, rewrites {@code file}, commits, and pushes back to its master. */
+  private void pushCommit(Path bareRepo, String file, String content, String message)
+      throws Exception {
+    Path work = Files.createTempDirectory("qits-sync-work-clone");
+    git.exec(null, "git", "clone", bareRepo.toString(), work.toString());
+    Files.writeString(work.resolve(file), content);
+    git.exec(
+        work.toFile(),
+        "git",
+        "-c",
+        "user.email=test@test",
+        "-c",
+        "user.name=test",
+        "commit",
+        "-am",
+        message);
+    git.exec(work.toFile(), "git", "push", "origin", "HEAD:master");
+  }
+
   @Test
-  public void aDivergedPullFailsBeforeThePushSegmentOpens() throws Exception {
+  public void aCleanlyMergeableDivergenceMergesThenPushesTheMergeCommit() throws Exception {
     var project = projectService.create("Sync Diverged", null);
-    var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project);
+    Path remote = writableRemote("qits-sync-diverged-remote");
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
     // Point the local main branch at the divergent `feature` tip: neither is an ancestor of the
-    // other, so the pull refuses and the process fails before a push is attempted.
+    // other, but the sides merge cleanly — the sync merges the remote in and pushes the merge.
     String featureSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "feature").trim();
     git.exec(originOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", featureSha);
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginSyncRepository(repo.id)));
 
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", doneFrame(replay).status());
+    assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
+    // The merge commit reached the remote: both tips now agree.
+    assertEquals(
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        git.exec(remote.toFile(), "git", "rev-parse", "master").trim());
+  }
+
+  @Test
+  public void aConflictingDivergenceFailsBeforeThePushSegmentOpens() throws Exception {
+    var project = projectService.create("Sync Conflict", null);
+    Path remote = writableRemote("qits-sync-conflict-remote");
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
+    // A REAL conflict: both sides rewrite hello.txt differently.
+    pushCommit(remote, "hello.txt", "remote change\n", "remote change");
+    pushCommit(originOf(repo.id), "hello.txt", "local change\n", "local change");
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginSyncRepository(repo.id)));
+
     assertEquals("failed", doneFrame(replay).status());
-    assertTrue(hasLineContaining(replay, "diverged"), "the divergence reason lands in the stream");
+    assertTrue(
+        hasLineContaining(replay, "merge/master-origin-master"),
+        "the parked merge branch is named in the stream");
     assertTrue(
         segmentOpens(replay).stream().noneMatch(s -> s.startsWith("push:")),
         "the push segment never opens when the pull fails: " + segmentOpens(replay));
+    // The remote tip is parked on the merge branch for manual resolution.
+    assertEquals(
+        git.exec(remote.toFile(), "git", "rev-parse", "master").trim(),
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
+            .trim());
   }
 
   @Test

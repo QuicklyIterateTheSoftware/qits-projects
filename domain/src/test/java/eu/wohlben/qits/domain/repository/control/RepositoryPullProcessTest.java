@@ -32,9 +32,10 @@ import org.junit.jupiter.api.Test;
  * runs the recursive submodule walk off-thread, and the process's replay tells the whole story —
  * one segment per repository visited, the diamond deduped to a single segment, cycles terminating
  * without reopening, a child failure settling {@code failed} while the walk continues (and {@code
- * done failed} overall), a root divergence failing the process, and the fast-forward verdict + the
- * {@code .qits-config.yml} re-ingestion line landing in the segment. Pull runs host-side against
- * the bare origins, so no docker is needed.
+ * done failed} overall), a cleanly-mergeable root divergence auto-merging while a conflicting one
+ * parks the remote tip on the {@code merge/<branch>-origin-<branch>} branch (overwritten on retry),
+ * and the fast-forward verdict + the {@code .qits-config.yml} re-ingestion line landing in the
+ * segment. Pull runs host-side against the bare origins, so no docker is needed.
  */
 @QuarkusTest
 @TestProfile(RepositoryPullProcessTest.TestProfile.class)
@@ -246,18 +247,96 @@ public class RepositoryPullProcessTest {
   }
 
   @Test
-  public void aRootDivergenceFailsTheProcess() throws Exception {
+  public void aCleanlyMergeableDivergenceMergesTheRemoteIn() throws Exception {
     var project = projectService.create("Pull Root Divergence", null);
     var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project);
     // Point the local main branch at the divergent `feature` tip: neither is an ancestor of the
-    // other, so the pull refuses (manual merge required).
+    // other, but the two sides touch different content — the pull now merges the remote in instead
+    // of refusing.
+    String masterSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
     String featureSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "feature").trim();
     git.exec(originOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", featureSha);
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
 
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
+    assertEquals("ok", doneFrame(replay).status());
+    assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
+    // The branch advanced to a real merge commit: local tip first parent, remote tip second.
+    String parents =
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master^1", "master^2").trim();
+    assertEquals(featureSha + "\n" + masterSha, parents);
+    // A merge advance re-ingests .qits-config.yml like a fast-forward does.
+    assertEquals(1, countLinesContaining(replay, "Re-ingested .qits-config.yml"));
+  }
+
+  /** Clones {@code bareRepo}, rewrites {@code file}, commits, and pushes back to its master. */
+  private void pushCommit(Path bareRepo, String file, String content, String message)
+      throws Exception {
+    Path work = Files.createTempDirectory("qits-pull-work-clone");
+    git.exec(null, "git", "clone", bareRepo.toString(), work.toString());
+    Files.writeString(work.resolve(file), content);
+    git.exec(
+        work.toFile(),
+        "git",
+        "-c",
+        "user.email=test@test",
+        "-c",
+        "user.name=test",
+        "commit",
+        "-am",
+        message);
+    git.exec(work.toFile(), "git", "push", "origin", "HEAD:master");
+  }
+
+  @Test
+  public void aConflictingDivergenceParksTheRemoteTipAndOverwritesItOnRetry() throws Exception {
+    var project = projectService.create("Pull Conflict", null);
+    // A writable remote (the shared fixture stays immutable) that we diverge from with a REAL
+    // conflict: both sides rewrite hello.txt differently.
+    Path remoteParent = Files.createTempDirectory("qits-pull-conflict-remote");
+    Path remote = remoteParent.resolve("testing-repo.git");
+    git.exec(
+        remoteParent.toFile(),
+        "git",
+        "clone",
+        "--bare",
+        fixture("testing-repo.git"),
+        remote.toString());
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
+    pushCommit(remote, "hello.txt", "remote change\n", "remote change");
+    pushCommit(originOf(repo.id), "hello.txt", "local change\n", "local change");
+    String localSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+    String remoteSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
+
+    // The pull fails (the branch is NOT merged) but the remote tip is parked on the merge branch,
+    // with the conflicting file and the resolution path named in the stream.
     assertEquals("failed", doneFrame(replay).status());
-    assertTrue(hasLineContaining(replay, "diverged"), "the divergence reason lands in the stream");
+    assertTrue(hasLineContaining(replay, "merge/master-origin-master"), "the parked branch named");
+    assertTrue(hasLineContaining(replay, "hello.txt"), "the conflicting file is named");
+    assertEquals(
+        localSha,
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        "the local branch stays untouched");
+    assertEquals(
+        remoteSha,
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
+            .trim(),
+        "the merge branch holds the remote tip");
+
+    // The remote moves on (still conflicting) and the user pulls again: the parked branch is
+    // overwritten with the remote's NEW tip — never a second branch, never the stale tip.
+    pushCommit(remote, "hello.txt", "remote change 2\n", "remote change 2");
+    String remoteSha2 = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
+    Replay retry = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
+    assertEquals("failed", doneFrame(retry).status());
+    assertEquals(
+        remoteSha2,
+        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
+            .trim(),
+        "a repeated conflict overwrites the parked branch with the new remote tip");
   }
 
   @Test

@@ -15,7 +15,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
@@ -98,17 +97,7 @@ public class ResolveConflictService {
     if (result.exitCode() != 1) {
       return List.of();
     }
-    // Output: first line is the written tree OID, then the conflicting paths, then a blank line and
-    // informational messages. Collect the paths between the OID and the blank separator.
-    String[] lines = result.output().split("\n", -1);
-    List<String> files = new ArrayList<>();
-    for (int i = 1; i < lines.length; i++) {
-      if (lines[i].isBlank()) {
-        break;
-      }
-      files.add(lines[i].trim());
-    }
-    return files;
+    return GitExecutor.conflictedFiles(result.output());
   }
 
   /**

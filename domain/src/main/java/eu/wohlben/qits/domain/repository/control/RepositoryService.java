@@ -25,6 +25,7 @@ import jakarta.transaction.Transactional;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -53,6 +54,8 @@ public class RepositoryService {
   @Inject ContainerRuntime containerRuntime;
 
   @Inject GitExecutor git;
+
+  @Inject GitIdentity gitIdentity;
 
   @Inject GitRemoteAuth remoteAuth;
 
@@ -277,13 +280,15 @@ public class RepositoryService {
 
   /**
    * Pulls the remote's main branch into the local mirror. Fetches the branch and fast-forwards the
-   * local ref only when the remote is strictly ahead; a no-op when already up to date or locally
-   * ahead, and an error when the histories have diverged (manual merge needed). After its own pull,
-   * recursively pulls the repository's IMPORTED submodule children (sibling repositories) — a
-   * gitlink bump arriving on the superproject's main branch must never point at a commit the child
-   * sibling's origin does not yet have, or the workspace container's {@code submodule update}
-   * (which clones from that origin via the git host) fails with "Server does not allow request for
-   * unadvertised object".
+   * local ref when the remote is strictly ahead; a no-op when already up to date or locally ahead.
+   * Diverged histories are reconciled rather than refused: a cleanly-mergeable divergence becomes a
+   * real merge commit on the branch, and a conflicting one parks the remote tip on {@code
+   * merge/<branch>-origin-<branch>} (overwriting a previous attempt) and fails with the resolution
+   * path in the message — see {@link #mergeDivergedRemote}. After its own pull, recursively pulls
+   * the repository's IMPORTED submodule children (sibling repositories) — a gitlink bump arriving
+   * on the superproject's main branch must never point at a commit the child sibling's origin does
+   * not yet have, or the workspace container's {@code submodule update} (which clones from that
+   * origin via the git host) fails with "Server does not allow request for unadvertised object".
    */
   public String pullRepository(String repoId) {
     return pullRepository(repoId, new HashSet<>(), null, null, new HashSet<>());
@@ -476,8 +481,17 @@ public class RepositoryService {
         settleOk(process, segmentName);
         return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
       }
-      throw new BadRequestException(
-          "Branch '" + ctx.branch() + "' has diverged from the remote; manual merge required");
+      // Diverged: merge the remote in when the merge is clean; a conflict parks the remote tip on
+      // the merge/<branch>-origin-<branch> branch and throws (the message carries the resolution
+      // path).
+      String mergeVerdict =
+          mergeDivergedRemote(
+              ctx.workdir(), ctx.hasMainWorkspace(), ctx.branch(), localSha, remoteSha);
+      streamLine(process, segmentName, mergeVerdict);
+      ingestConfigQuietly(repoId);
+      streamConfigOutcome(process, segmentName, repoId);
+      settleOk(process, segmentName);
+      return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
     } catch (BadRequestException e) {
       throw e;
     } catch (Exception e) {
@@ -537,6 +551,76 @@ public class RepositoryService {
 
   private static String shortSha(String sha) {
     return sha.length() > 12 ? sha.substring(0, 12) : sha;
+  }
+
+  /** The branch a conflicting remote tip is parked on, for {@code branch}. */
+  static String mergeBranchName(String branch) {
+    return "merge/" + branch + "-origin-" + branch;
+  }
+
+  /**
+   * Reconciles a diverged {@code branch} (neither {@code localSha} nor {@code remoteSha} is an
+   * ancestor of the other) after the remote commits were fetched into {@code workdir}'s object
+   * store. A clean three-way merge (probed with {@code git merge-tree --write-tree}, no working
+   * tree needed) becomes a real merge commit — local tip as first parent, remote tip as second —
+   * and the branch ref advances to it; the returned verdict line describes it. A conflicting merge
+   * parks the remote tip on {@code merge/<branch>-origin-<branch>} (created, or overwritten from a
+   * previous attempt, so the parked tip always matches the remote's current state) and throws — the
+   * message names the conflicting files and the resolution path: merge {@code branch} into the
+   * parked branch, resolve, integrate back, then pull/sync/push again.
+   */
+  private String mergeDivergedRemote(
+      Path workdir, boolean checkedOut, String branch, String localSha, String remoteSha)
+      throws Exception {
+    GitExecutor.ExecResult probe =
+        git.execAllowNonZero(
+            workdir.toFile(),
+            "git",
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--end-of-options",
+            localSha,
+            remoteSha);
+    if (probe.exitCode() == 0) {
+      String message = "Merge remote '" + branch + "' into " + branch;
+      String mergeSha;
+      if (checkedOut) {
+        // The branch is checked out here (host-workspace seam): a real `git merge` moves the ref,
+        // index and working tree together. The merge-tree probe said clean, so it won't conflict.
+        List<String> merge = new ArrayList<>(List.of("git"));
+        merge.addAll(gitIdentity.inlineArgs());
+        merge.addAll(List.of("merge", "-m", message, "--end-of-options", remoteSha));
+        git.exec(workdir.toFile(), merge.toArray(String[]::new));
+        mergeSha = git.exec(workdir.toFile(), "git", "rev-parse", "HEAD").trim();
+      } else {
+        // Bare origin: commit the merged tree directly in the object store and advance the ref.
+        String tree = probe.output().lines().findFirst().orElseThrow().trim();
+        List<String> commit = new ArrayList<>(List.of("git"));
+        commit.addAll(gitIdentity.inlineArgs());
+        commit.addAll(List.of("commit-tree", tree, "-p", localSha, "-p", remoteSha, "-m", message));
+        mergeSha = git.exec(workdir.toFile(), commit.toArray(String[]::new)).trim();
+        git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + branch, mergeSha);
+      }
+      return "Merged remote into '" + branch + "' (merge commit " + shortSha(mergeSha) + ")";
+    }
+    if (probe.exitCode() == 1) {
+      String mergeBranch = mergeBranchName(branch);
+      git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + mergeBranch, remoteSha);
+      throw new BadRequestException(
+          "Branch '"
+              + branch
+              + "' conflicts with the remote (conflicting files: "
+              + String.join(", ", GitExecutor.conflictedFiles(probe.output()))
+              + "); the remote tip was saved to branch '"
+              + mergeBranch
+              + "' (replacing any previous attempt) — merge '"
+              + branch
+              + "' into it, resolve the conflicts, integrate it back, then pull, sync or push"
+              + " again");
+    }
+    throw new InternalServerErrorException(
+        "Git merge-tree failed [" + probe.exitCode() + "]: " + probe.output());
   }
 
   /**
@@ -627,6 +711,13 @@ public class RepositoryService {
    * Pushes the local main branch to the remote. Pushes to the URL directly rather than the "origin"
    * remote, whose {@code mirror=true} config forbids the single-branch refspec.
    *
+   * <p>A push the remote rejects as non-fast-forward (the remote gained commits we don't have)
+   * doesn't just fail anymore: the remote branch is fetched and reconciled with the same policy the
+   * pull uses — remote strictly ahead fast-forwards the mirror (nothing to push), a diverged branch
+   * that merges cleanly gets a merge commit and the push is retried once, and a conflicting
+   * divergence parks the remote tip on {@code merge/<branch>-origin-<branch>} (see {@link
+   * #mergeDivergedRemote}) and fails with the resolution path in the message.
+   *
    * <p>Reads its inputs in a short transaction and runs {@code git push} outside it (the pull's
    * {@link PullContext} pattern), so it is safe on a worker thread with no request context — the
    * streamed sync ({@link #beginSyncRepository}) calls it there.
@@ -634,10 +725,80 @@ public class RepositoryService {
   public String pushRepository(String repoId) {
     PushSpec ctx = pushSpec(repoId);
     try {
-      return git.exec(
+      return push(ctx);
+    } catch (Exception e) {
+      if (!isNonFastForwardRejection(e.getMessage())) {
+        throw new InternalServerErrorException("Git push failed: " + e.getMessage());
+      }
+      return reconcileRejectedPush(repoId, ctx, e.getMessage());
+    }
+  }
+
+  private String push(PushSpec ctx) throws Exception {
+    return git.exec(
+        ctx.originPath().toFile(),
+        remoteAuth.gitWithCredentials(
+            "push", ctx.url(), "refs/heads/" + ctx.branch() + ":refs/heads/" + ctx.branch()));
+  }
+
+  /**
+   * The remote refused the ref update because it holds commits the mirror doesn't — git's "fetch
+   * first"/"non-fast-forward" rejection, as opposed to a hook decline ("remote rejected") or a
+   * transport/auth failure, which must surface unchanged.
+   */
+  private static boolean isNonFastForwardRejection(String message) {
+    return message != null
+        && (message.contains("non-fast-forward") || message.contains("fetch first"));
+  }
+
+  /**
+   * The push half of the divergence policy: fetch the remote branch, then fast-forward the mirror
+   * when the remote is strictly ahead (nothing local to push), merge-and-retry-once when the
+   * histories diverged but merge cleanly, and let {@link #mergeDivergedRemote}'s conflict path park
+   * the remote tip and throw otherwise. When the fetched tip turns out NOT to explain the rejection
+   * (already contained locally — e.g. a racing pull got there first), the original rejection is
+   * surfaced unchanged.
+   */
+  private String reconcileRejectedPush(String repoId, PushSpec ctx, String rejection) {
+    try {
+      git.exec(
           ctx.originPath().toFile(),
           remoteAuth.gitWithCredentials(
-              "push", ctx.url(), "refs/heads/" + ctx.branch() + ":refs/heads/" + ctx.branch()));
+              "fetch", "--end-of-options", ctx.url(), "refs/heads/" + ctx.branch()));
+      String remoteSha =
+          git.exec(ctx.originPath().toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
+      String localSha =
+          git.exec(ctx.originPath().toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch())
+              .trim();
+      if (remoteSha.equals(localSha) || isAncestor(ctx.originPath(), remoteSha, localSha)) {
+        throw new InternalServerErrorException("Git push failed: " + rejection);
+      }
+      if (isAncestor(ctx.originPath(), localSha, remoteSha)) {
+        // The remote simply moved ahead — catch the mirror up instead of failing.
+        git.exec(
+            ctx.originPath().toFile(),
+            "git",
+            "update-ref",
+            "refs/heads/" + ctx.branch(),
+            remoteSha);
+        ingestConfigQuietly(repoId);
+        return "Remote is ahead; fast-forwarded '"
+            + ctx.branch()
+            + "' to "
+            + shortSha(remoteSha)
+            + " — nothing to push";
+      }
+      String mergeVerdict =
+          mergeDivergedRemote(ctx.originPath(), false, ctx.branch(), localSha, remoteSha);
+      // Ingest only after the retried push actually reaches the remote — ingesting from the local
+      // merge commit first would leave the DB reflecting config from a commit that, if this retry
+      // is
+      // itself rejected (e.g. a racing third push), never made it past the mirror.
+      String pushOutput = push(ctx);
+      ingestConfigQuietly(repoId);
+      return mergeVerdict + "\n" + pushOutput;
+    } catch (BadRequestException | InternalServerErrorException e) {
+      throw e;
     } catch (Exception e) {
       throw new InternalServerErrorException("Git push failed: " + e.getMessage());
     }

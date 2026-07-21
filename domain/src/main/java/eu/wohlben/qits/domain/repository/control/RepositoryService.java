@@ -688,6 +688,53 @@ public class RepositoryService {
     };
   }
 
+  /**
+   * The streamed push: a single {@code push:<basename>} segment wrapping {@link #pushRepository} —
+   * {@link #beginSyncRepository} minus the pull walk. Registers the {@link TechnicalProcess} before
+   * the push runs and returns its id immediately; a push failure settles the segment {@code failed}
+   * with git's message in-stream and {@code finish()} computes overall {@code done failed}. Throws
+   * 404 in-request for an unknown id.
+   *
+   * <p>Kind-aware single-flight (see {@link #beginPullRepository}): a live push is reused; a live
+   * pull/sync is a conflict (400), and vice versa — one repo process at a time.
+   */
+  public String beginPushRepository(String repoId) {
+    // Validate in-request (unknown id → plain 404, not a process) and name the sole segment by the
+    // repo's url basename, matching the sync's push segment shape.
+    String rootSegment =
+        QuarkusTransaction.requiringNew()
+            .call(() -> "push:" + Path.of(get(repoId).url).getFileName().toString());
+    return switch (processes.beginForRepository(repoId, "push")) {
+      case RepoProcessLease.Reused r -> r.processId();
+      case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
+      case RepoProcessLease.Fresh f -> {
+        TechnicalProcess process = f.process();
+        processExecutor.submit(
+            () -> {
+              try {
+                // Open before the push so "now pushing" is visible while it blocks on the network.
+                process.openSegment(rootSegment);
+                try {
+                  streamLines(process, rootSegment, pushRepository(repoId));
+                  settleOk(process, rootSegment);
+                } catch (RuntimeException e) {
+                  // Degrade the segment only (not failProvision): the red segment carries git's
+                  // full message and finish() computes overall `done failed` from it.
+                  process.appendLine(rootSegment, "push failed: " + e.getMessage());
+                  process.settleSegment(rootSegment, false);
+                }
+                process.expectDaemons(List.of());
+                process.finishProvision(true);
+              } catch (RuntimeException e) {
+                process.failProvision(e.getMessage());
+                LOG.debugf(e, "Streamed push failed for repository %s", repoId);
+              }
+            });
+        yield process.id();
+      }
+    };
+  }
+
   /** Sets the branch this repository syncs with the remote. The branch must exist locally. */
   @Transactional
   public Repository setMainBranch(String repoId, String branch) {

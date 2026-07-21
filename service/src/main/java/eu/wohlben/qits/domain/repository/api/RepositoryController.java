@@ -157,14 +157,14 @@ public class RepositoryController {
   }
 
   public static record PushRepositoryRequest() {
-    public record Response(String output) {}
+    public record Response(String technicalProcessId) {}
   }
 
   @POST
   @Path("/{repoId}/push")
   public PushRepositoryRequest.Response push(@PathParam("repoId") String repoId) {
-    String output = repositoryService.pushRepository(repoId);
-    return new PushRepositoryRequest.Response(output);
+    String technicalProcessId = repositoryService.beginPushRepository(repoId);
+    return new PushRepositoryRequest.Response(technicalProcessId);
   }
 
   public static record SyncRepositoryRequest() {
@@ -186,7 +186,8 @@ public class RepositoryController {
 
   public static record ActiveProcessRequest() {
     /**
-     * The repository's currently-running technical process (pull/sync), or null when none is live.
+     * The repository's currently-running technical process (pull/sync/push), or null when none is
+     * live.
      */
     public record Response(String technicalProcessId) {}
   }

@@ -7,6 +7,7 @@ import eu.wohlben.qits.domain.featureflow.control.FeatureFlowPhaseActionService;
 import eu.wohlben.qits.domain.process.control.RepoProcessLease;
 import eu.wohlben.qits.domain.process.control.TechnicalProcess;
 import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
+import eu.wohlben.qits.domain.process.dto.TechnicalProcessFrame;
 import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.repository.dto.BranchDto;
 import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
@@ -52,6 +53,8 @@ public class RepositoryService {
   @Inject ContainerRuntime containerRuntime;
 
   @Inject GitExecutor git;
+
+  @Inject GitRemoteAuth remoteAuth;
 
   @Inject GitSubmoduleParser submoduleParser;
 
@@ -142,7 +145,9 @@ public class RepositoryService {
     try {
       Files.createDirectories(originPath.getParent());
       git.exec(
-          null, "git", "clone", "--mirror", "--end-of-options", repo.url, originPath.toString());
+          null,
+          remoteAuth.gitWithCredentials(
+              "clone", "--mirror", "--end-of-options", repo.url, originPath.toString()));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
     }
@@ -331,9 +336,9 @@ public class RepositoryService {
                 process.expectDaemons(List.of());
                 process.finishProvision(true);
               } catch (RuntimeException e) {
-                // Root failure (diverged branch, unreachable remote): settle the open root segment
-                // failed (appending the message) and emit `done failed`. Idempotent.
-                process.failProvision(e.getMessage());
+                // Root failure (diverged branch, unreachable remote, auth wall): settle the open
+                // root segment failed (appending the message) and emit `done failed`. Idempotent.
+                failWithAuthHint(process, e.getMessage(), repoId);
                 LOG.debugf(e, "Streamed pull failed for repository %s", repoId);
               }
             });
@@ -351,6 +356,31 @@ public class RepositoryService {
   private BadRequestException repositoryBusy(String runningKind) {
     return new BadRequestException(
         "A " + runningKind + " is already running for this repository; wait for it to finish.");
+  }
+
+  /**
+   * Settle {@code segment} failed, classifying an auth-wall failure with the {@code remote-auth}
+   * hint whose target is {@code authRepoId} — the repository whose remote to sign into. For a
+   * submodule child that is the <em>child</em>'s id, not the root's, so the sign-in terminal seeds
+   * the credentials for the host that actually rejected.
+   */
+  private void settleWithAuthHint(
+      TechnicalProcess process, String segment, String message, String authRepoId) {
+    boolean auth = GitRemoteAuth.isAuthFailure(message);
+    process.settleSegment(
+        segment,
+        false,
+        auth ? TechnicalProcessFrame.HINT_REMOTE_AUTH : null,
+        auth ? authRepoId : null);
+  }
+
+  /**
+   * {@link #settleWithAuthHint} for the whole-process failure path (settles every open segment).
+   */
+  private void failWithAuthHint(TechnicalProcess process, String message, String authRepoId) {
+    boolean auth = GitRemoteAuth.isAuthFailure(message);
+    process.failProvision(
+        message, auth ? TechnicalProcessFrame.HINT_REMOTE_AUTH : null, auth ? authRepoId : null);
   }
 
   /** The scalar snapshot a single repo's pull needs, read in one short transaction. */
@@ -414,11 +444,7 @@ public class RepositoryService {
           git.exec(
               ctx.workdir().toFile(),
               lineSink(process, segmentName),
-              "git",
-              "fetch",
-              "--end-of-options",
-              ctx.url(),
-              ctx.branch());
+              remoteAuth.gitWithCredentials("fetch", "--end-of-options", ctx.url(), ctx.branch()));
       String remoteSha = git.exec(ctx.workdir().toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
       String localSha =
           git.exec(ctx.workdir().toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch()).trim();
@@ -500,7 +526,9 @@ public class RepositoryService {
             .append(e.getMessage());
         if (process != null) {
           process.appendLine(childSegment, "pull failed: " + e.getMessage());
-          process.settleSegment(childSegment, false);
+          // Target the CHILD repo: its remote (possibly a different host than the root) is the one
+          // that rejected, so the sign-in must seed the child's credentials.
+          settleWithAuthHint(process, childSegment, e.getMessage(), edge.childId());
         }
       }
     }
@@ -577,8 +605,23 @@ public class RepositoryService {
     }
   }
 
-  /** The scalar snapshot a push needs, read in one short transaction. */
-  private record PushContext(String url, String branch, Path originPath) {}
+  /**
+   * The scalar snapshot a push needs (url, main branch, bare-origin path), read in one short
+   * transaction — shared by {@link #pushRepository} and the remote-login sign-in terminal, whose
+   * interactive push runs exactly the same command shape in a host-side PTY.
+   */
+  public record PushSpec(String url, String branch, Path originPath) {}
+
+  /** Reads a {@link PushSpec} in its own short transaction (404 for an unknown id). */
+  public PushSpec pushSpec(String repoId) {
+    return QuarkusTransaction.requiringNew()
+        .call(
+            () -> {
+              Repository repo = get(repoId);
+              Path originPath = requireOrigin(repoId);
+              return new PushSpec(repo.url, resolveMainBranch(repo, originPath), originPath);
+            });
+  }
 
   /**
    * Pushes the local main branch to the remote. Pushes to the URL directly rather than the "origin"
@@ -589,21 +632,12 @@ public class RepositoryService {
    * streamed sync ({@link #beginSyncRepository}) calls it there.
    */
   public String pushRepository(String repoId) {
-    PushContext ctx =
-        QuarkusTransaction.requiringNew()
-            .call(
-                () -> {
-                  Repository repo = get(repoId);
-                  Path originPath = requireOrigin(repoId);
-                  return new PushContext(repo.url, resolveMainBranch(repo, originPath), originPath);
-                });
+    PushSpec ctx = pushSpec(repoId);
     try {
       return git.exec(
           ctx.originPath().toFile(),
-          "git",
-          "push",
-          ctx.url(),
-          "refs/heads/" + ctx.branch() + ":refs/heads/" + ctx.branch());
+          remoteAuth.gitWithCredentials(
+              "push", ctx.url(), "refs/heads/" + ctx.branch() + ":refs/heads/" + ctx.branch()));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git push failed: " + e.getMessage());
     }
@@ -671,7 +705,7 @@ public class RepositoryService {
                   // stay green and finish() computes overall `done failed` from the red push
                   // segment.
                   process.appendLine(pushSegment, "push failed: " + e.getMessage());
-                  process.settleSegment(pushSegment, false);
+                  settleWithAuthHint(process, pushSegment, e.getMessage(), repoId);
                 }
                 process.expectDaemons(List.of());
                 process.finishProvision(true);
@@ -679,7 +713,7 @@ public class RepositoryService {
                 // Root pull failure (diverged branch, unreachable remote): settle the open pull
                 // segment failed and emit `done failed` before the push segment ever opens.
                 // Idempotent.
-                process.failProvision(e.getMessage());
+                failWithAuthHint(process, e.getMessage(), repoId);
                 LOG.debugf(e, "Streamed sync failed for repository %s", repoId);
               }
             });
@@ -721,7 +755,7 @@ public class RepositoryService {
                   // Degrade the segment only (not failProvision): the red segment carries git's
                   // full message and finish() computes overall `done failed` from it.
                   process.appendLine(rootSegment, "push failed: " + e.getMessage());
-                  process.settleSegment(rootSegment, false);
+                  settleWithAuthHint(process, rootSegment, e.getMessage(), repoId);
                 }
                 process.expectDaemons(List.of());
                 process.finishProvision(true);
@@ -771,7 +805,9 @@ public class RepositoryService {
     String remoteSha;
     try {
       String out =
-          git.exec(originPath.toFile(), "git", "ls-remote", "origin", "refs/heads/" + branch)
+          git.exec(
+                  originPath.toFile(),
+                  remoteAuth.gitWithCredentials("ls-remote", "origin", "refs/heads/" + branch))
               .trim();
       remoteSha = out.isBlank() ? null : out.split("\\s+")[0];
     } catch (Exception e) {
@@ -798,11 +834,8 @@ public class RepositoryService {
       // can smuggle a git flag (e.g. `--upload-pack=<cmd>`) into the fetch.
       git.exec(
           originPath.toFile(),
-          "git",
-          "fetch",
-          "--end-of-options",
-          repo.url,
-          "refs/heads/" + branch);
+          remoteAuth.gitWithCredentials(
+              "fetch", "--end-of-options", repo.url, "refs/heads/" + branch));
       String counts =
           git.exec(
                   originPath.toFile(),

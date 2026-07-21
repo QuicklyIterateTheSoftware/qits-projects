@@ -2,6 +2,7 @@ package eu.wohlben.qits.domain.repository.control;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -102,9 +103,12 @@ public class RepositoryPushProcessTest {
   }
 
   private static String settledStatus(Replay replay, String segment) {
+    return settledFrame(replay, segment).status();
+  }
+
+  private static TechnicalProcessFrame settledFrame(Replay replay, String segment) {
     return replay.frames.stream()
         .filter(f -> "segment-settled".equals(f.kind()) && segment.equals(f.segment()))
-        .map(TechnicalProcessFrame::status)
         .findFirst()
         .orElseThrow(() -> new AssertionError("segment '" + segment + "' never settled"));
   }
@@ -161,6 +165,41 @@ public class RepositoryPushProcessTest {
 
     assertEquals("failed", settledStatus(replay, "push:testing-repo.git"));
     assertTrue(hasLineContaining(replay, "push failed"), "the push error lands in the stream");
+    assertEquals("failed", doneFrame(replay).status());
+    // An ordinary rejection (hook declined) is NOT auth-classified — no hint on the settle.
+    assertNull(settledFrame(replay, "push:testing-repo.git").hint());
+  }
+
+  @Test
+  public void anAuthShapedPushFailureSettlesWithTheRemoteAuthHint() throws Exception {
+    var project = projectService.create("Push Auth Failure", null);
+    Path remoteParent = Files.createTempDirectory("qits-push-auth-remote");
+    Path remote = remoteParent.resolve("testing-repo.git");
+    git.exec(
+        remoteParent.toFile(),
+        "git",
+        "clone",
+        "--bare",
+        fixture("testing-repo.git"),
+        remote.toString());
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
+
+    // Rig a failing push whose output carries an auth signature: the hook's stderr reaches the
+    // push output `remote:`-prefixed, and the classifier matches anywhere — the same shape a real
+    // https remote produces (fatal: Authentication failed for '…') without needing a real one.
+    git.exec(remote.toFile(), "git", "update-ref", "refs/heads/master", "master~1");
+    Path hook = remote.resolve("hooks/pre-receive");
+    Files.writeString(
+        hook,
+        "#!/bin/sh\necho \"fatal: Authentication failed for 'https://example.com/repo.git'\" >&2\n"
+            + "exit 1\n");
+    Files.setPosixFilePermissions(hook, PosixFilePermissions.fromString("rwxr-xr-x"));
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
+
+    TechnicalProcessFrame settled = settledFrame(replay, "push:testing-repo.git");
+    assertEquals("failed", settled.status());
+    assertEquals(TechnicalProcessFrame.HINT_REMOTE_AUTH, settled.hint());
     assertEquals("failed", doneFrame(replay).status());
   }
 

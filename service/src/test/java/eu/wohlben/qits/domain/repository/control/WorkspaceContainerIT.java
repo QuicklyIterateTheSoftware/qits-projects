@@ -140,6 +140,7 @@ public class WorkspaceContainerIT {
       assertEquals(workspaceId, info.workspaceId());
       assertEquals("it-branch", info.branch());
       assertEquals("main", info.parent());
+      assertTrue(info.running(), "a freshly-run container reads back as running ({{.State}})");
 
       // exec: the fat image carries the toolchain and /workspace is writable by the host uid.
       assertEquals(0, de.exec(container, "/workspace", Map.of(), "git", "--version").exitCode());

@@ -591,7 +591,7 @@ public class RepositoryService {
         List<String> merge = new ArrayList<>(List.of("git"));
         merge.addAll(gitIdentity.inlineArgs());
         merge.addAll(List.of("merge", "-m", message, "--end-of-options", remoteSha));
-        git.exec(workdir.toFile(), merge.toArray(String[]::new));
+        git.exec(workdir.toFile(), gitIdentity.envMap(), merge.toArray(String[]::new));
         mergeSha = git.exec(workdir.toFile(), "git", "rev-parse", "HEAD").trim();
       } else {
         // Bare origin: commit the merged tree directly in the object store and advance the ref.
@@ -599,7 +599,8 @@ public class RepositoryService {
         List<String> commit = new ArrayList<>(List.of("git"));
         commit.addAll(gitIdentity.inlineArgs());
         commit.addAll(List.of("commit-tree", tree, "-p", localSha, "-p", remoteSha, "-m", message));
-        mergeSha = git.exec(workdir.toFile(), commit.toArray(String[]::new)).trim();
+        mergeSha =
+            git.exec(workdir.toFile(), gitIdentity.envMap(), commit.toArray(String[]::new)).trim();
         git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + branch, mergeSha);
       }
       return "Merged remote into '" + branch + "' (merge commit " + shortSha(mergeSha) + ")";

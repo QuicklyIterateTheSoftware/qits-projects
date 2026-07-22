@@ -35,10 +35,7 @@ import java.util.List;
  * editing actions is the job of the separate "actions" server (see {@link
  * eu.wohlben.qits.domain.featureflow.mcp.ActionConfigurationMcpTools}). The split is intentional: a
  * session here is for getting work done in a checkout, not for changing what actions exist, so
- * {@code runAction} and {@code listActions} here only ever read and use the library. Daemons are
- * the exception that proves the rule: a daemon is repository-owned configuration (there is no
- * global daemon library), so defining, editing, starting and stopping daemons all live on this
- * server too — in {@link eu.wohlben.qits.domain.daemon.mcp.DaemonMcpTools}.
+ * {@code runAction} and {@code listActions} here only ever read and use the library.
  *
  * <p>Each session is scoped to a single project via {@link ProjectScope} (the {@code
  * X-QITS-Project} header), and may be further narrowed to one repository within it (the optional
@@ -278,7 +275,7 @@ public class RepositoryMcpTools {
 
   // --- Scoping --------------------------------------------------------------
 
-  /** See {@link ProjectScopeGuard#requireRepoInProject} — shared with the daemon tools. */
+  /** See {@link ProjectScopeGuard#requireRepoInProject}. */
   private Repository requireRepoInProject(String repoId) {
     return scopeGuard.requireRepoInProject(repoId);
   }

@@ -8,8 +8,8 @@ import jakarta.inject.Inject;
 
 /**
  * The scoping guard shared by every tool class mounted on the "repository" MCP server ({@link
- * RepositoryMcpTools}, the daemon tools): resolves the session's {@link ProjectScope} and rejects
- * any repository outside it, so no tool can operate across project boundaries.
+ * RepositoryMcpTools}): resolves the session's {@link ProjectScope} and rejects any repository
+ * outside it, so no tool can operate across project boundaries.
  */
 @ApplicationScoped
 public class ProjectScopeGuard {

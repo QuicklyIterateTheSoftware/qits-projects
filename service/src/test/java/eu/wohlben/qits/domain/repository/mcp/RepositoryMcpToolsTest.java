@@ -308,8 +308,8 @@ public class RepositoryMcpToolsTest {
   @Test
   public void exposesExactlyTheRepositoryContextToolset() {
     // The repository server must expose only the repository tools — nothing from other contexts —
-    // so the model stays on task. Daemons are repository-owned, so their management tools (see
-    // DaemonMcpTools) belong to this surface; so are submodule edges (RepositorySubmoduleMcpTools).
+    // so the model stays on task. Submodule edges (RepositorySubmoduleMcpTools) belong to this
+    // surface too.
     String project = createProject("Tools");
     client(project)
         .when()
@@ -330,14 +330,7 @@ public class RepositoryMcpToolsTest {
                       "mergeParentIntoWorkspace",
                       "listActions",
                       "runAction",
-                      "listSubmodules",
-                      "listDaemons",
-                      "createDaemon",
-                      "updateDaemon",
-                      "deleteDaemon",
-                      "listWorkspaceDaemons",
-                      "startDaemon",
-                      "stopDaemon"),
+                      "listSubmodules"),
                   java.util.Set.copyOf(names),
                   "unexpected tool surface: " + names);
             })

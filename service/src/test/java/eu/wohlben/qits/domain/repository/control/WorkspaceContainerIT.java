@@ -55,6 +55,19 @@ public class WorkspaceContainerIT {
     gitIdentity.name = "qits";
     gitIdentity.email = "qits@local";
     factory.gitIdentity = gitIdentity;
+    // Resource caps off for the IT; and the workspace-daemon dial-home fields forWorkspace now
+    // reads to
+    // compose the container's QITS_WORKSPACE_DAEMON_* env (docs/epics/qits-workspace-daemon/). No
+    // backend
+    // runs here, so workspace-daemon retries forever and keeps the container alive — all the IT
+    // needs.
+    factory.memoryLimit = java.util.Optional.empty();
+    factory.pidsLimit = java.util.Optional.empty();
+    factory.cpus = java.util.Optional.empty();
+    QitsHostResolver qitsHostResolver = new QitsHostResolver();
+    qitsHostResolver.configured = "host.docker.internal";
+    factory.qitsHostResolver = qitsHostResolver;
+    factory.qitsPort = "8080";
     de.containerFactory = factory;
     de.ensureNetwork(); // no StartupEvent here; make the shared network exist before any container
     return de;

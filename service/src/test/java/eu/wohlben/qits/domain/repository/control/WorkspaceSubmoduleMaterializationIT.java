@@ -18,13 +18,14 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Real-docker integration test that a superproject's submodules <em>materialize offline via native
- * resolution</em> the way {@link WorkspaceService#materializeSubmodules} does: after the plain
- * clone, a bounded per-level {@code submodule update --init} (NON-recursive, path-scoped) with
- * <b>no {@code submodule.<name>.url} override</b>, then the same inside each checked-out child. It
- * works because a project's repositories are served as <b>siblings addressed by name</b>, so git's
- * committed relative url ({@code ../<name>.git}) resolves to the right sibling on its own — the
- * same property the production name-addressed HTTP host provides. The walk is deliberately bounded
- * (not git's own {@code --recursive}) as the cycle backstop.
+ * resolution</em> the way the in-container daemon's {@code Provisioner.materializeSubmodules} does
+ * (the host-side walk was retired in Part 2): after the plain clone, a bounded per-level {@code
+ * submodule update --init} (NON-recursive, path-scoped) with <b>no {@code submodule.<name>.url}
+ * override</b>, then the same inside each checked-out child. It works because a project's
+ * repositories are served as <b>siblings addressed by name</b>, so git's committed relative url
+ * ({@code ../<name>.git}) resolves to the right sibling on its own — the same property the
+ * production name-addressed HTTP host provides. The walk is deliberately bounded (not git's own
+ * {@code --recursive}) as the cycle backstop.
  *
  * <p>Part of the <strong>extended</strong> suite (skipped by default, run with {@code ./mvnw verify
  * -Pextended}); self-skips when docker or the {@code qits/workspace} image is absent. Deliberately
@@ -137,8 +138,8 @@ public class WorkspaceSubmoduleMaterializationIT {
    * docs/issues/resolved/2026-07-16_nested-submodule-clone-fails-workspace-container.md) and that
    * <b>native resolution</b> now materializes with no url override, because the children are served
    * as siblings addressed by their url basename. The bounded per-level walk (level 0 at the super,
-   * then level 1 inside the checked-out child-a) mirrors {@link
-   * WorkspaceService#materializeSubmodules}.
+   * then level 1 inside the checked-out child-a) mirrors the daemon's {@code
+   * Provisioner.materializeSubmodules}.
    */
   @Test
   public void nestedSubmodulesMaterializeLevelByLevel() throws Exception {
@@ -181,7 +182,7 @@ public class WorkspaceSubmoduleMaterializationIT {
       assertEquals(0, clone.exit, "superproject clone must succeed offline: " + clone.output);
 
       // Level 0: the super's direct submodules, one non-recursive update, NO url override — native
-      // relative resolution finds the sibling bares (materializeSubmodules for rel ".").
+      // relative resolution finds the sibling bares (the daemon's walk for rel ".").
       Exec level0 =
           exec(
               container,

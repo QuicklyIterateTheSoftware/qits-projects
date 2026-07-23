@@ -24,14 +24,13 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 /**
- * Host-side coverage of user-driven, layer-by-layer submodule import: cloning with the import
- * toggle brings in DIRECT submodules only, and each further level is an explicit {@link
- * RepositoryService#importDirectSubmodules} invocation on the imported child (the repository detail
- * view's "import submodules" action). The container-side submodule <em>checkout</em> is not
- * faithful through {@code FakeContainerRuntime} (its clone-url rewrite makes a relative {@code
- * ../<childId>} resolve to a non-existent path) — that path is proven by the real-docker {@code
- * WorkspaceSubmoduleMaterializationIT}. Here we assert the rows/edges/dedup the import produces
- * from the committed {@code submodule-*.git} fixtures.
+ * Host-side coverage of <b>full-closure</b> submodule import: cloning with the import toggle
+ * recursively imports the whole submodule closure as sibling repositories under the same project
+ * (dedup by url, cycle-guarded), and registers a project-scoped name alias per repository so the
+ * git host can serve them as siblings for a native {@code --recurse-submodules} clone. Here we
+ * assert the rows/edges/aliases/dedup the import produces from the committed {@code
+ * submodule-*.git} fixtures; the container-side checkout itself is proven by the real-docker {@code
+ * WorkspaceSubmoduleMaterializationIT}.
  */
 @QuarkusTest
 @TestProfile(RepositoryServiceSubmoduleTest.TestProfile.class)
@@ -53,6 +52,10 @@ public class RepositoryServiceSubmoduleTest {
   @Inject ProjectService projectService;
   @Inject RepositoryRepository repositoryRepository;
   @Inject RepositorySubmoduleRepository submoduleRepository;
+
+  @Inject
+  eu.wohlben.qits.domain.repository.persistence.RepositoryNameRepository repositoryNameRepository;
+
   @Inject WorkspaceRepository workspaceRepository;
   @Inject GitExecutor git;
 
@@ -70,43 +73,13 @@ public class RepositoryServiceSubmoduleTest {
   }
 
   @Test
-  public void importToggleImportsDirectSubmodulesOnly() throws Exception {
+  public void importToggleImportsFullClosureWithDiamondDedup() throws Exception {
     var project = projectService.create("Submodule Import", null);
     var superRepo =
         repositoryService.cloneRepository(fixture("submodule-super.git"), null, project, true);
 
-    // One level: super's direct children (child-a + the diamond's direct shared) — child-a's own
-    // submodules (grandchild + shared) are NOT imported until the user asks for them.
-    Map<String, Repository> repos = reposByName(project.id);
-    assertEquals(
-        Set.of("submodule-super.git", "submodule-child-a.git", "submodule-shared.git"),
-        repos.keySet(),
-        "the creation toggle imports exactly one level of submodules");
-    assertEdge(superRepo.id, "child-a", repos.get("submodule-child-a.git").id);
-    assertEdge(superRepo.id, "shared-direct", repos.get("submodule-shared.git").id);
-    Repository childA = repos.get("submodule-child-a.git");
-    assertTrue(
-        submoduleRepository.findByParentId(childA.id).isEmpty(),
-        "the imported child's own submodules stay unimported");
-
-    // The child advertises its unimported submodules — what the detail view's action offers.
-    var available = repositoryService.listUnimportedSubmodules(childA.id);
-    assertEquals(
-        Set.of("shared", "grandchild"),
-        available.stream().map(s -> s.path()).collect(Collectors.toSet()),
-        "the imported child advertises its own submodules as available");
-  }
-
-  @Test
-  public void manualImportGoesOneLevelDeeperAndDedupsTheDiamond() throws Exception {
-    var project = projectService.create("Submodule Recurse", null);
-    repositoryService.cloneRepository(fixture("submodule-super.git"), null, project, true);
-    Repository childA = reposByName(project.id).get("submodule-child-a.git");
-
-    // The user recurses one layer: child-a's submodules import; the diamond's shared child is
-    // REUSED (dedup by url within the project), only grandchild is a new repository.
-    repositoryService.importDirectSubmodules(childA.id);
-
+    // Full closure: super's direct children AND their children, recursively. The diamond's shared
+    // child is imported once (dedup by url) and linked from both super and child-a.
     Map<String, Repository> repos = reposByName(project.id);
     assertEquals(
         Set.of(
@@ -115,7 +88,10 @@ public class RepositoryServiceSubmoduleTest {
             "submodule-shared.git",
             "submodule-grandchild.git"),
         repos.keySet(),
-        "one manual import adds exactly the child's level; the diamond child is not duplicated");
+        "the creation toggle imports the whole submodule closure as siblings");
+    Repository childA = repos.get("submodule-child-a.git");
+    assertEdge(superRepo.id, "child-a", childA.id);
+    assertEdge(superRepo.id, "shared-direct", repos.get("submodule-shared.git").id);
     assertEdge(childA.id, "shared", repos.get("submodule-shared.git").id);
     assertEdge(childA.id, "grandchild", repos.get("submodule-grandchild.git").id);
 
@@ -123,11 +99,43 @@ public class RepositoryServiceSubmoduleTest {
     long edgesToShared =
         allEdges(project.id).stream().filter(e -> e.child.id.equals(sharedId)).count();
     assertEquals(2, edgesToShared, "the diamond child is imported once but linked twice");
+
+    // Nothing is left unimported at any level — the whole tree materialized.
+    assertTrue(
+        repositoryService.listUnimportedSubmodules(superRepo.id).isEmpty(),
+        "the superproject has no unimported submodules after a full-closure import");
     assertTrue(
         repositoryService.listUnimportedSubmodules(childA.id).isEmpty(),
-        "nothing left to offer once every direct submodule is imported");
+        "the imported child has no unimported submodules either");
+  }
 
-    // Idempotent: importing again creates nothing new.
+  @Test
+  public void importRegistersProjectScopedNameAliases() throws Exception {
+    var project = projectService.create("Submodule Aliases", null);
+    repositoryService.cloneRepository(fixture("submodule-super.git"), null, project, true);
+
+    // Every imported repository is addressable by its url basename within the project, so the git
+    // host serves them as siblings and native `../<name>.git` resolution works.
+    Map<String, Repository> repos = reposByName(project.id);
+    for (var entry : repos.entrySet()) {
+      String base = entry.getKey().replaceFirst("\\.git$", "");
+      assertEquals(
+          entry.getValue().id,
+          repositoryNameRepository
+              .findRepositoryByProjectAndName(project.id, base)
+              .map(r -> r.id)
+              .orElse(null),
+          "name alias '" + base + "' resolves to its repository");
+    }
+  }
+
+  @Test
+  public void reimportIsIdempotent() throws Exception {
+    var project = projectService.create("Submodule Recurse", null);
+    repositoryService.cloneRepository(fixture("submodule-super.git"), null, project, true);
+    Repository childA = reposByName(project.id).get("submodule-child-a.git");
+
+    // The full closure is already imported at creation; re-importing from any node adds nothing.
     repositoryService.importDirectSubmodules(childA.id);
     assertEquals(4, reposByName(project.id).size(), "re-import adds no repositories");
     assertEquals(
@@ -185,19 +193,18 @@ public class RepositoryServiceSubmoduleTest {
   @Test
   public void cyclicSubmodulesLinkBackWithoutDuplicating() throws Exception {
     var project = projectService.create("Cycle", null);
-    // cycle-a -> cycle-b -> cycle-a. Layer-by-layer import needs no cycle guard: importing b's
-    // level finds a already in the project (dedup by url) and just links back.
+    // cycle-a -> cycle-b -> cycle-a. The recursive full-closure import's visited guard terminates
+    // the cycle: importing a brings in b, and b's back-edge finds a already present (dedup by url).
     var cycleA =
         repositoryService.cloneRepository(fixture("submodule-cycle-a.git"), null, project, true);
-    Repository cycleB = reposByName(project.id).get("submodule-cycle-b.git");
-    repositoryService.importDirectSubmodules(cycleB.id);
 
     Map<String, Repository> repos = reposByName(project.id);
     assertEquals(
         Set.of("submodule-cycle-a.git", "submodule-cycle-b.git"),
         repos.keySet(),
         "the two-node cycle imports each node once; the back-edge reuses the existing row");
-    assertNotEquals(cycleA.id, repos.get("submodule-cycle-b.git").id);
+    Repository cycleB = repos.get("submodule-cycle-b.git");
+    assertNotEquals(cycleA.id, cycleB.id);
     assertEquals(
         cycleA.id,
         submoduleRepository.findByParentId(cycleB.id).get(0).child.id,

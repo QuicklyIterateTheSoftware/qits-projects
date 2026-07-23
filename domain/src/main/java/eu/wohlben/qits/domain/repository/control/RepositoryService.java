@@ -14,6 +14,7 @@ import eu.wohlben.qits.domain.repository.dto.SyncStatusDto;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.repository.entity.RepositorySubmodule;
+import eu.wohlben.qits.domain.repository.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.RepositorySubmoduleRepository;
 import eu.wohlben.qits.domain.repository.persistence.WorkspaceRepository;
@@ -43,6 +44,9 @@ public class RepositoryService {
 
   private static final Logger LOG = Logger.getLogger(RepositoryService.class);
 
+  /** Backstop for the recursive submodule-closure import (the cycle guard's belt-and-braces). */
+  private static final int MAX_SUBMODULE_DEPTH = 10;
+
   @Inject RepositoryRepository repositoryRepository;
 
   @Inject WorkspaceRepository workspaceRepository;
@@ -64,6 +68,8 @@ public class RepositoryService {
   @Inject QitsConfigReconciler qitsConfigReconciler;
 
   @Inject RepositorySubmoduleRepository repositorySubmoduleRepository;
+
+  @Inject RepositoryNameRepository repositoryNameRepository;
 
   @Inject FeatureFlowPhaseActionService featureFlowPhaseActionService;
 
@@ -97,10 +103,11 @@ public class RepositoryService {
   }
 
   /**
-   * Clones and, when {@code importSubmodules}, imports the repository's DIRECT submodules as
-   * sibling repositories (one level — submodule import is user-driven layer by layer; each imported
-   * child's own submodules stay unimported until {@link #importDirectSubmodules} is invoked on it,
-   * e.g. via the repository detail view's "import submodules" action).
+   * Clones and, when {@code importSubmodules}, imports the repository's <b>full submodule
+   * closure</b> as sibling repositories under the same project (recursive, dedup + cycle-guarded,
+   * depth-capped). The whole closure is imported because provisioning materializes submodules by
+   * native relative resolution, so every submodule git resolves — at every depth — must already be
+   * a servable sibling.
    */
   @Transactional
   public Repository cloneRepository(
@@ -113,9 +120,9 @@ public class RepositoryService {
   }
 
   /**
-   * Clones one repository under {@code project} — no submodule handling here; that is {@link
-   * #importDirectSubmodules}'s job, always explicit and one level at a time. Runs within the
-   * caller's transaction.
+   * Clones one repository under {@code project} and registers its project-scoped name alias (its
+   * url basename) — no submodule handling here; that is {@link #importDirectSubmodules}'s job (the
+   * full closure, recursively). Runs within the caller's transaction.
    *
    * @param createMainWorkspace whether to give the repository its default main-branch workspace —
    *     {@code true} for a user-created repository, {@code false} for an imported child (a
@@ -143,6 +150,11 @@ public class RepositoryService {
     repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
     repo.project = project;
     repositoryRepository.persist(repo);
+
+    // Give the repository a project-scoped addressable name (its url basename) so the git host can
+    // serve it as a sibling under /git/<projectId>/<name> — this is what lets committed relative
+    // submodule urls resolve natively, and what its own workspace container clones itself under.
+    repositoryNameRepository.registerSelfName(repo);
 
     Path originPath = Path.of(dataDir, repo.id, "origin");
     try {
@@ -177,23 +189,39 @@ public class RepositoryService {
   }
 
   /**
-   * Imports {@code repoId}'s DIRECT {@code .gitmodules} submodules as sibling repositories under
-   * the same project, each linked by a {@link RepositorySubmodule} edge, and returns the
-   * repository's full edge list afterwards. One level only, by design: submodule import is
-   * user-driven layer by layer — a "want it deeper" recursion is the user invoking this on the
-   * imported child (the repository detail view's "import submodules" action), as far down as they
-   * care to go. Idempotent: children dedup by resolved url within the project, edges by (parent,
-   * path), so re-invoking imports only what's missing. Cycles need no special guard anymore — a
-   * cyclic pair simply links back to the already-imported row on the second, user-invoked step.
+   * Imports {@code repoId}'s <b>full submodule closure</b> as sibling repositories under the same
+   * project (every level, recursively), each linked by a {@link RepositorySubmodule} edge, and
+   * returns {@code repoId}'s direct edge list afterwards. The whole closure is imported because
+   * provisioning clones with native {@code --recurse-submodules}: every submodule git resolves, at
+   * any depth, must already be a servable sibling. Idempotent: children dedup by resolved url
+   * within the project, edges by (parent, path), so re-invoking imports only what's missing.
+   * Cycle-guarded (a visited set — the mutual {@code submodule-cycle-a/b} pair links back to the
+   * existing row) and depth-capped.
    */
   @Transactional
   public List<RepositorySubmodule> importDirectSubmodules(String repoId) {
     Repository repo = get(repoId);
-    importDirectSubmodules(repo);
+    importSubmoduleClosure(repo, new HashSet<>(), 0);
     return repositorySubmoduleRepository.findByParentId(repoId);
   }
 
   private void importDirectSubmodules(Repository repo) {
+    importSubmoduleClosure(repo, new HashSet<>(), 0);
+  }
+
+  /**
+   * Recursively imports {@code repo}'s submodule closure. {@code visited} (by repository id) makes
+   * a cyclic import graph terminate — a repo already visited on this walk is not re-descended — and
+   * {@code depth} is the backstop cap. For each {@code .gitmodules} entry: resolve the child url,
+   * dedup-or-create the sibling repository (which registers its own url-basename alias via {@code
+   * cloneOne}), register the referencing name as an alias of the child (idempotent; usually equals
+   * the child's own basename, but the link table supports a child addressed by more than one name),
+   * link the edge, and descend.
+   */
+  private void importSubmoduleClosure(Repository repo, Set<String> visited, int depth) {
+    if (depth >= MAX_SUBMODULE_DEPTH || !visited.add(repo.id)) {
+      return;
+    }
     Path originPath = originPath(repo.id);
     for (GitSubmoduleParser.Submodule sub :
         submoduleParser.readSubmodules(originPath.toFile(), repo.mainBranch)) {
@@ -209,6 +237,12 @@ public class RepositoryService {
         child = cloneOne(childUrl, RepositoryArchetype.SERVICE, repo.project, false);
       }
 
+      // Register the referencing name as an alias of the child so /git/<projectId>/<name> resolves
+      // it; native `../<name>.git` from this superproject then lands on the sibling with no
+      // override.
+      repositoryNameRepository.ensureAlias(
+          repo.project, RepositoryNameRepository.basename(childUrl), child);
+
       if (!repositorySubmoduleRepository.existsByParentAndPath(repo.id, sub.path())) {
         RepositorySubmodule edge = new RepositorySubmodule();
         edge.parent = repo;
@@ -217,6 +251,8 @@ public class RepositoryService {
         edge.name = sub.name();
         repositorySubmoduleRepository.persist(edge);
       }
+
+      importSubmoduleClosure(child, visited, depth + 1);
     }
   }
 

@@ -15,11 +15,13 @@ import java.util.List;
 /**
  * A superproject's submodule surface: the imported edges (sibling repositories qits created for its
  * {@code .gitmodules} entries) plus the still-unimported ones — and the {@code import} action that
- * turns the latter into the former. Import is user-driven layer by layer: creating a repository
- * with the {@code importSubmodules} toggle imports its DIRECT submodules; going deeper is invoking
- * {@code import} on an imported child (each child's detail view offers it while anything is
- * available), as far down as the user cares to recurse. Edges cascade-delete with either
- * repository, so there is no delete surface here.
+ * turns the latter into the former. Import is <b>full-closure</b>: creating a repository with the
+ * {@code importSubmodules} toggle, or invoking {@code import} here, recursively imports the entire
+ * reachable submodule closure as sibling repositories in one call (dedup + cycle-guarded), so every
+ * level is servable for a native, name-addressed workspace clone. After a full import the {@code
+ * available} list is empty; the action stays idempotent and is the way to import (or re-check) the
+ * closure for a repository added without the toggle. Edges cascade-delete with either repository,
+ * so there is no delete surface here.
  */
 @Path("/repositories/{repositoryId}/submodules")
 @Produces(MediaType.APPLICATION_JSON)
@@ -63,9 +65,9 @@ public class RepositorySubmoduleController {
   }
 
   /**
-   * Imports the repository's still-unimported DIRECT submodules as sibling repositories (one level
-   * — see the class doc) and returns the full edge list afterwards. Idempotent: children dedup by
-   * resolved url within the project, edges by path.
+   * Imports the repository's <b>full submodule closure</b> as sibling repositories (recursive — see
+   * the class doc) and returns this repository's direct edge list afterwards. Idempotent: children
+   * dedup by resolved url within the project, edges by path.
    */
   @POST
   @Path("/import")

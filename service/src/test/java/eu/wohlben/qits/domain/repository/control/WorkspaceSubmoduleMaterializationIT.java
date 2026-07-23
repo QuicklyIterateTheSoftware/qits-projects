@@ -17,12 +17,14 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Real-docker integration test that a superproject's submodules <em>materialize offline</em> the
- * way {@link WorkspaceService#provisionContainer} wires them: after the plain clone, each level of
- * the walk overrides its {@code submodule.<name>.url}s to the child repositories' own urls and runs
- * one non-recursive {@code submodule update --init} — then repeats the same sequence inside every
- * checked-out child that has submodules of its own (git's {@code --recursive} cannot be used: it
- * derives nested urls from each child's {@code .gitmodules}, which no override reaches).
+ * Real-docker integration test that a superproject's submodules <em>materialize offline via native
+ * resolution</em> the way {@link WorkspaceService#materializeSubmodules} does: after the plain
+ * clone, a bounded per-level {@code submodule update --init} (NON-recursive, path-scoped) with
+ * <b>no {@code submodule.<name>.url} override</b>, then the same inside each checked-out child. It
+ * works because a project's repositories are served as <b>siblings addressed by name</b>, so git's
+ * committed relative url ({@code ../<name>.git}) resolves to the right sibling on its own — the
+ * same property the production name-addressed HTTP host provides. The walk is deliberately bounded
+ * (not git's own {@code --recursive}) as the cycle backstop.
  *
  * <p>Part of the <strong>extended</strong> suite (skipped by default, run with {@code ./mvnw verify
  * -Pextended}); self-skips when docker or the {@code qits/workspace} image is absent. Deliberately
@@ -32,11 +34,10 @@ import org.junit.jupiter.api.Test;
  * <p>Offline is proven structurally: the container runs on {@code --network none}, so nothing
  * outside it is reachable. The git source is {@code docker cp}'d <em>into</em> the container (not
  * bind-mounted — a bind mount resolves on the daemon's filesystem, which differs from the test's
- * under docker-in-docker) and the children are served over local paths (git's {@code
- * protocol.file.allow=always} lets a submodule clone one) instead of the production HTTP git host —
- * the same override→update sequence and relative-name→id mapping, minus the environment-coupled
- * qits-net wiring (exercised by the app/verify path). Build the image first: {@code docker build -t
- * qits/workspace --target workspace -f docker/qits/Dockerfile .}
+ * under docker-in-docker), staged as <b>siblings named by their url basename</b> (the local
+ * analogue of the id-addressed HTTP siblings), and served over local paths ({@code
+ * protocol.file.allow=always} stands in for the HTTP transport). Build the image first: {@code
+ * docker build -t qits/workspace --target workspace -f docker/qits/Dockerfile .}
  */
 @Tag("extended")
 public class WorkspaceSubmoduleMaterializationIT {
@@ -58,13 +59,14 @@ public class WorkspaceSubmoduleMaterializationIT {
   public void submoduleMaterializesOfflineFromItsChildUrl() throws Exception {
     assumeTrue(dockerAndImageAvailable(), "docker + " + IMAGE + " required for this IT");
 
-    // Stage a git source dir: the superproject at super/ and its single leaf submodule at shared/,
-    // docker cp'd into the container at /gitsrc. `submodule.lib.url` is overridden to
-    // /gitsrc/shared
-    // (the local analog of the production child git-host url), exactly as provisionContainer does.
+    // Stage the git source as SIBLINGS NAMED BY URL BASENAME (the local analogue of the
+    // id-addressed
+    // HTTP siblings the production name-addressed host serves), docker cp'd into the container at
+    // /gitsrc. No submodule.<name>.url override: the committed relative url ../submodule-shared.git
+    // resolves natively against the superproject's origin to the sibling.
     Path gitsrc = Files.createTempDirectory("qits-it-submodule");
-    copyTree(fixture("submodule-simple-super.git"), gitsrc.resolve("super"));
-    copyTree(fixture("submodule-shared.git"), gitsrc.resolve("shared"));
+    copyTree(fixture("submodule-simple-super.git"), gitsrc.resolve("submodule-simple-super.git"));
+    copyTree(fixture("submodule-shared.git"), gitsrc.resolve("submodule-shared.git"));
 
     String container = "qits-it-submodule-" + UUID.randomUUID();
     rm(container);
@@ -83,22 +85,24 @@ public class WorkspaceSubmoduleMaterializationIT {
           IMAGE,
           "600");
       // Ship the git source into the container (docker cp works under docker-in-docker; a bind
-      // mount
-      // would resolve on the daemon's filesystem, not the test's).
+      // mount would resolve on the daemon's filesystem, not the test's).
       assertEquals(0, exec(container, "mkdir", "-p", "/gitsrc").exit);
       run(RUNTIME, "cp", gitsrc + "/.", container + ":/gitsrc");
 
-      // 1) Plain clone of the superproject (byte-for-byte the historical provision step).
-      Exec clone = exec(container, "git", "clone", "--branch", "main", "/gitsrc/super", "/tmp/ws");
+      // 1) Plain clone of the superproject.
+      Exec clone =
+          exec(
+              container,
+              "git",
+              "clone",
+              "--branch",
+              "main",
+              "/gitsrc/submodule-simple-super.git",
+              "/tmp/ws");
       assertEquals(0, clone.exit, "superproject clone must succeed offline: " + clone.output);
 
-      // 2) Override the submodule url to the child's own url, then materialize it — the wiring
-      // submoduleWiringCommands emits (protocol.file.allow=always is the IT-local stand-in for the
-      // HTTP transport production uses; the sequence is identical).
-      assertEquals(
-          0,
-          exec(container, "git", "-C", "/tmp/ws", "config", "submodule.lib.url", "/gitsrc/shared")
-              .exit);
+      // 2) Materialize the submodule with NO url override — native relative resolution finds the
+      // sibling (protocol.file.allow=always is the IT-local stand-in for the HTTP transport).
       Exec update =
           exec(
               container,
@@ -128,21 +132,24 @@ public class WorkspaceSubmoduleMaterializationIT {
 
   /**
    * The depth-2 diamond ({@code super → child-a → {shared, grandchild}} plus {@code super →
-   * shared}): the exact shape that fails under a single {@code submodule update --init --recursive}
-   * (child-a's own relative urls resolve to un-served names — the prod encounter in
+   * shared}): the exact shape that failed under the old id-addressed host (child-a's own relative
+   * urls resolved to un-served names — the prod encounter in
    * docs/issues/resolved/2026-07-16_nested-submodule-clone-fails-workspace-container.md) and that
-   * the level-by-level walk materializes: wire+update the super's level, then re-apply the same
-   * sequence inside the checked-out child-a.
+   * <b>native resolution</b> now materializes with no url override, because the children are served
+   * as siblings addressed by their url basename. The bounded per-level walk (level 0 at the super,
+   * then level 1 inside the checked-out child-a) mirrors {@link
+   * WorkspaceService#materializeSubmodules}.
    */
   @Test
   public void nestedSubmodulesMaterializeLevelByLevel() throws Exception {
     assumeTrue(dockerAndImageAvailable(), "docker + " + IMAGE + " required for this IT");
 
+    // Siblings named by url basename — no override needed; ../<name>.git resolves natively.
     Path gitsrc = Files.createTempDirectory("qits-it-submodule-nested");
-    copyTree(fixture("submodule-super.git"), gitsrc.resolve("super"));
-    copyTree(fixture("submodule-child-a.git"), gitsrc.resolve("child-a"));
-    copyTree(fixture("submodule-shared.git"), gitsrc.resolve("shared"));
-    copyTree(fixture("submodule-grandchild.git"), gitsrc.resolve("grandchild"));
+    copyTree(fixture("submodule-super.git"), gitsrc.resolve("submodule-super.git"));
+    copyTree(fixture("submodule-child-a.git"), gitsrc.resolve("submodule-child-a.git"));
+    copyTree(fixture("submodule-shared.git"), gitsrc.resolve("submodule-shared.git"));
+    copyTree(fixture("submodule-grandchild.git"), gitsrc.resolve("submodule-grandchild.git"));
 
     String container = "qits-it-submodule-nested-" + UUID.randomUUID();
     rm(container);
@@ -162,33 +169,19 @@ public class WorkspaceSubmoduleMaterializationIT {
       assertEquals(0, exec(container, "mkdir", "-p", "/gitsrc").exit);
       run(RUNTIME, "cp", gitsrc + "/.", container + ":/gitsrc");
 
-      Exec clone = exec(container, "git", "clone", "--branch", "main", "/gitsrc/super", "/tmp/ws");
+      Exec clone =
+          exec(
+              container,
+              "git",
+              "clone",
+              "--branch",
+              "main",
+              "/gitsrc/submodule-super.git",
+              "/tmp/ws");
       assertEquals(0, clone.exit, "superproject clone must succeed offline: " + clone.output);
 
-      // Level 0: the super's direct edges (child-a + the diamond's direct shared), then one
-      // non-recursive update — the sequence submoduleWiringCommands emits for path ".".
-      assertEquals(
-          0,
-          exec(
-                  container,
-                  "git",
-                  "-C",
-                  "/tmp/ws",
-                  "config",
-                  "submodule.child-a.url",
-                  "/gitsrc/child-a")
-              .exit);
-      assertEquals(
-          0,
-          exec(
-                  container,
-                  "git",
-                  "-C",
-                  "/tmp/ws",
-                  "config",
-                  "submodule.shared.url",
-                  "/gitsrc/shared")
-              .exit);
+      // Level 0: the super's direct submodules, one non-recursive update, NO url override — native
+      // relative resolution finds the sibling bares (materializeSubmodules for rel ".").
       Exec level0 =
           exec(
               container,
@@ -205,36 +198,14 @@ public class WorkspaceSubmoduleMaterializationIT {
               "shared-direct");
       assertEquals(0, level0.exit, "level-0 update must succeed offline: " + level0.output);
 
-      // The checked-out child carries its .git marker — what wireSubmodules' descent guard probes.
+      // The checked-out child carries its .git marker — what the descent guard probes.
       assertEquals(
           0,
           exec(container, "test", "-e", "/tmp/ws/child-a/.git").exit,
           "the checked-out child must carry the .git marker the descent probes for");
 
-      // Level 1: the same sequence rooted at the checked-out child — what wireSubmodules re-emits
-      // for path "child-a" from the child's own DB edges.
-      assertEquals(
-          0,
-          exec(
-                  container,
-                  "git",
-                  "-C",
-                  "/tmp/ws/child-a",
-                  "config",
-                  "submodule.shared.url",
-                  "/gitsrc/shared")
-              .exit);
-      assertEquals(
-          0,
-          exec(
-                  container,
-                  "git",
-                  "-C",
-                  "/tmp/ws/child-a",
-                  "config",
-                  "submodule.grandchild.url",
-                  "/gitsrc/grandchild")
-              .exit);
+      // Level 1: rooted at the checked-out child — again NO override; child-a's own committed
+      // relative urls resolve natively against child-a's origin sibling.
       Exec level1 =
           exec(
               container,

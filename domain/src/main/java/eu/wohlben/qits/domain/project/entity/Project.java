@@ -10,6 +10,15 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import java.util.List;
 
+/**
+ * The aggregate root: <b>one application, organized as a polyrepository</b>. Its {@link
+ * #repositories} are the parts of that single app — microservices, shared libraries, extracted
+ * fixtures — curated together by one maintainer, <b>not</b> an aggregation of arbitrary third-party
+ * repos. This framing is load-bearing when reasoning about the submodule/workspace code (name
+ * collisions within a project are the maintainer's own choice; {@code origin} is a backup, not an
+ * authority): see the package doc ({@link eu.wohlben.qits.domain.repository}) and {@code
+ * docs/guides/project-model.md}.
+ */
 @Entity
 public class Project extends PanacheEntityBase {
 

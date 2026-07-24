@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import eu.wohlben.qits.domain.daemon.entity.DaemonEventSeverity;
 import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
 import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
@@ -14,6 +13,7 @@ import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.DaemonDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.service.entity.ServiceEventSeverity;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -159,7 +159,7 @@ class QitsConfigParserTest {
     assertEquals(2, d.observers().size());
     assertEquals(LogObserverKind.LOG_LEVEL, d.observers().get(0).kind());
     assertEquals(LogObserverKind.PATTERN, d.observers().get(1).kind());
-    assertEquals(DaemonEventSeverity.ERROR, d.observers().get(1).severity());
+    assertEquals(ServiceEventSeverity.ERROR, d.observers().get(1).severity());
     assertEquals("quarkus.log", d.sources().get(0).path());
     assertEquals("Quarkus dev log", d.sources().get(0).label());
     assertEquals(HealthCheckKind.HTTP, d.healthChecks().get(0).kind());

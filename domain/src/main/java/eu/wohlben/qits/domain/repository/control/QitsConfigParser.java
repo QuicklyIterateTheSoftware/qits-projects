@@ -1,6 +1,5 @@
 package eu.wohlben.qits.domain.repository.control;
 
-import eu.wohlben.qits.domain.daemon.entity.DaemonEventSeverity;
 import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
 import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
@@ -14,6 +13,7 @@ import eu.wohlben.qits.domain.repository.control.QitsConfig.RepositorySection;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.SourceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.WebViewDecl;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.service.entity.ServiceEventSeverity;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.File;
@@ -206,7 +206,7 @@ public class QitsConfigParser {
           new ObserverDecl(
               enumOf(LogObserverKind.class, m.get("kind"), "observers[].kind"),
               str(m, "pattern"),
-              enumOf(DaemonEventSeverity.class, m.get("severity"), "observers[].severity")));
+              enumOf(ServiceEventSeverity.class, m.get("severity"), "observers[].severity")));
     }
     return out;
   }

@@ -328,7 +328,7 @@ public class WorkspaceContainerIT {
       de.startDaemon(container, daemonId, script, Map.of("QITS_DAEMON_ID", daemonId));
       assertTrue(de.daemonAlive(container, daemonId), "the tmux daemon session should be running");
 
-      // Attach exactly as DaemonTerminalSocket does: a docker exec -it PTY running the attach
+      // Attach exactly as ServiceTerminalSocket does: a docker exec -it PTY running the attach
       // command, with TERM set container-side so tmux renders.
       List<String> argv =
           new ArrayList<>(

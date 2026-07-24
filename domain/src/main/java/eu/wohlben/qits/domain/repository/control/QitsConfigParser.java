@@ -1,19 +1,15 @@
 package eu.wohlben.qits.domain.repository.control;
 
 import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
-import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.FrameworkDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.HealthCheckDecl;
-import eu.wohlben.qits.domain.repository.control.QitsConfig.ObserverDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.RepositorySection;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
-import eu.wohlben.qits.domain.repository.control.QitsConfig.SourceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.WebViewDecl;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
-import eu.wohlben.qits.domain.service.entity.ServiceEventSeverity;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.File;
@@ -184,8 +180,6 @@ public class QitsConfigParser {
               str(m, "stop-signal"),
               strMap(m.get("environment"), "daemons[].environment"),
               webView(m.get("web-view")),
-              observers(m.get("observers")),
-              sources(m.get("sources")),
               healthChecks(m.get("health-checks"))));
     }
     return out;
@@ -198,28 +192,6 @@ public class QitsConfigParser {
     Map<String, Object> m = asMap(raw, "web-view");
     return new WebViewDecl(
         intOrNull(m.get("port"), "web-view.port"), str(m, "entry-path"), str(m, "base-path"));
-  }
-
-  private List<ObserverDecl> observers(Object raw) {
-    List<ObserverDecl> out = new ArrayList<>();
-    for (Object item : asList(raw, "observers")) {
-      Map<String, Object> m = asMap(item, "observers[]");
-      out.add(
-          new ObserverDecl(
-              enumOf(LogObserverKind.class, m.get("kind"), "observers[].kind"),
-              str(m, "pattern"),
-              enumOf(ServiceEventSeverity.class, m.get("severity"), "observers[].severity")));
-    }
-    return out;
-  }
-
-  private List<SourceDecl> sources(Object raw) {
-    List<SourceDecl> out = new ArrayList<>();
-    for (Object item : asList(raw, "sources")) {
-      Map<String, Object> m = asMap(item, "sources[]");
-      out.add(new SourceDecl(reqStr(m, "path", "sources[]"), str(m, "label")));
-    }
-    return out;
   }
 
   private List<HealthCheckDecl> healthChecks(Object raw) {

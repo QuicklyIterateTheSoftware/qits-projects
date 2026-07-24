@@ -6,14 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
-import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
-import eu.wohlben.qits.domain.service.entity.ServiceEventSeverity;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -129,14 +127,6 @@ class QitsConfigParserTest {
                 web-view:
                   port: 4200
                   entry-path: /
-                observers:
-                  - kind: LOG_LEVEL
-                  - kind: PATTERN
-                    pattern: "(?i)BUILD FAILURE"
-                    severity: ERROR
-                sources:
-                  - path: quarkus.log
-                    label: Quarkus dev log
                 health-checks:
                   - name: Quarkus
                     kind: HTTP
@@ -156,12 +146,6 @@ class QitsConfigParserTest {
     assertEquals("0.0.0.0", d.environment().get("QUARKUS_HTTP_HOST"));
     assertEquals(4200, d.webView().port());
     assertEquals("/", d.webView().entryPath());
-    assertEquals(2, d.observers().size());
-    assertEquals(LogObserverKind.LOG_LEVEL, d.observers().get(0).kind());
-    assertEquals(LogObserverKind.PATTERN, d.observers().get(1).kind());
-    assertEquals(ServiceEventSeverity.ERROR, d.observers().get(1).severity());
-    assertEquals("quarkus.log", d.sources().get(0).path());
-    assertEquals("Quarkus dev log", d.sources().get(0).label());
     assertEquals(HealthCheckKind.HTTP, d.healthChecks().get(0).kind());
     assertEquals(8080, d.healthChecks().get(0).port());
     assertEquals(Long.valueOf(5000), d.healthChecks().get(0).intervalMs());
@@ -228,8 +212,6 @@ class QitsConfigParserTest {
     assertEquals("Quarkus dev server", daemon.name());
     assertEquals(4200, daemon.webView().port());
     assertEquals("greeting", daemon.webView().entryPath());
-    assertEquals(2, daemon.observers().size());
-    assertEquals(1, daemon.sources().size());
     assertEquals(2, daemon.healthChecks().size());
     assertEquals(HealthCheckKind.COMMAND, daemon.healthChecks().get(0).kind());
     assertEquals(5, config.actions().size());

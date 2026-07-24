@@ -10,7 +10,7 @@ import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
-import eu.wohlben.qits.domain.repository.control.QitsConfig.DaemonDecl;
+import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.service.entity.ServiceEventSeverity;
@@ -145,8 +145,8 @@ class QitsConfigParserTest {
                     expect-status: 2xx,3xx
                     interval-ms: 5000
             """);
-    assertEquals(1, config.daemons().size());
-    DaemonDecl d = config.daemons().get(0);
+    assertEquals(1, config.services().size());
+    ServiceDecl d = config.services().get(0);
     assertEquals("dev-server", d.name());
     assertEquals("./mvnw quarkus:dev", d.start());
     assertEquals("Listening on", d.readyPattern());
@@ -223,8 +223,8 @@ class QitsConfigParserTest {
     org.junit.jupiter.api.Assumptions.assumeTrue(
         java.nio.file.Files.exists(file), "fixture submodule not checked out");
     QitsConfig config = parser.parse(java.nio.file.Files.readString(file));
-    assertEquals(1, config.daemons().size());
-    DaemonDecl daemon = config.daemons().get(0);
+    assertEquals(1, config.services().size());
+    ServiceDecl daemon = config.services().get(0);
     assertEquals("Quarkus dev server", daemon.name());
     assertEquals(4200, daemon.webView().port());
     assertEquals("greeting", daemon.webView().entryPath());

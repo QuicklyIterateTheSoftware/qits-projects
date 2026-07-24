@@ -5,11 +5,11 @@ import eu.wohlben.qits.domain.daemon.entity.LogObserverKind;
 import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
-import eu.wohlben.qits.domain.repository.control.QitsConfig.DaemonDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.FrameworkDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.HealthCheckDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ObserverDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.RepositorySection;
+import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.SourceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.WebViewDecl;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
@@ -111,7 +111,9 @@ public class QitsConfigParser {
         repositorySection(map.get("repository")),
         frameworks(map.get("frameworks")),
         actions(map.get("actions")),
-        daemons(map.get("daemons")),
+        // Accept the new `services:` key, falling back to the legacy `daemons:` (TEMPORARY — the
+        // fixtures still use `daemons:`; drop once their submodule round-trip lands `services:`).
+        services(map.containsKey("services") ? map.get("services") : map.get("daemons")),
         bootstrap(map.get("bootstrap")));
   }
 
@@ -164,13 +166,13 @@ public class QitsConfigParser {
     return out;
   }
 
-  private List<DaemonDecl> daemons(Object raw) {
-    List<DaemonDecl> out = new ArrayList<>();
-    for (Object item : asList(raw, "daemons")) {
-      Map<String, Object> m = asMap(item, "daemons[]");
-      String name = reqStr(m, "name", "daemons[]");
+  private List<ServiceDecl> services(Object raw) {
+    List<ServiceDecl> out = new ArrayList<>();
+    for (Object item : asList(raw, "services")) {
+      Map<String, Object> m = asMap(item, "services[]");
+      String name = reqStr(m, "name", "services[]");
       out.add(
-          new DaemonDecl(
+          new ServiceDecl(
               name,
               str(m, "description"),
               str(m, "start"),

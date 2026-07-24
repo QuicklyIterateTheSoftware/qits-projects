@@ -31,9 +31,9 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * branch that keeps a config-free repository on the old path.
  *
  * <p>{@link #parse} is stricter: a structurally invalid file (bad YAML, wrong {@code version},
- * unknown enum) throws {@link QitsConfigException} so the reconciler can surface it as a
- * repository-level warning while keeping the last-good DB state. Per-entry <em>validation</em>
- * (regex, web-view, health-check ranges) is left to the daemon/action services downstream.
+ * unknown enum) throws {@link QitsConfigException} so the caller can surface it as a warning while
+ * keeping the last-good state. Per-entry <em>validation</em> (regex, web-view, health-check ranges)
+ * is left to the consumers downstream.
  */
 @ApplicationScoped
 public class QitsConfigParser {
@@ -137,6 +137,7 @@ public class QitsConfigParser {
       Map<String, Object> m = asMap(item, "actions[]");
       out.add(
           new ActionDecl(
+              str(m, "id"),
               reqStr(m, "name", "actions[]"),
               str(m, "description"),
               str(m, "execute"),
@@ -153,6 +154,7 @@ public class QitsConfigParser {
       Map<String, Object> m = asMap(item, "bootstrap[]");
       out.add(
           new BootstrapDecl(
+              str(m, "id"),
               reqStr(m, "name", "bootstrap[]"),
               str(m, "description"),
               str(m, "execute"),
@@ -169,6 +171,7 @@ public class QitsConfigParser {
       String name = reqStr(m, "name", "services[]");
       out.add(
           new ServiceDecl(
+              str(m, "id"),
               name,
               str(m, "description"),
               str(m, "start"),

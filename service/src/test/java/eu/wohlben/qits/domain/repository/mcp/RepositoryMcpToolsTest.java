@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import eu.wohlben.qits.domain.featureflow.control.ActionConfigurationService;
 import eu.wohlben.qits.domain.project.api.ProjectController;
 import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
@@ -15,7 +14,6 @@ import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
 import io.vertx.core.MultiMap;
-import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,8 +44,6 @@ public class RepositoryMcpToolsTest {
   }
 
   private final String fixtureUrl;
-
-  @Inject ActionConfigurationService actionConfigurationService;
 
   public RepositoryMcpToolsTest() throws Exception {
     fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
@@ -257,12 +253,9 @@ public class RepositoryMcpToolsTest {
   }
 
   @Test
-  public void readOnlyMarkerHidesEveryMutatingToolIncludingRunAction() {
+  public void readOnlyMarkerHidesEveryMutatingTool() {
     // An unattended read-only run (conflict resolution) attaches this server only for taskPrompt;
-    // it
-    // must not be able to drive host-side mutations — runAction (execute a configured action
-    // script)
-    // included, the gap this test guards.
+    // it must not be able to drive host-side mutations.
     String project = createProject("ReadOnly");
     readOnlyClient(project)
         .when()
@@ -274,8 +267,7 @@ public class RepositoryMcpToolsTest {
                       "createWorkspace",
                       "cleanupBranch",
                       "integrateBranch",
-                      "mergeParentIntoWorkspace",
-                      "runAction")) {
+                      "mergeParentIntoWorkspace")) {
                 assertFalse(
                     names.contains(mutating),
                     "read-only run still exposes mutating tool " + mutating + ": " + names);
@@ -285,7 +277,6 @@ public class RepositoryMcpToolsTest {
               // project-only client doesn't carry — so it isn't asserted here.
               assertTrue(
                   names.contains("listRepositories"), "read-only tool wrongly hidden: " + names);
-              assertTrue(names.contains("listActions"), "read-only tool wrongly hidden: " + names);
             })
         .thenAssertResults();
   }
@@ -328,130 +319,9 @@ public class RepositoryMcpToolsTest {
                       "cleanupBranch",
                       "integrateBranch",
                       "mergeParentIntoWorkspace",
-                      "listActions",
-                      "runAction",
                       "listSubmodules"),
                   java.util.Set.copyOf(names),
                   "unexpected tool surface: " + names);
-            })
-        .thenAssertResults();
-  }
-
-  // --- Run actions ----------------------------------------------------------
-
-  private String createWorkspace(String repoId, String workspaceId) {
-    return given()
-        .contentType(ContentType.JSON)
-        .body(Map.of("id", workspaceId, "parent", "master"))
-        .when()
-        .post("/api/repositories/" + repoId + "/workspaces")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .extract()
-        .path("workspace.workspaceId");
-  }
-
-  private String createAction(String name, String executeScript, boolean interactive) {
-    return given()
-        .contentType(ContentType.JSON)
-        .body(Map.of("name", name, "executeScript", executeScript, "interactive", interactive))
-        .when()
-        .post("/api/action-configurations")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .extract()
-        .path("actionConfiguration.id");
-  }
-
-  @Test
-  public void runsANonInteractiveActionInTheWorkspace() {
-    String project = createProject("Runner");
-    String repoId = createRepository(project);
-    String workspaceId = createWorkspace(repoId, "run-wt");
-    String actionId = createAction("Echo", "echo HELLO_FROM_ACTION", false);
-
-    client(project)
-        .when()
-        .toolsCall(
-            "runAction",
-            Map.of("repoId", repoId, "workspaceId", workspaceId, "actionId", actionId),
-            response -> {
-              assertFalse(response.isError(), "run should succeed: " + text(response));
-              String text = text(response);
-              assertTrue(text.contains("HELLO_FROM_ACTION"), "should capture output: " + text);
-            })
-        .thenAssertResults();
-  }
-
-  @Test
-  public void refusesInteractiveActions() {
-    String project = createProject("NoInteractive");
-    String repoId = createRepository(project);
-    String workspaceId = createWorkspace(repoId, "i-wt");
-    String actionId = createAction("Shell", "exec bash", true);
-
-    client(project)
-        .when()
-        .toolsCall(
-            "runAction",
-            Map.of("repoId", repoId, "workspaceId", workspaceId, "actionId", actionId),
-            response -> {
-              assertTrue(response.isError(), "interactive actions must be refused");
-              assertTrue(text(response).contains("interactive"), text(response));
-            })
-        .thenAssertResults();
-  }
-
-  @Test
-  public void listActionsExcludesInteractiveOnesAndOtherRepositoriesActions() {
-    String project = createProject("Listing");
-    String repoId = createRepository(project);
-    String otherProject = createProject("Listing Other");
-    String otherRepoId = createRepository(otherProject);
-    createAction("Run Tests XYZ", "mvn test", false);
-    createAction("Interactive Shell XYZ", "exec bash", true);
-    actionConfigurationService.createForRepository(
-        repoId, "Own Repo Action XYZ", null, "echo own", null, false, null);
-    actionConfigurationService.createForRepository(
-        otherRepoId, "Foreign Repo Action XYZ", null, "echo foreign", null, false, null);
-
-    client(project)
-        .when()
-        .toolsCall(
-            "listActions",
-            Map.of("repoId", repoId),
-            response -> {
-              assertFalse(response.isError());
-              String text = text(response);
-              assertTrue(text.contains("Run Tests XYZ"), "should list non-interactive: " + text);
-              assertTrue(text.contains("Own Repo Action XYZ"), "should list repo-scoped: " + text);
-              assertFalse(
-                  text.contains("Interactive Shell XYZ"), "must exclude interactive: " + text);
-              assertFalse(
-                  text.contains("Foreign Repo Action XYZ"),
-                  "must exclude other repositories: " + text);
-            })
-        .thenAssertResults();
-  }
-
-  @Test
-  public void runsARepositoryScopedActionInItsOwnRepository() {
-    String project = createProject("RepoRunner");
-    String repoId = createRepository(project);
-    String workspaceId = createWorkspace(repoId, "repo-run-wt");
-    // a repository-owned action (seeded directly via the service — there is no global REST for it)
-    var action =
-        actionConfigurationService.createForRepository(
-            repoId, "Repo Echo", null, "echo REPO_ACTION_RAN", null, false, null);
-
-    client(project)
-        .when()
-        .toolsCall(
-            "runAction",
-            Map.of("repoId", repoId, "workspaceId", workspaceId, "actionId", action.id),
-            response -> {
-              assertFalse(response.isError(), "repo-scoped run should succeed: " + text(response));
-              assertTrue(text(response).contains("REPO_ACTION_RAN"), text(response));
             })
         .thenAssertResults();
   }

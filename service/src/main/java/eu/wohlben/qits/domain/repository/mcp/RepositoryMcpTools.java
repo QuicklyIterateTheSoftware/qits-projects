@@ -1,8 +1,6 @@
 package eu.wohlben.qits.domain.repository.mcp;
 
-import eu.wohlben.qits.domain.featureflow.control.ActionResolutionService;
 import eu.wohlben.qits.domain.project.control.ProjectService;
-import eu.wohlben.qits.domain.repository.control.ActionRunService;
 import eu.wohlben.qits.domain.repository.control.CommitService;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
 import eu.wohlben.qits.domain.repository.control.WorkspaceService;
@@ -29,13 +27,12 @@ import java.util.List;
  * a client connected to this endpoint only ever sees repository tools and stays on task.
  *
  * <p><strong>Use case: working inside a repository.</strong> Inspect its branches, commits and
- * diffs; manipulate workspaces (branch off, integrate, clean up, merge a parent in); and
- * <em>run</em> a non-interactive action in a workspace via {@code runAction}. That last tool
- * <em>consumes</em> an action from the global library but does not configure one — defining and
+ * diffs; manipulate workspaces (branch off, integrate, clean up, merge a parent in). Defining and
  * editing actions is the job of the separate "actions" server (see {@link
- * eu.wohlben.qits.domain.featureflow.mcp.ActionConfigurationMcpTools}). The split is intentional: a
- * session here is for getting work done in a checkout, not for changing what actions exist, so
- * {@code runAction} and {@code listActions} here only ever read and use the library.
+ * eu.wohlben.qits.domain.featureflow.mcp.ActionConfigurationMcpTools}); running a config-declared
+ * workspace action moved to the workspace-daemon's own surface (Part 5 removed the repo-anchored
+ * {@code listActions}/{@code runAction} pair with the DB config store). The split is intentional: a
+ * session here is for getting work done in a checkout, not for changing what actions exist.
  *
  * <p>Each session is scoped to a single project via {@link ProjectScope} (the {@code
  * X-QITS-Project} header), and may be further narrowed to one repository within it (the optional
@@ -64,10 +61,6 @@ public class RepositoryMcpTools {
   @Inject CommitService commitService;
 
   @Inject WorkspaceService workspaceService;
-
-  @Inject ActionResolutionService actionResolutionService;
-
-  @Inject ActionRunService actionRunService;
 
   // --- Context (read) -------------------------------------------------------
 
@@ -233,44 +226,6 @@ public class RepositoryMcpTools {
     requireRepoInProject(repoId);
     String output = workspaceService.updateWorkspaceFromParent(repoId, workspaceId);
     return new MergeParentResult(workspaceId, output);
-  }
-
-  // --- Run actions ----------------------------------------------------------
-
-  /** A non-interactive action the model can run, trimmed to what it needs to pick one. */
-  public record RunnableAction(String id, String name, String description) {}
-
-  @McpServer("repository")
-  @Tool(
-      description =
-          "List the non-interactive actions — one-off commands such as a test or build — that"
-              + " runAction can run in a workspace of the given repository: the repository's own"
-              + " actions plus the global ones it inherits. Interactive actions (a shell, Claude"
-              + " Code) are excluded: those are for the human terminal, not for the model to run.")
-  @Transactional
-  public List<RunnableAction> listActions(
-      @ToolArg(description = "id of a repository in this project") String repoId) {
-    requireRepoInProject(repoId);
-    return actionResolutionService.effectiveActions(repoId).stream()
-        .filter(a -> !a.interactive())
-        .map(a -> new RunnableAction(a.id(), a.name(), a.description()))
-        .toList();
-  }
-
-  @McpServer("repository")
-  @Tool(
-      description =
-          "Run a non-interactive action (a one-off command, e.g. 'mvn test') in a workspace checkout"
-              + " and return its combined stdout/stderr and exit code. The action's script runs in a"
-              + " login shell in the workspace directory with the action's environment. Refuses"
-              + " interactive actions. Get actionIds from listActions and workspaceIds from"
-              + " listWorkspaces.")
-  public ActionRunService.RunResult runAction(
-      @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "id of the workspace to run in") String workspaceId,
-      @ToolArg(description = "id of a non-interactive action (see listActions)") String actionId) {
-    requireRepoInProject(repoId);
-    return actionRunService.run(repoId, workspaceId, actionId);
   }
 
   // --- Scoping --------------------------------------------------------------

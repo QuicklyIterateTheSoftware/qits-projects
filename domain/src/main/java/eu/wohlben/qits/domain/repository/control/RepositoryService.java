@@ -3,7 +3,6 @@ package eu.wohlben.qits.domain.repository.control;
 import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.error.NotFoundException;
-import eu.wohlben.qits.domain.featureflow.control.FeatureFlowPhaseActionService;
 import eu.wohlben.qits.domain.process.control.RepoProcessLease;
 import eu.wohlben.qits.domain.process.control.TechnicalProcess;
 import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
@@ -65,13 +64,9 @@ public class RepositoryService {
 
   @Inject GitSubmoduleParser submoduleParser;
 
-  @Inject QitsConfigReconciler qitsConfigReconciler;
-
   @Inject RepositorySubmoduleRepository repositorySubmoduleRepository;
 
   @Inject RepositoryNameRepository repositoryNameRepository;
-
-  @Inject FeatureFlowPhaseActionService featureFlowPhaseActionService;
 
   @Inject TechnicalProcessRegistry processes;
 
@@ -169,12 +164,6 @@ public class RepositoryService {
 
     // The main branch defaults to the remote's default branch (the mirror's HEAD).
     repo.mainBranch = detectDefaultBranch(originPath);
-
-    // Ingest the committed .qits-config.yml (if any) before the main workspace is created, so the
-    // workspace lands on the possibly-config-overridden main branch, and before metadata is written
-    // so it captures the final branch/archetype. Never fails the clone (degrade loudly, never
-    // block).
-    ingestConfigQuietly(repo.id);
 
     metadataService.writeRepositoryMetadata(repo);
 
@@ -281,20 +270,6 @@ public class RepositoryService {
 
   private Path originPath(String repoId) {
     return Path.of(dataDir, repoId, "origin");
-  }
-
-  /**
-   * Reconciles the repository's {@code .qits-config.yml} without ever letting a config problem
-   * break the clone/sync. The reconciler already records parse/validation issues as a repository
-   * warning rather than throwing; this only guards against an unexpected failure, matching the
-   * "degrade loudly, never block" posture of framework detection and submodule import.
-   */
-  private void ingestConfigQuietly(String repoId) {
-    try {
-      qitsConfigReconciler.ingest(repoId);
-    } catch (RuntimeException e) {
-      LOG.warnf(e, "Failed to ingest .qits-config.yml for repository %s", repoId);
-    }
   }
 
   /** The mirror's HEAD points at the remote's default branch (e.g. "master"/"main"). */
@@ -510,10 +485,6 @@ public class RepositoryService {
               ctx.workdir().toFile(), "git", "update-ref", "refs/heads/" + ctx.branch(), remoteSha);
         }
         streamLine(process, segmentName, "Fast-forwarded to " + shortSha(remoteSha));
-        // The main branch advanced — re-ingest .qits-config.yml from its new tip in the bare
-        // origin.
-        ingestConfigQuietly(repoId);
-        streamConfigOutcome(process, segmentName, repoId);
         settleOk(process, segmentName);
         return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
       }
@@ -524,8 +495,6 @@ public class RepositoryService {
           mergeDivergedRemote(
               ctx.workdir(), ctx.hasMainWorkspace(), ctx.branch(), localSha, remoteSha);
       streamLine(process, segmentName, mergeVerdict);
-      ingestConfigQuietly(repoId);
-      streamConfigOutcome(process, segmentName, repoId);
       settleOk(process, segmentName);
       return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
     } catch (BadRequestException e) {
@@ -711,22 +680,6 @@ public class RepositoryService {
   }
 
   /**
-   * Reports the .qits-config.yml re-ingestion outcome into the segment after a main-branch advance.
-   */
-  private void streamConfigOutcome(TechnicalProcess process, String segmentName, String repoId) {
-    if (process == null || segmentName == null) {
-      return;
-    }
-    String warning = QuarkusTransaction.requiringNew().call(() -> get(repoId).configWarning);
-    if (warning == null || warning.isBlank()) {
-      process.appendLine(segmentName, "Re-ingested .qits-config.yml");
-    } else {
-      process.appendLine(segmentName, "Re-ingested .qits-config.yml with warnings:");
-      streamLines(process, segmentName, warning);
-    }
-  }
-
-  /**
    * The scalar snapshot a push needs (url, main branch, bare-origin path), read in one short
    * transaction — shared by {@link #pushRepository} and the remote-login sign-in terminal, whose
    * interactive push runs exactly the same command shape in a host-side PTY.
@@ -818,7 +771,6 @@ public class RepositoryService {
             "update-ref",
             "refs/heads/" + ctx.branch(),
             remoteSha);
-        ingestConfigQuietly(repoId);
         return "Remote is ahead; fast-forwarded '"
             + ctx.branch()
             + "' to "
@@ -827,12 +779,7 @@ public class RepositoryService {
       }
       String mergeVerdict =
           mergeDivergedRemote(ctx.originPath(), false, ctx.branch(), localSha, remoteSha);
-      // Ingest only after the retried push actually reaches the remote — ingesting from the local
-      // merge commit first would leave the DB reflecting config from a commit that, if this retry
-      // is
-      // itself rejected (e.g. a racing third push), never made it past the mirror.
       String pushOutput = push(ctx);
-      ingestConfigQuietly(repoId);
       return mergeVerdict + "\n" + pushOutput;
     } catch (BadRequestException | InternalServerErrorException e) {
       throw e;
@@ -1182,9 +1129,6 @@ public class RepositoryService {
       }
     }
     deleteDataDir(repoId);
-    // The repository row cascade-deletes its own actions; unbind them from any feature flow first
-    // (the phase-action FK has no cascade, so a still-bound action would fail the delete).
-    featureFlowPhaseActionService.deleteBindingsForRepository(repoId);
     repositoryRepository.delete(repo);
   }
 

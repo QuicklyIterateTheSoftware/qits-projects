@@ -266,8 +266,6 @@ public class RepositoryPullProcessTest {
     String parents =
         git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master^1", "master^2").trim();
     assertEquals(featureSha + "\n" + masterSha, parents);
-    // A merge advance re-ingests .qits-config.yml like a fast-forward does.
-    assertEquals(1, countLinesContaining(replay, "Re-ingested .qits-config.yml"));
   }
 
   /** Clones {@code bareRepo}, rewrites {@code file}, commits, and pushes back to its master. */
@@ -360,10 +358,6 @@ public class RepositoryPullProcessTest {
         1,
         countLinesContaining(replay, "Fast-forwarded to"),
         "the fast-forward verdict, exactly once");
-    assertEquals(
-        1,
-        countLinesContaining(replay, "Re-ingested .qits-config.yml"),
-        "a main-branch advance re-ingests .qits-config.yml and reports it once in the segment");
   }
 
   @Test

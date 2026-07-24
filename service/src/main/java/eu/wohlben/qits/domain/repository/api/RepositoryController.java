@@ -2,7 +2,6 @@ package eu.wohlben.qits.domain.repository.api;
 
 import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.domain.repository.control.CommitService;
-import eu.wohlben.qits.domain.repository.control.QitsConfigReconciler;
 import eu.wohlben.qits.domain.repository.control.RepositoryService;
 import eu.wohlben.qits.domain.repository.control.WorkspaceService;
 import eu.wohlben.qits.domain.repository.dto.BranchDto;
@@ -37,8 +36,6 @@ public class RepositoryController {
   @Inject CommitService commitService;
 
   @Inject WorkspaceService workspaceService;
-
-  @Inject QitsConfigReconciler qitsConfigReconciler;
 
   @Inject RepositoryMapper repositoryMapper;
 
@@ -217,18 +214,5 @@ public class RepositoryController {
       @PathParam("repoId") String repoId, @Valid SetMainBranchRequest request) {
     var repo = repositoryService.setMainBranch(repoId, request.branch());
     return new SetMainBranchRequest.Response(repositoryMapper.toDto(repo));
-  }
-
-  public static record ReloadConfigRequest() {
-    /** The repository after reconciliation — {@code configWarning} reports any problem, or null. */
-    public record Response(RepositoryDto repository) {}
-  }
-
-  /** Manually re-reads and reconciles {@code .qits-config.yml} from the current main branch. */
-  @POST
-  @Path("/{repoId}/config/reload")
-  public ReloadConfigRequest.Response reloadConfig(@PathParam("repoId") String repoId) {
-    qitsConfigReconciler.reload(repoId);
-    return new ReloadConfigRequest.Response(repositoryMapper.toDto(repositoryService.get(repoId)));
   }
 }

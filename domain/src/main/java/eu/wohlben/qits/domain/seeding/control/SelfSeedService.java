@@ -18,9 +18,12 @@ import org.jboss.logging.Logger;
  * Reconciles a packaged qits deployment into a seeded "qits" project holding the qits repositories
  * themselves — the startup counterpart to the cli {@code seed}/{@code seed-webapp} demos (see
  * {@code docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md}). Where
- * those seeds define a demo world programmatically, this one only registers the real repositories:
- * their daemons, actions and bootstrap chain all arrive declaratively from each repo's committed
- * {@code .qits-config.yml} on clone.
+ * those seeds define a demo world programmatically, this one only registers the real repositories.
+ * Their committed {@code .qits-config.yml} (services, actions, bootstrap chain) is the
+ * workspace-scoped source of truth, read <b>in-container per workspace</b> by the workspace-daemon
+ * — nothing is ingested into DB rows on clone (the repo-scoped config store was removed in Part 5,
+ * {@code
+ * docs/epics/qits-workspace-daemon/features/2026-07-24_config-as-single-source-of-truth.md}).
  *
  * <p>The seed is a small in-code {@linkplain #manifest() manifest} — the project name plus an
  * ordered list of desired repositories — <b>reconciled additively on every boot</b>. Growing the
@@ -36,8 +39,7 @@ import org.jboss.logging.Logger;
  *   <li>The project (named {@value #PROJECT_NAME}) is created if absent, matched by name otherwise.
  *   <li>Each manifest repository is matched by clone url within the project, created via {@link
  *       ProjectService#createRepositoryUnderProject} if absent, skipped untouched if present. The
- *       creation-time submodule import registers the qits fixture siblings and the clone ingests
- *       the committed {@code .qits-config.yml}.
+ *       creation-time submodule import registers the qits fixture siblings.
  *   <li>For a {@code deepImport} entry, one further level of submodule import is applied over the
  *       freshly imported direct children — idempotent by the import's own semantics (dedup by url /
  *       {@code (parent, path)}), a no-op on childless siblings.

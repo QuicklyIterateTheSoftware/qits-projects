@@ -1,8 +1,5 @@
 package eu.wohlben.qits.domain.repository.entity;
 
-import eu.wohlben.qits.domain.bootstrap.entity.BootstrapCommand;
-import eu.wohlben.qits.domain.daemon.entity.RepositoryDaemon;
-import eu.wohlben.qits.domain.featureflow.entity.ActionConfiguration;
 import eu.wohlben.qits.domain.project.entity.Project;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.CascadeType;
@@ -30,29 +27,8 @@ public class Repository extends PanacheEntityBase {
   @Enumerated(EnumType.STRING)
   public RepositoryArchetype archetype;
 
-  /**
-   * The last {@code .qits-config.yml} ingestion problem, if any — a parse or per-entry validation
-   * failure, shown as a repository-level warning in the detail view. {@code null} when the file is
-   * absent or ingested cleanly. Config ingestion "degrades loudly, never blocks": on any problem
-   * the last-good rows are kept and the message lands here instead of failing the clone/sync.
-   */
-  @Column(name = "config_warning", length = 4000)
-  public String configWarning;
-
   @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
   public List<Workspace> workspaces;
-
-  /** Actions owned by (and only available in) this repository; cascade-deleted with it. */
-  @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
-  public List<ActionConfiguration> actions;
-
-  /** Daemons owned by (and only available in) this repository; cascade-deleted with it. */
-  @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
-  public List<RepositoryDaemon> daemons;
-
-  /** The ordered bootstrap chain owned by this repository; cascade-deleted with it. */
-  @OneToMany(mappedBy = "repository", cascade = CascadeType.ALL, orphanRemoval = true)
-  public List<BootstrapCommand> bootstrapCommands;
 
   @ManyToOne
   @JoinColumn(name = "project_id", nullable = false)

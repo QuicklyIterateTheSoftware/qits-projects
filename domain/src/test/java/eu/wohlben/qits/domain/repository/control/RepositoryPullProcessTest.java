@@ -15,8 +15,6 @@ import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
-import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,20 +36,7 @@ import org.junit.jupiter.api.Test;
  * segment. Pull runs host-side against the bare origins, so no docker is needed.
  */
 @QuarkusTest
-@TestProfile(RepositoryPullProcessTest.TestProfile.class)
 public class RepositoryPullProcessTest {
-
-  public static class TestProfile implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      try {
-        Path tempDir = Files.createTempDirectory("qits-pull-process-test-repos");
-        return Map.of("qits.repositories.data-dir", tempDir.toString());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }
-  }
 
   private static final long AWAIT_MILLIS = 15_000;
 

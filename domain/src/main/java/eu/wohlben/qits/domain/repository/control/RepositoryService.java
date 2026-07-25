@@ -1116,9 +1116,9 @@ public class RepositoryService {
   public void delete(String repoId) {
     Repository repo = get(repoId);
     // Delete the whole footprint, not just the DB row: otherwise every delete (and every seed
-    // reset, which deletes then recreates) leaks the repo's workspace containers and its on-disk
-    // clone directory as orphans. DB rows for workspaces/commands/events/daemons cascade off the
-    // repository row deletion below.
+    // reset, which deletes then recreates) leaks the repo's workspace containers, their persistent
+    // /workspace volumes, and its on-disk clone directory as orphans. DB rows for
+    // workspaces/commands/events/daemons cascade off the repository row deletion below.
     for (ContainerRuntime.ContainerInfo info : containerRuntime.listWorkspaceContainers(repoId)) {
       try {
         containerRuntime.rm(info.name());
@@ -1126,6 +1126,22 @@ public class RepositoryService {
         LOG.warnf(
             "Failed to remove container %s while deleting repository %s: %s",
             info.name(), repoId, e.getMessage());
+      }
+    }
+    // Remove the per-workspace /workspace volumes AFTER their containers are gone (docker refuses
+    // an
+    // in-use volume). Sweep the managed-volume list so containerless/orphaned volumes are reaped
+    // too
+    // — a stopped-then-removed container leaves only its volume behind. Best-effort.
+    for (ContainerRuntime.VolumeInfo vol : containerRuntime.listWorkspaceVolumes()) {
+      if (repoId.equals(vol.repoId())) {
+        try {
+          containerRuntime.removeWorkspaceVolume(vol.workspaceId());
+        } catch (RuntimeException e) {
+          LOG.warnf(
+              "Failed to remove workspace volume for %s while deleting repository %s: %s",
+              vol.workspaceId(), repoId, e.getMessage());
+        }
       }
     }
     deleteDataDir(repoId);

@@ -68,6 +68,17 @@ public class WorkspaceContainerIT {
     qitsHostResolver.configured = "host.docker.internal";
     factory.qitsHostResolver = qitsHostResolver;
     factory.qitsPort = "8080";
+    // forWorkspace resolves the project-scoped name (for QITS_WORKSPACE_DAEMON_PROJECT_ID and the
+    // qits.project label); the real resolver is DB/transaction-backed and can't run in this plain
+    // JUnit IT, so stub it to the id-addressed fallback (empty project) — behaviour-neutral here.
+    factory.nameResolver =
+        new RepositoryNameResolver() {
+          @Override
+          public java.util.Optional<RepositoryNameResolver.ProjectScopedName> resolve(
+              String repoId) {
+            return java.util.Optional.empty();
+          }
+        };
     de.containerFactory = factory;
     de.ensureNetwork(); // no StartupEvent here; make the shared network exist before any container
     return de;
@@ -243,6 +254,89 @@ public class WorkspaceContainerIT {
         // best-effort cleanup of the throwaway volume
       }
     }
+  }
+
+  /**
+   * The persistent {@code /workspace} volume end-to-end against real docker: {@code
+   * ensureWorkspaceVolume} creates a labeled named volume, {@code run} mounts it at {@code
+   * /workspace}, a file written there SURVIVES a real {@code rm}+re-{@code run} (recreation is
+   * lossless — the core win), {@code listWorkspaceVolumes} reads the labels back, and {@code
+   * removeWorkspaceVolume} drops it once the container is gone. Uses a UUID-suffixed prefix so the
+   * throwaway volume never collides with a real one. See
+   * docs/epics/qits-workspaces/features/2026-07-25_persistent-workspace-volume.md.
+   */
+  @Test
+  public void perWorkspaceVolumePersistsTheCheckoutAcrossContainerRecreation() throws Exception {
+    DockerExecutor de = executor();
+    assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
+
+    de.containerFactory.persistWorkspace = true;
+    de.containerFactory.workspaceVolumePrefix = "qits-it-ws-" + UUID.randomUUID() + "-";
+
+    String repoId = UUID.randomUUID().toString();
+    String workspaceId = "it-vol";
+    String container = de.containerName(workspaceId, repoId);
+    String volume = de.workspaceVolumeName(workspaceId);
+    de.rm(container);
+    de.removeWorkspaceVolume(workspaceId);
+    try {
+      // ensureWorkspaceVolume creates the named volume with the qits.* labels (run also calls it).
+      de.ensureWorkspaceVolume(repoId, workspaceId, "it-branch", "main");
+      assertEquals("workspace-volume", inspectLabel(volume, "qits.managed"));
+      assertEquals(workspaceId, inspectLabel(volume, "qits.workspace"));
+      assertEquals(repoId, inspectLabel(volume, "qits.repository"));
+      assertEquals("it-branch", inspectLabel(volume, "qits.branch"));
+      assertTrue(
+          de.listWorkspaceVolumes().stream().anyMatch(v -> workspaceId.equals(v.workspaceId())),
+          "the managed volume is listed by listWorkspaceVolumes");
+
+      // run mounts the volume at /workspace; write a marker into it (the daemon can't clone with no
+      // backend reachable, so /workspace is left for us to write — see executor()).
+      de.run(repoId, workspaceId, "it-branch", "main");
+      assertEquals(
+          0,
+          de.exec(container, "/workspace", Map.of(), "sh", "-c", "echo hi > /workspace/marker")
+              .exitCode(),
+          "the mounted /workspace is writable");
+
+      // The core win: rm the container KEEPING the volume, run again → the marker survives on the
+      // reattached volume (a plain writable layer would have died with the container).
+      de.rm(container);
+      de.run(repoId, workspaceId, "it-branch", "main");
+      ContainerRuntime.ExecResult read =
+          de.exec(container, "/workspace", Map.of(), "cat", "/workspace/marker");
+      assertEquals(
+          0,
+          read.exitCode(),
+          "the /workspace volume persisted across recreation: " + read.output());
+      assertTrue(read.output().contains("hi"), "the marker survived: " + read.output());
+
+      // removeWorkspaceVolume drops it once the container is gone.
+      de.rm(container);
+      de.removeWorkspaceVolume(workspaceId);
+      assertTrue(
+          de.listWorkspaceVolumes().stream().noneMatch(v -> workspaceId.equals(v.workspaceId())),
+          "removeWorkspaceVolume drops the volume");
+    } finally {
+      de.rm(container);
+      de.removeWorkspaceVolume(workspaceId);
+    }
+  }
+
+  /** A single label off {@code docker volume inspect}. */
+  private String inspectLabel(String volume, String label) throws Exception {
+    Process p =
+        new ProcessBuilder(
+                RUNTIME,
+                "volume",
+                "inspect",
+                "--format",
+                "{{index .Labels \"" + label + "\"}}",
+                volume)
+            .start();
+    String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    p.waitFor();
+    return out;
   }
 
   /**

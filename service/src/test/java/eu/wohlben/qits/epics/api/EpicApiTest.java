@@ -1,0 +1,334 @@
+package eu.wohlben.qits.epics.api;
+
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.anyOf;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.notNullValue;
+
+import eu.wohlben.qits.domain.project.api.ProjectController;
+import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.QuarkusTestProfile;
+import io.quarkus.test.junit.TestProfile;
+import io.restassured.http.ContentType;
+import jakarta.ws.rs.core.Response;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+/**
+ * REST round-trips for the epics boundary hosted by {@code service}. Runs under forwardauth (the
+ * suite default), whose fallback identity is {@code dev} — asserted via the audit "changed-by".
+ */
+@QuarkusTest
+@TestProfile(EpicApiTest.TestProfile.class)
+class EpicApiTest {
+
+  public static class TestProfile implements QuarkusTestProfile {
+    @Override
+    public Map<String, String> getConfigOverrides() {
+      try {
+        Path tempDir = Files.createTempDirectory("qits-epics-test-repos");
+        return Map.of("qits.repositories.data-dir", tempDir.toString());
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+  }
+
+  private final String fixtureUrl;
+
+  EpicApiTest() throws Exception {
+    fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
+  }
+
+  private String createProject() {
+    return given()
+        .contentType(ContentType.JSON)
+        .body(new ProjectController.CreateProjectRequest("Epics Project", null))
+        .when()
+        .post("/api/projects")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .extract()
+        .path("project.id");
+  }
+
+  private String createRepository(String projectId) {
+    return given()
+        .contentType(ContentType.JSON)
+        .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, false))
+        .when()
+        .post("/api/projects/" + projectId + "/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .extract()
+        .path("repository.id");
+  }
+
+  @Test
+  void fullEpicFeatureTaskLifecycle() {
+    String projectId = createProject();
+    String repoId = createRepository(projectId);
+
+    // Create an epic under the project.
+    String epicId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new ProjectEpicsController.CreateEpicRequest("Planning domain", "The spine"))
+            .when()
+            .post("/api/projects/" + projectId + "/epics")
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .body("epic.id", notNullValue())
+            .body("epic.projectId", equalTo(projectId))
+            .body("epic.title", equalTo("Planning domain"))
+            .extract()
+            .path("epic.id");
+
+    // Get + list.
+    given()
+        .when()
+        .get("/api/epics/" + epicId)
+        .then()
+        .statusCode(200)
+        .body("epic.id", equalTo(epicId));
+    given()
+        .when()
+        .get("/api/projects/" + projectId + "/epics")
+        .then()
+        .statusCode(200)
+        .body("entries.epic.id", hasItem(epicId));
+
+    // Update.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new EpicController.UpdateEpicRequest("Planning domain v2", "Longer"))
+        .when()
+        .put("/api/epics/" + epicId)
+        .then()
+        .statusCode(200)
+        .body("epic.title", equalTo("Planning domain v2"));
+
+    // Create a feature under the epic.
+    String featureId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new EpicController.CreateFeatureRequest("Feature A", null, null))
+            .when()
+            .post("/api/epics/" + epicId + "/features")
+            .then()
+            .statusCode(200)
+            .body("feature.epicId", equalTo(epicId))
+            .extract()
+            .path("feature.id");
+
+    // Create a task under the feature, bound to a real repository.
+    String taskId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new FeatureController.CreateTaskRequest(repoId, "Task 1", null, null))
+            .when()
+            .post("/api/features/" + featureId + "/tasks")
+            .then()
+            .statusCode(200)
+            .body("task.repositoryId", equalTo(repoId))
+            .body("task.featureId", equalTo(featureId))
+            .extract()
+            .path("task.id");
+
+    given().when().get("/api/features/" + featureId).then().statusCode(200);
+    given().when().get("/api/tasks/" + taskId).then().statusCode(200);
+
+    // Audit subtree: every create landed with the forwardauth `dev` identity.
+    given()
+        .when()
+        .get("/api/epics/" + epicId + "/audit")
+        .then()
+        .statusCode(200)
+        .body("entries.operation", hasItem("CREATE"))
+        .body("entries.operation", hasItem("UPDATE"))
+        .body("entries.changedBy", hasItem("dev"))
+        .body("entries.entityId", hasItem(taskId));
+
+    // Delete the epic cascades features + tasks.
+    given()
+        .when()
+        .delete("/api/epics/" + epicId)
+        .then()
+        .statusCode(200)
+        .body("success", equalTo(true));
+    given()
+        .when()
+        .get("/api/epics/" + epicId)
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+    given()
+        .when()
+        .get("/api/features/" + featureId)
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+    given()
+        .when()
+        .get("/api/tasks/" + taskId)
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+
+    // The audit trail survives deletion (queried by epicId) and now carries the DELETE rows.
+    given()
+        .when()
+        .get("/api/epics/" + epicId + "/audit")
+        .then()
+        .statusCode(200)
+        .body("entries.operation", hasItem("DELETE"))
+        .body("entries.entityId", hasItem(taskId));
+  }
+
+  @Test
+  void taskCannotBindRepositoryFromAnotherProject() {
+    String projectA = createProject();
+    String projectB = createProject();
+    String repoInB = createRepository(projectB);
+
+    String epicId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new ProjectEpicsController.CreateEpicRequest("E", null))
+            .when()
+            .post("/api/projects/" + projectA + "/epics")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("epic.id");
+    String featureId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new EpicController.CreateFeatureRequest("F", null, null))
+            .when()
+            .post("/api/epics/" + epicId + "/features")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("feature.id");
+
+    // repoInB exists but belongs to projectB, not the epic's projectA → rejected.
+    given()
+        .contentType(ContentType.JSON)
+        .body(new FeatureController.CreateTaskRequest(repoInB, "T", null, null))
+        .when()
+        .post("/api/features/" + featureId + "/tasks")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  void createEpicUnderUnknownProjectIs404() {
+    given()
+        .contentType(ContentType.JSON)
+        .body(new ProjectEpicsController.CreateEpicRequest("X", null))
+        .when()
+        .post("/api/projects/ghost/epics")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  @Test
+  void blankEpicTitleIsRejected() {
+    String projectId = createProject();
+    given()
+        .contentType(ContentType.JSON)
+        .body(new ProjectEpicsController.CreateEpicRequest("  ", null))
+        .when()
+        .post("/api/projects/" + projectId + "/epics")
+        .then()
+        .statusCode(anyOf(equalTo(Response.Status.BAD_REQUEST.getStatusCode()), equalTo(422)));
+  }
+
+  @Test
+  void createTaskWithUnknownRepositoryIs404() {
+    String projectId = createProject();
+    String epicId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new ProjectEpicsController.CreateEpicRequest("E", null))
+            .when()
+            .post("/api/projects/" + projectId + "/epics")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("epic.id");
+    String featureId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new EpicController.CreateFeatureRequest("F", null, null))
+            .when()
+            .post("/api/epics/" + epicId + "/features")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("feature.id");
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new FeatureController.CreateTaskRequest("no-such-repo", "T", null, null))
+        .when()
+        .post("/api/features/" + featureId + "/tasks")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  @Test
+  void unknownFeatureDependencyIsRejected() {
+    String projectId = createProject();
+    String epicId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new ProjectEpicsController.CreateEpicRequest("E", null))
+            .when()
+            .post("/api/projects/" + projectId + "/epics")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("epic.id");
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(new EpicController.CreateFeatureRequest("F", null, "ghost-feature"))
+        .when()
+        .post("/api/epics/" + epicId + "/features")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  @Test
+  void auditListsCreateUpdateDeleteForAnEpic() {
+    String projectId = createProject();
+    String epicId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new ProjectEpicsController.CreateEpicRequest("E", null))
+            .when()
+            .post("/api/projects/" + projectId + "/epics")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("epic.id");
+    given()
+        .contentType(ContentType.JSON)
+        .body(new EpicController.UpdateEpicRequest("E2", null))
+        .when()
+        .put("/api/epics/" + epicId)
+        .then()
+        .statusCode(200);
+
+    // Newest first: UPDATE then CREATE (delete would remove the epic and 404 the audit endpoint).
+    given()
+        .when()
+        .get("/api/epics/" + epicId + "/audit")
+        .then()
+        .statusCode(200)
+        .body("entries.operation", contains("UPDATE", "CREATE"));
+  }
+}

@@ -12,11 +12,7 @@ import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
 import io.quarkiverse.mcp.server.test.McpAssured.McpStreamableTestClient;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
-import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -30,20 +26,7 @@ import org.junit.jupiter.api.Test;
  * empty draft to a text note rather than an error.
  */
 @QuarkusTest
-@TestProfile(TaskPromptMcpToolsTest.TestProfile.class)
 public class TaskPromptMcpToolsTest {
-
-  public static class TestProfile implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      try {
-        Path tempDir = Files.createTempDirectory("qits-task-prompt-mcp-test-repos");
-        return Map.of("qits.repositories.data-dir", tempDir.toString());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }
-  }
 
   // Minimal but valid magic-byte prefix — the sniff reads only the leading signature.
   private static final byte[] PNG = {

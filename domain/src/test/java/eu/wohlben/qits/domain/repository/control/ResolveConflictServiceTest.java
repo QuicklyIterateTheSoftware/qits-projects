@@ -9,13 +9,10 @@ import eu.wohlben.qits.domain.command.persistence.CommandRepository;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
-import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
@@ -27,20 +24,7 @@ import org.junit.jupiter.api.Test;
  * taskPrompt} — so the launched command carries only the bootstrap turn, not the prompt itself.
  */
 @QuarkusTest
-@TestProfile(ResolveConflictServiceTest.TestProfile.class)
 public class ResolveConflictServiceTest {
-
-  public static class TestProfile implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      try {
-        Path tempDir = Files.createTempDirectory("qits-resolve-test-repos");
-        return Map.of("qits.repositories.data-dir", tempDir.toString());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }
-  }
 
   @Inject ProjectService projectService;
 

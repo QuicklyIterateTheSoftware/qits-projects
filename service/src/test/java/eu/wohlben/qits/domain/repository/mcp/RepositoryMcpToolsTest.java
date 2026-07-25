@@ -10,13 +10,9 @@ import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
 import io.quarkiverse.mcp.server.test.McpAssured.McpStreamableTestClient;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
-import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
 import io.vertx.core.MultiMap;
 import jakarta.ws.rs.core.Response;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
@@ -27,22 +23,9 @@ import org.junit.jupiter.api.Test;
  * repository outside that project — so a session can't reach across project boundaries.
  */
 @QuarkusTest
-@TestProfile(RepositoryMcpToolsTest.TestProfile.class)
 public class RepositoryMcpToolsTest {
 
   /** Isolate cloned repos in a temp dir, like the controller tests. */
-  public static class TestProfile implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      try {
-        Path tempDir = Files.createTempDirectory("qits-mcp-test-repos");
-        return Map.of("qits.repositories.data-dir", tempDir.toString());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }
-  }
-
   private final String fixtureUrl;
 
   public RepositoryMcpToolsTest() throws Exception {

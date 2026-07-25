@@ -319,7 +319,8 @@ public class RepositoryMcpToolsTest {
                       "cleanupBranch",
                       "integrateBranch",
                       "mergeParentIntoWorkspace",
-                      "listSubmodules"),
+                      "listSubmodules",
+                      "prepareSubmoduleBackend"),
                   java.util.Set.copyOf(names),
                   "unexpected tool surface: " + names);
             })

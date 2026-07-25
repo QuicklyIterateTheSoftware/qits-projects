@@ -1,6 +1,7 @@
 package eu.wohlben.qits.domain.repository.control;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.domain.repository.control.GitSubmoduleParser.Submodule;
@@ -134,5 +135,25 @@ class GitSubmoduleParserTest {
         "https://github.com/wohlben/other.git",
         parser.resolveSubmoduleUrl(
             "/abs/fixtures/super.git", "https://github.com/wohlben/other.git"));
+  }
+
+  @Test
+  void detectsQitsHostUrls() {
+    // The distinctive /git/ first path segment marks qits' own git host.
+    assertTrue(parser.isQitsHostUrl("http://qits:8080/git/proj-1/qits-gateway"));
+    assertTrue(parser.isQitsHostUrl("https://qits.example/git/abc123"));
+    assertTrue(parser.isQitsHostUrl("http://host.docker.internal:8080/git/proj/name"));
+    assertTrue(parser.isQitsHostUrl("http://10.0.0.5:8080/git"));
+  }
+
+  @Test
+  void doesNotFlagRealBackendsAsQitsHost() {
+    assertFalse(parser.isQitsHostUrl("https://github.com/wohlben/qits-gateway.git"));
+    assertFalse(parser.isQitsHostUrl("git@github.com:wohlben/qits-gateway.git"));
+    assertFalse(parser.isQitsHostUrl("/abs/fixtures/qits-gateway.git"));
+    assertFalse(parser.isQitsHostUrl("../qits-gateway.git"));
+    assertFalse(parser.isQitsHostUrl(null));
+    // A backend that merely has "git" deeper in the path is not the qits host.
+    assertFalse(parser.isQitsHostUrl("https://example.com/owner/git-tools.git"));
   }
 }

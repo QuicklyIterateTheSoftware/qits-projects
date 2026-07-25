@@ -45,4 +45,24 @@ public class RepositorySubmoduleMcpTools {
         .map(repositorySubmoduleMapper::toDto)
         .toList();
   }
+
+  @McpServer("repository")
+  @Tool(
+      description =
+          "Pre-serve a new submodule's backend as a sibling repository under this project, so an"
+              + " in-container `git submodule add ../<name>.git <path>` in the superproject resolves"
+              + " before the .gitmodules reference is committed (it breaks the submodule"
+              + " chicken-and-egg: the sibling must be servable for the add, but is only imported"
+              + " after the commit). Pass the submodule's real backend url (e.g. its GitHub url), NOT"
+              + " a qits /git/... url. Returns the relativeUrl to `git submodule add`; after"
+              + " committing + pushing, pull the superproject and call the submodule import so the"
+              + " edge links onto this sibling.")
+  @Transactional
+  public RepositoryService.PreparedSubmoduleBackend prepareSubmoduleBackend(
+      @ToolArg(description = "id of the superproject repository in this project") String repoId,
+      @ToolArg(description = "the submodule's real backend url (its GitHub/remote url)")
+          String backendUrl) {
+    scopeGuard.requireRepoInProject(repoId);
+    return repositoryService.prepareSubmoduleBackend(repoId, backendUrl);
+  }
 }

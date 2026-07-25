@@ -160,8 +160,39 @@ public class RepositoryDiscoveryService {
           }
         }
       }
+      // With per-repo container↔row reconcile done (every live-container workspace now has an
+      // ACTIVE
+      // row), reap dangling per-workspace /workspace volumes — those left by a crash, a manual
+      // docker rm, an older build, or a leak between a container rm and its removeWorkspaceVolume.
+      reconcileWorkspaceVolumes();
     } catch (Exception e) {
       throw new RuntimeException("Repository discovery failed", e);
+    }
+  }
+
+  /**
+   * Mirror of the container↔row reconcile for the per-workspace {@code /workspace} volumes: list
+   * the qits-managed volumes and remove any with no ACTIVE {@link Workspace} row for its {@code
+   * qits.workspace}/{@code qits.repository} labels. Like the container reconcile this only
+   * <em>removes</em> orphans — it never provisions. A volume still referenced by a live container
+   * is spared by docker's own in-use protection (removal is best-effort); a healthy workspace keeps
+   * its volume because its ACTIVE row exists (upserted above).
+   */
+  private void reconcileWorkspaceVolumes() {
+    for (ContainerRuntime.VolumeInfo vol : containers.listWorkspaceVolumes()) {
+      if (vol.workspaceId() == null || vol.workspaceId().isBlank() || vol.repoId() == null) {
+        continue;
+      }
+      boolean hasActiveRow =
+          workspaceRepository
+              .findActiveByRepositoryAndWorkspaceId(vol.repoId(), vol.workspaceId())
+              .isPresent();
+      if (!hasActiveRow) {
+        LOG.infof(
+            "Reaping dangling workspace volume %s (repo %s, workspace %s — no active row)",
+            vol.name(), vol.repoId(), vol.workspaceId());
+        containers.removeWorkspaceVolume(vol.workspaceId());
+      }
     }
   }
 }

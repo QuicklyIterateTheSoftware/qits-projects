@@ -10,14 +10,9 @@ import eu.wohlben.qits.domain.process.control.RepoProcessLease;
 import eu.wohlben.qits.domain.process.control.TechnicalProcess;
 import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
-import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -28,20 +23,7 @@ import org.junit.jupiter.api.Test;
  * active-process is simply null (mirrors the workspace endpoint; the pull POST keeps its 404).
  */
 @QuarkusTest
-@TestProfile(RepositoryActiveProcessTest.TestProfile.class)
 public class RepositoryActiveProcessTest {
-
-  public static class TestProfile implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      try {
-        Path tempDir = Files.createTempDirectory("qits-repo-active-process-test-repos");
-        return Map.of("qits.repositories.data-dir", tempDir.toString());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }
-  }
 
   @Inject TechnicalProcessRegistry registry;
 

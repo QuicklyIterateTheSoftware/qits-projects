@@ -9,13 +9,8 @@ import static org.hamcrest.Matchers.notNullValue;
 
 import eu.wohlben.qits.domain.project.api.ProjectController;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
-import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
 import jakarta.ws.rs.core.Response;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -23,20 +18,7 @@ import org.junit.jupiter.api.Test;
  * suite default), whose fallback identity is {@code dev} — asserted via the audit "changed-by".
  */
 @QuarkusTest
-@TestProfile(EpicApiTest.TestProfile.class)
 class EpicApiTest {
-
-  public static class TestProfile implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      try {
-        Path tempDir = Files.createTempDirectory("qits-epics-test-repos");
-        return Map.of("qits.repositories.data-dir", tempDir.toString());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }
-  }
 
   private final String fixtureUrl;
 

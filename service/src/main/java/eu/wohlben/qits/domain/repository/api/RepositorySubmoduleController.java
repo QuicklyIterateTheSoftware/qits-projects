@@ -4,6 +4,9 @@ import eu.wohlben.qits.domain.repository.control.RepositoryService;
 import eu.wohlben.qits.domain.repository.dto.RepositorySubmoduleDto;
 import eu.wohlben.qits.domain.repository.mapper.RepositorySubmoduleMapper;
 import jakarta.inject.Inject;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -81,5 +84,33 @@ public class RepositorySubmoduleController {
                         repositorySubmoduleMapper.toDto(edge)))
             .toList();
     return new ImportRepositorySubmodulesRequest.Response(entries);
+  }
+
+  public static record PrepareSubmoduleBackendRequest(@NotBlank String backendUrl) {
+    /**
+     * The served sibling qits pre-cloned from the backend. {@code relativeUrl} is the value to
+     * {@code git submodule add} in the superproject working tree; {@code backendUrl} is the
+     * canonical backend it resolved to (surfaced so a cross-host mismatch is visible).
+     */
+    public record Response(
+        String repositoryId, String name, String relativeUrl, String backendUrl) {}
+  }
+
+  /**
+   * Pre-serves a new submodule's backend as a sibling repository so a subsequent in-container
+   * {@code git submodule add ../<name>.git <path>} resolves before the {@code .gitmodules}
+   * reference is committed. Onboarding convenience that breaks the submodule chicken-and-egg; the
+   * returned {@code relativeUrl} is what to commit, and a later {@code import} dedups onto this
+   * sibling.
+   */
+  @POST
+  @Path("/prepare")
+  @Consumes(MediaType.APPLICATION_JSON)
+  public PrepareSubmoduleBackendRequest.Response prepare(
+      @PathParam("repositoryId") String repositoryId,
+      @Valid PrepareSubmoduleBackendRequest request) {
+    var prepared = repositoryService.prepareSubmoduleBackend(repositoryId, request.backendUrl());
+    return new PrepareSubmoduleBackendRequest.Response(
+        prepared.repositoryId(), prepared.name(), prepared.relativeUrl(), prepared.backendUrl());
   }
 }

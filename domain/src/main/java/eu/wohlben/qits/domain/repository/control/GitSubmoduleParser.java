@@ -179,6 +179,34 @@ public class GitSubmoduleParser {
   }
 
   /**
+   * Whether {@code url} points at qits' own in-process git host (a smart-HTTP {@code /git/…} path).
+   * Committing such a value as a submodule reference would make the imported sister repository
+   * {@code --mirror}-clone from <em>qits itself</em> — a self-referential caching loop — instead of
+   * the real backend, because import stores the resolved url verbatim as the child's origin. The
+   * onboarding convention is a <em>relative</em> url ({@code ../name.git}, folded against the
+   * superproject's real backend) or the backend url directly; this best-effort check lets the
+   * import/clone path reject the qits-host form with an actionable message rather than silently
+   * corrupt the sibling. Detection keys on the git host's distinctive first path segment {@code
+   * /git/} right after the authority (a normal remote is {@code https://host/owner/repo.git}).
+   */
+  public boolean isQitsHostUrl(String url) {
+    if (url == null) {
+      return false;
+    }
+    String u = url.trim();
+    int schemeIdx = u.indexOf("://");
+    if (schemeIdx < 0) {
+      return false;
+    }
+    int pathStart = u.indexOf('/', schemeIdx + 3);
+    if (pathStart < 0) {
+      return false;
+    }
+    String path = u.substring(pathStart);
+    return path.equals("/git") || path.startsWith("/git/");
+  }
+
+  /**
    * The same argv-safety gate {@link RepositoryService} applies to import urls: reject a
    * dash-leading value (argv flag injection) and the {@code ext::} transport (arbitrary command
    * execution).

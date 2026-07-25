@@ -138,6 +138,16 @@ public class RepositoryService {
     if (trimmedUrl.startsWith("-") || trimmedUrl.regionMatches(true, 0, "ext::", 0, 5)) {
       throw new BadRequestException("Invalid repository URL: " + trimmedUrl);
     }
+    // A repository must point at its real backend, never at qits' own git host — cloning from
+    // /git/… would mirror qits' cache back onto itself (a self-referential loop) instead of the
+    // upstream. This also enforces the submodule onboarding convention downstream (a child imported
+    // from a resolved qits-host url is the exact "points at the qits host" bug the guard prevents).
+    if (submoduleParser.isQitsHostUrl(trimmedUrl)) {
+      throw new BadRequestException(
+          "Refusing to clone from the qits git host ("
+              + trimmedUrl
+              + "); a repository must point at its real backend, not qits' own cache.");
+    }
 
     Repository repo = new Repository();
     repo.id = UUID.randomUUID().toString();
@@ -216,6 +226,22 @@ public class RepositoryService {
         submoduleParser.readSubmodules(originPath.toFile(), repo.mainBranch)) {
       String childUrl = submoduleParser.resolveSubmoduleUrl(repo.url, sub.url());
 
+      // A submodule whose url resolves to qits' own git host would make the imported sister clone
+      // from qits itself (a caching loop) rather than the real backend. Fail loudly with the
+      // onboarding convention: commit a relative url (../name.git, which folds against the
+      // superproject's real backend) or pre-serve the backend and reference it relatively. See
+      // docs/epics/qits-project-repository-submodules/features/2026-07-25_submodule-backend-onboarding.md.
+      if (submoduleParser.isQitsHostUrl(childUrl)) {
+        throw new BadRequestException(
+            "Submodule '"
+                + sub.name()
+                + "' resolves to the qits git host ("
+                + childUrl
+                + "). Reference it with a relative url (../"
+                + RepositoryNameRepository.basename(childUrl)
+                + ".git) so it folds against the real backend, not qits' cache.");
+      }
+
       // Dedup within the project: reuse an existing sibling with the same url (the diamond case —
       // and what terminates a cyclic pair: its second import finds the first repo already there).
       // Panache auto-flushes before this query, so a child imported earlier in this same
@@ -243,6 +269,58 @@ public class RepositoryService {
 
       importSubmoduleClosure(child, visited, depth + 1);
     }
+  }
+
+  /** The served sibling a {@link #prepareSubmoduleBackend} onboarding produced. */
+  public record PreparedSubmoduleBackend(
+      String repositoryId, String name, String relativeUrl, String backendUrl) {}
+
+  /**
+   * Pre-serves a submodule's backend as a sibling repository so an in-container {@code git
+   * submodule add ../<name>.git <path>} resolves <em>before</em> the {@code .gitmodules} reference
+   * is committed — breaking the submodule chicken-and-egg (the sibling must be servable at {@code
+   * /git/<projectId>/<name>} for the add, but is only imported after the commit).
+   *
+   * <p>The sibling is cloned from the <b>canonical</b> url the superproject's own re-import will
+   * resolve for {@code ../<name>.git} ({@link GitSubmoduleParser#resolveSubmoduleUrl} against the
+   * superproject's real backend), <em>not</em> the raw {@code backendUrl} string — so a later
+   * {@code importDirectSubmodules} dedups onto this very sibling (dedup is by exact url) instead of
+   * creating a duplicate. For the common case (a submodule that is a sibling of the superproject's
+   * backend, e.g. {@code qits-gateway} alongside {@code qits-backend} under one org) the canonical
+   * url equals {@code backendUrl}; the returned {@code backendUrl} surfaces the resolved value so a
+   * cross-host mismatch is visible. {@code backendUrl} is used only to name the sibling (its
+   * basename). Idempotent: an existing project sibling with the canonical url is reused.
+   */
+  @Transactional
+  public PreparedSubmoduleBackend prepareSubmoduleBackend(
+      String superprojectId, String backendUrl) {
+    Repository superproject = get(superprojectId);
+    if (backendUrl == null || backendUrl.isBlank()) {
+      throw new BadRequestException("backendUrl is required");
+    }
+    String trimmed = backendUrl.trim();
+    if (submoduleParser.isQitsHostUrl(trimmed)) {
+      throw new BadRequestException(
+          "backendUrl must be the submodule's real backend, not the qits git host: " + trimmed);
+    }
+    String name = RepositoryNameRepository.basename(trimmed);
+    if (name.isBlank()) {
+      throw new BadRequestException(
+          "Could not derive a submodule name from backendUrl: " + trimmed);
+    }
+    String relativeUrl = "../" + name + ".git";
+    String canonicalUrl = submoduleParser.resolveSubmoduleUrl(superproject.url, relativeUrl);
+    Repository sibling =
+        repositoryRepository
+            .findByUrlInProject(canonicalUrl, superproject.project.id)
+            .orElseGet(
+                () ->
+                    cloneOne(
+                        canonicalUrl, RepositoryArchetype.SERVICE, superproject.project, true));
+    // Re-assert the basename alias (cloneOne already registered it for a fresh clone; harmless and
+    // needed on the reuse path).
+    repositoryNameRepository.ensureAlias(superproject.project, name, sibling);
+    return new PreparedSubmoduleBackend(sibling.id, name, relativeUrl, canonicalUrl);
   }
 
   /**

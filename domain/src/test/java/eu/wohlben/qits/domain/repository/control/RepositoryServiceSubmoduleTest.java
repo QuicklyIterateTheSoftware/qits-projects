@@ -3,8 +3,11 @@ package eu.wohlben.qits.domain.repository.control;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositorySubmodule;
@@ -336,6 +339,116 @@ public class RepositoryServiceSubmoduleTest {
     repositoryService.importDirectSubmodules(cycleB.id);
 
     repositoryService.pullRepository(cycleA.id);
+  }
+
+  @Test
+  public void prepareThenImportDedupsOntoTheServedSibling() throws Exception {
+    var project = projectService.create("Prepare Onboard", null);
+    // The simple-super has one submodule `lib` -> ../submodule-shared.git, left unimported here.
+    var superRepo =
+        repositoryService.cloneRepository(
+            fixture("submodule-simple-super.git"), null, project, false);
+    assertEquals(1, reposByName(project.id).size(), "only the superproject before prepare");
+
+    // Pre-serve the submodule's real backend as a sibling (the onboarding convenience that breaks
+    // the chicken-and-egg). The backend is the shared fixture beside the super's own bare — exactly
+    // where the superproject's `../submodule-shared.git` folds.
+    var prepared =
+        repositoryService.prepareSubmoduleBackend(superRepo.id, fixture("submodule-shared.git"));
+    assertEquals("submodule-shared", prepared.name());
+    assertEquals("../submodule-shared.git", prepared.relativeUrl(), "the relative url to commit");
+
+    Repository served = reposByName(project.id).get("submodule-shared.git");
+    assertNotNull(served, "prepare pre-serves the sibling so an in-container add resolves");
+    assertEquals(served.id, prepared.repositoryId());
+    assertEquals(
+        served.id,
+        repositoryNameRepository
+            .findRepositoryByProjectAndName(project.id, "submodule-shared")
+            .map(r -> r.id)
+            .orElse(null),
+        "the sibling is addressable by name for a native ../submodule-shared.git clone");
+
+    // Now the committed .gitmodules reference gets imported — it must DEDUP onto the pre-served
+    // sibling (dedup by the canonical resolved url), never create a duplicate, and link the edge.
+    repositoryService.importDirectSubmodules(superRepo.id);
+    assertEquals(
+        2, reposByName(project.id).size(), "import reuses the pre-served sibling, no duplicate");
+    assertEdge(superRepo.id, "lib", served.id);
+  }
+
+  @Test
+  public void prepareIsIdempotent() throws Exception {
+    var project = projectService.create("Prepare Idempotent", null);
+    var superRepo =
+        repositoryService.cloneRepository(
+            fixture("submodule-simple-super.git"), null, project, false);
+
+    var first =
+        repositoryService.prepareSubmoduleBackend(superRepo.id, fixture("submodule-shared.git"));
+    var second =
+        repositoryService.prepareSubmoduleBackend(superRepo.id, fixture("submodule-shared.git"));
+
+    assertEquals(first.repositoryId(), second.repositoryId(), "second prepare reuses the sibling");
+    assertEquals(2, reposByName(project.id).size(), "no duplicate sibling from re-preparing");
+  }
+
+  @Test
+  public void prepareRejectsAQitsHostBackend() throws Exception {
+    var project = projectService.create("Prepare Guard", null);
+    var superRepo =
+        repositoryService.cloneRepository(
+            fixture("submodule-simple-super.git"), null, project, false);
+
+    var ex =
+        assertThrows(
+            BadRequestException.class,
+            () ->
+                repositoryService.prepareSubmoduleBackend(
+                    superRepo.id, "http://qits:8080/git/proj/qits-gateway"));
+    assertTrue(ex.getMessage().contains("qits git host"), ex.getMessage());
+  }
+
+  @Test
+  public void cloneRejectsAQitsHostUrl() throws Exception {
+    var project = projectService.create("Self Clone Guard", null);
+    var ex =
+        assertThrows(
+            BadRequestException.class,
+            () ->
+                repositoryService.cloneRepository(
+                    "http://qits:8080/git/proj/thing", null, project, false));
+    assertTrue(ex.getMessage().contains("qits git host"), ex.getMessage());
+  }
+
+  @Test
+  public void importRejectsASubmoduleResolvingToTheQitsHost() throws Exception {
+    // A superproject that committed the anti-pattern: an absolute qits-host submodule url. Import
+    // must fail loudly rather than silently mirror qits' cache back onto itself as the sibling.
+    var project = projectService.create("Import Guard", null);
+    String gitmodules =
+        "[submodule \"gw\"]\n\tpath = gw\n\turl = http://qits:8080/git/proj/qits-gateway\n";
+    String superBare = bareRepoWithGitmodules(gitmodules);
+
+    var ex =
+        assertThrows(
+            BadRequestException.class,
+            () -> repositoryService.cloneRepository(superBare, null, project, true));
+    assertTrue(ex.getMessage().contains("qits git host"), ex.getMessage());
+  }
+
+  /** A throwaway bare repo whose main branch commits the given {@code .gitmodules} content. */
+  private String bareRepoWithGitmodules(String gitmodules) throws Exception {
+    Path work = Files.createTempDirectory("qits-guard-super");
+    git.exec(null, "git", "init", "-b", "main", work.toString());
+    git.exec(work.toFile(), "git", "config", "user.email", "t@example.com");
+    git.exec(work.toFile(), "git", "config", "user.name", "Test");
+    Files.writeString(work.resolve(".gitmodules"), gitmodules);
+    git.exec(work.toFile(), "git", "add", "-A");
+    git.exec(work.toFile(), "git", "commit", "-m", "add gitmodules");
+    Path bare = Files.createTempDirectory("qits-guard-bare").resolve("super.git");
+    git.exec(null, "git", "clone", "--mirror", work.toString(), bare.toString());
+    return bare.toString();
   }
 
   /** Pushes a new commit to the bare {@code upstream} and returns its sha. */

@@ -76,7 +76,7 @@ public class WorkspacePromptDraftControllerTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest(
-                    "Prompt Draft Project", null))
+                    "Prompt Draft Project", null, null, null))
             .when()
             .post("/api/projects")
             .then()

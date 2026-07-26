@@ -13,6 +13,7 @@ import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.domain.process.dto.TechnicalProcessFrame;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.repository.entity.Repository;
+import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -71,9 +72,13 @@ public class RepositoryPullProcessTest {
     return getClass().getResource("/fixtures/" + name).toURI().getPath();
   }
 
-  /** The repositories in a project keyed by the trailing bare-repo name of their url. */
+  /**
+   * The repositories in a project keyed by the trailing bare-repo name of their url, <b>excluding
+   * the project's wrapper</b> — it is created with every project and has no url to key on.
+   */
   private Map<String, Repository> reposByName(String projectId) {
     return repositoryRepository.find("project.id", projectId).list().stream()
+        .filter(r -> r.archetype != RepositoryArchetype.PROJECT)
         .collect(Collectors.toMap(r -> Path.of(r.url).getFileName().toString(), r -> r));
   }
 
@@ -167,7 +172,7 @@ public class RepositoryPullProcessTest {
     // One segment per repository, not per edge: super + child-a + grandchild + exactly one for the
     // diamond-shared child (5 without the visited dedup).
     assertEquals(4, opens.size(), "one segment per visited repository, diamond deduped: " + opens);
-    assertEquals("pull:submodule-super.git", opens.get(0), "the root repo's segment opens first");
+    assertEquals("pull:submodule-super", opens.get(0), "the root repo's segment opens first");
     assertTrue(opens.contains("pull:child-a"), opens.toString());
     assertTrue(opens.contains("pull:grandchild"), opens.toString());
     assertEquals(
@@ -195,7 +200,7 @@ public class RepositoryPullProcessTest {
 
     List<String> opens = segmentOpens(replay);
     assertEquals(2, opens.size(), "a->b, then b->a links back to the visited root: " + opens);
-    assertEquals("pull:submodule-cycle-a.git", opens.get(0));
+    assertEquals("pull:submodule-cycle-a", opens.get(0));
     assertEquals("pull:submodule-cycle-b", opens.get(1));
     assertEquals("ok", doneFrame(replay).status());
   }
@@ -224,7 +229,7 @@ public class RepositoryPullProcessTest {
             .count();
     assertEquals(1, failedSharedSegments, "exactly the shared child's segment fails: " + opens);
     // The root and the other children still pull — the walk degrades loudly, never blocks.
-    assertEquals("ok", settledStatus(replay, "pull:submodule-super.git"));
+    assertEquals("ok", settledStatus(replay, "pull:submodule-super"));
     assertEquals("ok", settledStatus(replay, "pull:child-a"));
     assertEquals("ok", settledStatus(replay, "pull:grandchild"), "a later child still pulls");
     // A failed child segment makes the overall outcome failed.
@@ -244,7 +249,7 @@ public class RepositoryPullProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
 
-    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
     // The branch advanced to a real merge commit: local tip first parent, remote tip second.
@@ -332,7 +337,7 @@ public class RepositoryPullProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
 
-    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     // The git fetch output now streams into the segment line by line (via the GitExecutor tap), so
     // the fetch's own "From <origin>" line is present alongside the post-hoc verdict/config lines —
@@ -358,7 +363,7 @@ public class RepositoryPullProcessTest {
     String processId = repositoryService.beginPullRepository(repo.id);
     assertNotNull(processId);
     Replay replay = replayOf(awaitTerminal(processId));
-    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
     assertTrue(hasLineContaining(replay, "Already up to date"));
     assertEquals("ok", doneFrame(replay).status());
   }

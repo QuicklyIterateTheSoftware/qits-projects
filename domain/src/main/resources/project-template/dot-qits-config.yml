@@ -1,0 +1,40 @@
+# This repository's qits configuration — the single source of truth for its services, actions and
+# bootstrap chain. It is read in-container per workspace from your branch's checkout, so changing it
+# is an ordinary commit and takes effect in every workspace whose branch carries it.
+#
+# The wrapper starts out with nothing to run: there is no code here yet. Uncomment and fill in the
+# sections below as the project grows. Note that `repository.archetype` is deliberately absent —
+# qits owns this repository's archetype (it is the project's wrapper) and rejects the value here.
+version: 1
+
+repository:
+  main-branch: main
+
+# Explicit stack hints. Detection also finds most stacks by their marker files, so this is only
+# needed when you want to be explicit or detection guesses wrong.
+# frameworks:
+#   - kind: java-quarkus
+#     root: services/my-service
+#   - kind: ts-angular
+#     root: apps/my-spa
+
+# Long-running processes a workspace can start — dev servers, watchers. `web-view` makes one
+# viewable in the browser through qits' proxy.
+# services:
+#   - name: dev server
+#     description: The application's dev server.
+#     command: ./run-dev.sh
+#     working-dir: services/my-service
+#     web-view:
+#       port: 8080
+#       entry: /
+
+# One-shot commands runnable from the workspace — builds, test suites, linters.
+# actions:
+#   - name: build
+#     command: ./build.sh
+
+# Commands run once when a workspace container is first provisioned, in order.
+# bootstrap:
+#   - name: install dependencies
+#     command: ./install.sh

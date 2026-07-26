@@ -29,7 +29,7 @@ class EpicApiTest {
   private String createProject() {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRequest("Epics Project", null))
+        .body(new ProjectController.CreateProjectRequest("Epics Project", null, null, null))
         .when()
         .post("/api/projects")
         .then()

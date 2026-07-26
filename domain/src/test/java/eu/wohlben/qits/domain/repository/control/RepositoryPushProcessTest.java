@@ -125,8 +125,8 @@ public class RepositoryPushProcessTest {
     assertNotNull(processId);
     Replay replay = replayOf(awaitTerminal(processId));
 
-    assertEquals(List.of("push:testing-repo.git"), segmentOpens(replay));
-    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals(List.of("push:testing-repo"), segmentOpens(replay));
+    assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
   }
 
@@ -154,11 +154,11 @@ public class RepositoryPushProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
 
-    assertEquals("failed", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("failed", settledStatus(replay, "push:testing-repo"));
     assertTrue(hasLineContaining(replay, "push failed"), "the push error lands in the stream");
     assertEquals("failed", doneFrame(replay).status());
     // An ordinary rejection (hook declined) is NOT auth-classified — no hint on the settle.
-    assertNull(settledFrame(replay, "push:testing-repo.git").hint());
+    assertNull(settledFrame(replay, "push:testing-repo").hint());
   }
 
   @Test
@@ -188,7 +188,7 @@ public class RepositoryPushProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
 
-    TechnicalProcessFrame settled = settledFrame(replay, "push:testing-repo.git");
+    TechnicalProcessFrame settled = settledFrame(replay, "push:testing-repo");
     assertEquals("failed", settled.status());
     assertEquals(TechnicalProcessFrame.HINT_REMOTE_AUTH, settled.hint());
     assertEquals("failed", doneFrame(replay).status());
@@ -242,7 +242,7 @@ public class RepositoryPushProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
 
-    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "nothing to push"), "the fast-forward verdict lands");
     assertEquals(
@@ -264,7 +264,7 @@ public class RepositoryPushProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
 
-    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
     // The mirror's branch became a merge commit (local tip first parent, remote tip second) and
@@ -290,7 +290,7 @@ public class RepositoryPushProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
 
-    assertEquals("failed", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("failed", settledStatus(replay, "push:testing-repo"));
     assertEquals("failed", doneFrame(replay).status());
     assertTrue(
         hasLineContaining(replay, "merge/master-origin-master"),

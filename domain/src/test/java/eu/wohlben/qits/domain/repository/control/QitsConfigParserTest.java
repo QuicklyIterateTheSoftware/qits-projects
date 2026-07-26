@@ -12,11 +12,14 @@ import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the pure {@code .qits-config.yml} parse. Instantiated directly (no CDI) since
- * {@code parse} doesn't touch the injected {@code GitExecutor}.
+ * Unit tests for the pure qits-config parse, plus the {@code readConfig} location fallback (default
+ * {@code .config/qits/repository.yml}, legacy {@code .qits-config.yml}). Instantiated directly (no
+ * CDI) — {@code readConfig} tests wire a real {@link GitExecutor} over a throwaway repo.
  */
 class QitsConfigParserTest {
 
@@ -67,6 +70,37 @@ class QitsConfigParserTest {
     assertThrows(
         QitsConfigException.class,
         () -> parser.parse("version: 1\nrepository:\n  archetype: NONSENSE\n"));
+  }
+
+  /**
+   * A committed config must not be able to promote its repository to the project's wrapper: that
+   * role is derived from the project slug and owned by the adopt seam. Left open, any repository
+   * could mint a second wrapper by committing one line of YAML.
+   */
+  @Test
+  void projectArchetypeIsReservedForTheWrapperAndRejected() {
+    var error =
+        assertThrows(
+            QitsConfigException.class,
+            () -> parser.parse("version: 1\nrepository:\n  archetype: PROJECT\n"));
+    assertTrue(error.getMessage().contains("PROJECT"), error.getMessage());
+  }
+
+  /**
+   * The starter config the project template seeds into every wrapper must itself parse. It is
+   * commented almost end to end, so the only load-bearing lines are {@code version: 1} (absent, the
+   * parser raises a warning on every wrapper ever created) and the absence of {@code archetype:
+   * PROJECT}, which the rule above rejects.
+   */
+  @Test
+  void theProjectTemplateStarterConfigParses() throws Exception {
+    String starter =
+        Files.readString(Path.of("target/classes/project-template/dot-qits-config.yml"));
+
+    QitsConfig config = parser.parse(starter);
+
+    assertEquals("main", config.repository().mainBranch());
+    assertNull(config.repository().archetype(), "the wrapper's archetype is qits' to decide");
   }
 
   @Test
@@ -221,6 +255,62 @@ class QitsConfigParserTest {
     assertEquals(1, config.bootstrap().size());
     assertEquals("prepare-workspace", config.bootstrap().get(0).name());
     assertTrue(config.bootstrap().get(0).check().contains("/tmp/qits-bootstrap-marker"));
+  }
+
+  @Test
+  void readConfigPrefersDefaultLocationOverLegacy() throws Exception {
+    java.io.File repo =
+        initRepo(
+            java.util.Map.of(
+                QitsConfigParser.CONFIG_PATH,
+                "version: 1\nactions:\n  - name: preferred\n    execute: ls\n",
+                QitsConfigParser.LEGACY_CONFIG_PATH,
+                "version: 1\nactions:\n  - name: legacy\n    execute: ls\n"));
+    QitsConfig config = parser.readConfig(repo, "main");
+    assertEquals("preferred", config.actions().get(0).name());
+  }
+
+  @Test
+  void readConfigFallsBackToLegacyLocation() throws Exception {
+    java.io.File repo =
+        initRepo(
+            java.util.Map.of(
+                QitsConfigParser.LEGACY_CONFIG_PATH,
+                "version: 1\nactions:\n  - name: legacy\n    execute: ls\n"));
+    QitsConfig config = parser.readConfig(repo, "main");
+    assertEquals("legacy", config.actions().get(0).name());
+  }
+
+  @Test
+  void readConfigIsEmptyWhenNeitherLocationExists() throws Exception {
+    java.io.File repo = initRepo(java.util.Map.of("README.md", "hi\n"));
+    assertTrue(parser.readConfig(repo, "main").isEmpty());
+  }
+
+  /** A one-commit throwaway repo on {@code main} holding {@code files}, readable via git show. */
+  private java.io.File initRepo(java.util.Map<String, String> files) throws Exception {
+    java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("qits-config-repo");
+    GitExecutor git = new GitExecutor();
+    parser.git = git;
+    git.exec(dir.toFile(), "git", "init", "-b", "main");
+    for (var entry : files.entrySet()) {
+      java.nio.file.Path file = dir.resolve(entry.getKey());
+      java.nio.file.Files.createDirectories(file.getParent());
+      java.nio.file.Files.writeString(file, entry.getValue());
+    }
+    git.exec(dir.toFile(), "git", "add", "-A");
+    git.exec(
+        dir.toFile(),
+        java.util.Map.of(
+            "GIT_AUTHOR_NAME", "test",
+            "GIT_AUTHOR_EMAIL", "test@test",
+            "GIT_COMMITTER_NAME", "test",
+            "GIT_COMMITTER_EMAIL", "test@test"),
+        "git",
+        "commit",
+        "-m",
+        "init");
+    return dir.toFile();
   }
 
   @Test

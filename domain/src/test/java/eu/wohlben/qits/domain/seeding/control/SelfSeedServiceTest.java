@@ -9,6 +9,7 @@ import eu.wohlben.qits.domain.project.entity.Project;
 import eu.wohlben.qits.domain.repository.entity.Repository;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.repository.entity.RepositorySubmodule;
+import eu.wohlben.qits.domain.repository.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.RepositorySubmoduleRepository;
 import io.quarkus.test.junit.QuarkusTest;
@@ -43,6 +44,13 @@ public class SelfSeedServiceTest {
   static final String QITS_BACKEND_FIXTURE = "submodule-super.git";
   static final String QITS_ANGULAR_FIXTURE = "testing-repo.git";
 
+  /**
+   * The wrapper slot points at a REF-LESS bare, the real {@code wohlben/qits-qits} starting state.
+   * Its basename must be exactly {@code qits-qits} or the adopt check rejects it — which is the
+   * point: it proves the strict {@code <slug>-<slug>} rule holds for the project it was built for.
+   */
+  static final String QITS_WRAPPER_FIXTURE = "qits-qits.git";
+
   public static class TestProfile implements QuarkusTestProfile {
     @Override
     public Map<String, String> getConfigOverrides() {
@@ -55,7 +63,8 @@ public class SelfSeedServiceTest {
             // so the whole suite exercises the manifest-side trim: without it the second reconcile
             // in reRunIsAFullNoOp would re-clone a duplicate qits-backend.
             "qits.startup-seed.repo-url", "  " + fixturePath(QITS_BACKEND_FIXTURE) + "\n",
-            "qits.startup-seed.angular-integration-url", fixturePath(QITS_ANGULAR_FIXTURE));
+            "qits.startup-seed.angular-integration-url", fixturePath(QITS_ANGULAR_FIXTURE),
+            "qits.startup-seed.wrapper-url", fixturePath(QITS_WRAPPER_FIXTURE));
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
@@ -69,6 +78,7 @@ public class SelfSeedServiceTest {
   @Inject SelfSeedService selfSeedService;
   @Inject ProjectService projectService;
   @Inject RepositoryRepository repositoryRepository;
+  @Inject RepositoryNameRepository repositoryNameRepository;
   @Inject RepositorySubmoduleRepository submoduleRepository;
 
   /** A clean slate each method — {@code @QuarkusTest} shares one in-memory DB across the class. */
@@ -88,9 +98,13 @@ public class SelfSeedServiceTest {
     return projects.get(0);
   }
 
-  /** The project's repositories keyed by the trailing bare-repo name of their url. */
+  /**
+   * The project's repositories keyed by the trailing bare-repo name of their url, <b>excluding the
+   * wrapper</b> — it is created with the project and (until its upstream is adopted) has no url.
+   */
   private Map<String, Repository> reposByName(String projectId) {
     return repositoryRepository.find("project.id", projectId).list().stream()
+        .filter(r -> r.archetype != RepositoryArchetype.PROJECT)
         .collect(Collectors.toMap(r -> Path.of(r.url).getFileName().toString(), r -> r));
   }
 
@@ -164,6 +178,7 @@ public class SelfSeedServiceTest {
 
     long superRows =
         repositoryRepository.find("project.id", qitsProject().id).list().stream()
+            .filter(r -> r.url != null)
             .filter(r -> Path.of(r.url).getFileName().toString().equals("submodule-super.git"))
             .count();
     assertEquals(1, superRows, "the padded override matched its trimmed row — exactly one clone");
@@ -205,5 +220,47 @@ public class SelfSeedServiceTest {
     assertTrue(
         repos.containsKey("submodule-super.git"), "manifest repos were still added alongside");
     assertTrue(repos.containsKey("testing-repo.git"), "both manifest repos added");
+  }
+
+  /**
+   * The retro-fit: the seeded {@code qits} project gains its wrapper from the manifest's {@code
+   * qits-qits} entry. Worth asserting explicitly because {@code reconcile} swallows a failing item
+   * into a log line — a broken adoption would otherwise leave every other assertion green.
+   */
+  @Test
+  public void theWrapperIsAdoptedFromTheManifestAndSeededWithTheSkeleton() throws Exception {
+    selfSeedService.reconcile();
+
+    Project project = qitsProject();
+    Repository wrapper = projectService.findWrapper(project.id).orElseThrow();
+
+    assertEquals("qits", project.slug);
+    assertEquals(RepositoryArchetype.PROJECT, wrapper.archetype);
+    assertEquals(fixture(QITS_WRAPPER_FIXTURE), wrapper.url, "the empty upstream was adopted");
+    assertEquals(
+        "qits-qits",
+        repositoryNameRepository.nameFor(wrapper).orElseThrow(),
+        "basename('.../qits-qits.git') is exactly <slug>-<slug> for project qits — which is why"
+            + " this url is the right retro-fit and the strict rule needs no escape hatch");
+    assertEquals("main", wrapper.mainBranch, "a ref-less upstream is born on main, not master");
+  }
+
+  /**
+   * Two reconciles walk the wrapper through adopt states 1 then 3, and the greenfield wrapper
+   * {@code ensureProject} creates first means the first reconcile actually exercises state 4.
+   */
+  @Test
+  public void theWrapperAdoptionIsIdempotentAcrossReconciles() {
+    selfSeedService.reconcile();
+    String firstId = projectService.findWrapper(qitsProject().id).orElseThrow().id;
+    long before = repositoryRepository.find("project.id", qitsProject().id).list().size();
+
+    selfSeedService.reconcile();
+
+    assertEquals(firstId, projectService.findWrapper(qitsProject().id).orElseThrow().id);
+    assertEquals(
+        before,
+        repositoryRepository.find("project.id", qitsProject().id).list().size(),
+        "the second reconcile adds nothing");
   }
 }

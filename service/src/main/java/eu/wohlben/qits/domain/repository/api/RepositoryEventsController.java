@@ -14,11 +14,12 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 /**
  * The Server-Sent-Events channel for one repository's detail route — the repository-scoped sibling
  * of {@code WorkspaceEventsController}. Emits payload-free <em>invalidation hints</em> (a topic
- * name per frame; currently just {@code process}), which the frontend maps to a TanStack Query
- * invalidation so a repository's active-process discovery stays live without polling: when a
- * pull/sync begins or completes, the {@code TechnicalProcessRegistry} fires a {@code PROCESS} hint
- * on the repository key ({@code repoId, null}) and this stream carries it to the browser, which
- * refetches {@code .../active-process} to reattach or clear the concurrency guard.
+ * name per frame), which the frontend maps to a TanStack Query invalidation so the repository
+ * detail route stays live without polling. Topics: {@code process} (a pull/sync began or completed
+ * — refetch {@code .../active-process} to reattach or clear the concurrency guard), {@code
+ * git-status} (a workspace's working tree flipped clean/dirty — refresh the branch-tree dirty
+ * badge), and {@code agent-activity} (a coding agent's rollup flipped somewhere in this repo —
+ * re-sort the agent-activity bar).
  *
  * <p>Reuses the existing {@link WorkspaceEventBroadcaster} keyed by {@code (repoId, null)}: that
  * key ({@code "repoId/null"}) can never collide with a workspace subscriber's {@code

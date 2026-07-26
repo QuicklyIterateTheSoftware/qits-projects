@@ -64,10 +64,19 @@ public class SelfSeedService {
   private static final Logger LOG = Logger.getLogger(SelfSeedService.class);
 
   static final String PROJECT_NAME = "qits";
+
+  /**
+   * Passed explicitly rather than left to {@code slugify(PROJECT_NAME)}: the wrapper's adopt check
+   * (basename of the manifest url must equal {@code <slug>-<slug>}) hangs off this value, so it is
+   * load-bearing and must not drift with the display name.
+   */
+  static final String PROJECT_SLUG = "qits";
+
   private static final String PROJECT_DESCRIPTION =
       "The qits repositories themselves, registered automatically at startup"
           + " (docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md).";
 
+  private static final String QITS_WRAPPER_URL = "https://github.com/wohlben/qits-qits.git";
   private static final String QITS_BACKEND_URL = "https://github.com/wohlben/qits-backend.git";
   private static final String QITS_ANGULAR_URL =
       "https://github.com/wohlben/qits-angular-integration.git";
@@ -89,6 +98,14 @@ public class SelfSeedService {
   Optional<String> angularIntegrationUrlOverride;
 
   /**
+   * Redirects the {@code wohlben/qits-qits} wrapper clone source (same caveat as above, plus one
+   * more: an override whose basename is not {@code qits-qits} fails the wrapper name validation, so
+   * a fixture it points at must be named accordingly).
+   */
+  @ConfigProperty(name = "qits.startup-seed.wrapper-url")
+  Optional<String> wrapperUrlOverride;
+
+  /**
    * A desired repository under the seeded project: its clone {@code url}, {@code archetype},
    * whether to import its direct submodules at creation, and whether to {@code deepImport} one
    * further level over those children (the automated equivalent of the registration guide's manual
@@ -107,6 +124,14 @@ public class SelfSeedService {
    */
   List<SeedRepository> manifest() {
     return List.of(
+        // The wrapper goes FIRST: it is the project root and, once extraction starts, the
+        // superproject of the others. Its upstream may be completely empty — adoption seeds the
+        // project template skeleton on `main`, so nothing has to be pushed by hand first.
+        new SeedRepository(
+            resolveUrl(wrapperUrlOverride, QITS_WRAPPER_URL),
+            RepositoryArchetype.PROJECT,
+            true,
+            false),
         new SeedRepository(
             resolveUrl(repoUrlOverride, QITS_BACKEND_URL), RepositoryArchetype.SERVICE, true, true),
         new SeedRepository(
@@ -150,11 +175,26 @@ public class SelfSeedService {
         .orElseGet(
             () -> {
               LOG.infof("Self-seed: creating project '%s'.", PROJECT_NAME);
-              return projectService.create(PROJECT_NAME, PROJECT_DESCRIPTION);
+              return projectService.create(PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION);
             });
   }
 
   private void reconcileRepository(Project project, SeedRepository entry) {
+    // The wrapper goes through the adopt seam, never createRepositoryUnderProject (which rejects
+    // PROJECT outright). adoptWrapperRepository is idempotent across all the states a reconcile can
+    // find: it creates the wrapper, promotes a repository already registered at that url, attaches
+    // the remote to the greenfield wrapper ensureProject just made, or no-ops once adopted.
+    if (entry.archetype() == RepositoryArchetype.PROJECT) {
+      Repository wrapper = projectService.adoptWrapperRepository(project.id, entry.url());
+      if (entry.importSubmodules()) {
+        repositoryService.importDirectSubmodules(wrapper.id);
+      }
+      if (entry.deepImport()) {
+        deepImport(wrapper);
+      }
+      return;
+    }
+
     Repository repo =
         projectService.getRepositories(project.id).stream()
             .filter(r -> entry.url().equals(r.url))

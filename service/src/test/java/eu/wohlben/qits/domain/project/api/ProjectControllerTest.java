@@ -3,6 +3,7 @@ package eu.wohlben.qits.domain.project.api;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 
+import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.ws.rs.core.Response;
@@ -23,7 +24,7 @@ public class ProjectControllerTest {
     String id =
         given()
             .contentType(ContentType.JSON)
-            .body(new ProjectController.CreateProjectRequest("Ctrl Project", "Desc"))
+            .body(new ProjectController.CreateProjectRequest("Ctrl Project", null, "Desc", null))
             .when()
             .post("/api/projects")
             .then()
@@ -86,7 +87,7 @@ public class ProjectControllerTest {
   public void testCreateValidationErrors() {
     given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRequest("", null))
+        .body(new ProjectController.CreateProjectRequest("", null, null, null))
         .when()
         .post("/api/projects")
         .then()
@@ -120,7 +121,7 @@ public class ProjectControllerTest {
     String projectId =
         given()
             .contentType(ContentType.JSON)
-            .body(new ProjectController.CreateProjectRequest("Delete Project", null))
+            .body(new ProjectController.CreateProjectRequest("Delete Project", null, null, null))
             .when()
             .post("/api/projects")
             .then()
@@ -172,7 +173,7 @@ public class ProjectControllerTest {
     String projectId =
         given()
             .contentType(ContentType.JSON)
-            .body(new ProjectController.CreateProjectRequest("Shortcut Project", null))
+            .body(new ProjectController.CreateProjectRequest("Shortcut Project", null, null, null))
             .when()
             .post("/api/projects")
             .then()
@@ -210,7 +211,7 @@ public class ProjectControllerTest {
     String projectId =
         given()
             .contentType(ContentType.JSON)
-            .body(new ProjectController.CreateProjectRequest("Flow Project", null))
+            .body(new ProjectController.CreateProjectRequest("Flow Project", null, null, null))
             .when()
             .post("/api/projects")
             .then()
@@ -258,5 +259,76 @@ public class ProjectControllerTest {
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("featureFlowConfiguration.name", equalTo("My Flow"));
+  }
+
+  /**
+   * The slug becomes a git path segment and a forge repository name, so anything that would not
+   * survive both unchanged is rejected before any repository work starts.
+   */
+  @Test
+  public void testCreateRejectsAnIllFormedSlug() {
+    for (String bad : new String[] {"Upper", "-leading", "trailing-", "has space", "wrap.git"}) {
+      given()
+          .contentType(ContentType.JSON)
+          .body(new ProjectController.CreateProjectRequest("Slug Check", bad, null, null))
+          .when()
+          .post("/api/projects")
+          .then()
+          .statusCode(anyOf(equalTo(Response.Status.BAD_REQUEST.getStatusCode()), equalTo(422)));
+    }
+  }
+
+  /** Creation always ends with one repository, and the response hands it back. */
+  @Test
+  public void testCreateReturnsTheWrapperRepository() {
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new ProjectController.CreateProjectRequest("Wrapper Resp", "wrapper-resp", null, null))
+        .when()
+        .post("/api/projects")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("project.slug", equalTo("wrapper-resp"))
+        .body("wrapper.archetype", equalTo("PROJECT"));
+  }
+
+  /** Adopting an upstream whose basename is not <slug>-<slug> breaks the alias invariant. */
+  @Test
+  public void testCreateRejectsAnAdoptUrlThatDoesNotMatchTheWrapperName() {
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new ProjectController.CreateProjectRequest(
+                "Mismatch", "mismatch", null, "https://example.com/something-else.git"))
+        .when()
+        .post("/api/projects")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  /** The wrapper is created with the project, never through the repositories endpoint. */
+  @Test
+  public void testCreateRepositoryRejectsTheProjectArchetype() {
+    String projectId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(new ProjectController.CreateProjectRequest("No Second", null, null, null))
+            .when()
+            .post("/api/projects")
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .path("project.id");
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new ProjectController.CreateProjectRepositoryRequest(
+                fixtureUrl, RepositoryArchetype.PROJECT, false))
+        .when()
+        .post("/api/projects/" + projectId + "/repositories")
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
 }

@@ -38,7 +38,7 @@ public class WorkspaceActiveProcessTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest(
-                    "Active Process Project", null))
+                    "Active Process Project", null, null, null))
             .when()
             .post("/api/projects")
             .then()

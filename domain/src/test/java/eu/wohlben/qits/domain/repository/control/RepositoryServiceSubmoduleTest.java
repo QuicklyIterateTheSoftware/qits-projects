@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import eu.wohlben.qits.domain.repository.entity.Repository;
+import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import eu.wohlben.qits.domain.repository.entity.RepositorySubmodule;
 import eu.wohlben.qits.domain.repository.persistence.RepositoryRepository;
 import eu.wohlben.qits.domain.repository.persistence.RepositorySubmoduleRepository;
@@ -54,9 +55,13 @@ public class RepositoryServiceSubmoduleTest {
     return getClass().getResource("/fixtures/" + name).toURI().getPath();
   }
 
-  /** The repositories in a project keyed by the trailing bare-repo name of their url. */
+  /**
+   * The repositories in a project keyed by the trailing bare-repo name of their url, <b>excluding
+   * the project's wrapper</b> — it is created with every project and has no url to key on.
+   */
   private Map<String, Repository> reposByName(String projectId) {
     return repositoryRepository.find("project.id", projectId).list().stream()
+        .filter(r -> r.archetype != RepositoryArchetype.PROJECT)
         .collect(Collectors.toMap(r -> Path.of(r.url).getFileName().toString(), r -> r));
   }
 

@@ -39,7 +39,7 @@ public class RepositoryActiveProcessTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest(
-                    "Repo Active Process Project", null))
+                    "Repo Active Process Project", null, null, null))
             .when()
             .post("/api/projects")
             .then()

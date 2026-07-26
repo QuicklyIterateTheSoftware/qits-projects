@@ -42,7 +42,7 @@ public class TaskPromptMcpToolsTest {
   private String createProject(String name) {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRequest(name, null))
+        .body(new ProjectController.CreateProjectRequest(name, null, null, null))
         .post("/api/projects")
         .then()
         .statusCode(200)

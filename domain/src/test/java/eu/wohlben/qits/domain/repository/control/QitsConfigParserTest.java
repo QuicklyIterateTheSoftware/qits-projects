@@ -12,6 +12,8 @@ import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -67,6 +69,37 @@ class QitsConfigParserTest {
     assertThrows(
         QitsConfigException.class,
         () -> parser.parse("version: 1\nrepository:\n  archetype: NONSENSE\n"));
+  }
+
+  /**
+   * A committed config must not be able to promote its repository to the project's wrapper: that
+   * role is derived from the project slug and owned by the adopt seam. Left open, any repository
+   * could mint a second wrapper by committing one line of YAML.
+   */
+  @Test
+  void projectArchetypeIsReservedForTheWrapperAndRejected() {
+    var error =
+        assertThrows(
+            QitsConfigException.class,
+            () -> parser.parse("version: 1\nrepository:\n  archetype: PROJECT\n"));
+    assertTrue(error.getMessage().contains("PROJECT"), error.getMessage());
+  }
+
+  /**
+   * The starter config the project template seeds into every wrapper must itself parse. It is
+   * commented almost end to end, so the only load-bearing lines are {@code version: 1} (absent, the
+   * parser raises a warning on every wrapper ever created) and the absence of {@code archetype:
+   * PROJECT}, which the rule above rejects.
+   */
+  @Test
+  void theProjectTemplateStarterConfigParses() throws Exception {
+    String starter =
+        Files.readString(Path.of("target/classes/project-template/dot-qits-config.yml"));
+
+    QitsConfig config = parser.parse(starter);
+
+    assertEquals("main", config.repository().mainBranch());
+    assertNull(config.repository().archetype(), "the wrapper's archetype is qits' to decide");
   }
 
   @Test

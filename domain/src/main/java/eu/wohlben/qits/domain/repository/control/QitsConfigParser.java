@@ -118,8 +118,18 @@ public class QitsConfigParser {
       return null;
     }
     Map<String, Object> m = asMap(raw, "repository");
-    return new RepositorySection(
-        str(m, "main-branch"), enumOf(RepositoryArchetype.class, m.get("archetype"), "archetype"));
+    RepositoryArchetype archetype =
+        enumOf(RepositoryArchetype.class, m.get("archetype"), "archetype");
+    // A committed config must not be able to promote its repository to the project's wrapper: that
+    // role is derived from the project slug and owned by ProjectService.adoptWrapperRepository.
+    // Left
+    // open, any repository could mint a second wrapper just by committing a line of YAML.
+    if (archetype == RepositoryArchetype.PROJECT) {
+      throw new QitsConfigException(
+          "repository.archetype: PROJECT is reserved for a project's wrapper repository and cannot"
+              + " be declared in .qits-config.yml");
+    }
+    return new RepositorySection(str(m, "main-branch"), archetype);
   }
 
   private List<FrameworkDecl> frameworks(Object raw) {

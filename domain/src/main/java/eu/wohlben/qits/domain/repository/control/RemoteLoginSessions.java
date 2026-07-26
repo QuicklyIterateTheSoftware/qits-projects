@@ -2,6 +2,7 @@ package eu.wohlben.qits.domain.repository.control;
 
 import com.pty4j.PtyProcessBuilder;
 import eu.wohlben.qits.domain.command.control.CommandOutputSink;
+import eu.wohlben.qits.domain.error.BadRequestException;
 import eu.wohlben.qits.domain.error.InternalServerErrorException;
 import eu.wohlben.qits.domain.process.control.RepoReservation;
 import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
@@ -186,6 +187,12 @@ public class RemoteLoginSessions {
 
   private RemoteLoginSession spawn(String repoId, String reservationToken) {
     RepositoryService.PushSpec spec = repositories.pushSpec(repoId); // 404 for an unknown repo
+    // Signing in exists to authenticate an interactive push at the backup remote. With none
+    // configured (a greenfield project wrapper) there is nothing to sign in to.
+    if (spec.url() == null || spec.url().isBlank()) {
+      throw new BadRequestException(
+          "Repository has no backup remote configured; configure one before signing in.");
+    }
     try {
       Map<String, String> env = new HashMap<>(System.getenv());
       env.put("TERM", "xterm-256color");

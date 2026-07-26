@@ -70,7 +70,7 @@ public class WorkspacePromptAttachmentControllerTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest(
-                    "Prompt Attachment Project", null))
+                    "Prompt Attachment Project", null, null, null))
             .when()
             .post("/api/projects")
             .then()

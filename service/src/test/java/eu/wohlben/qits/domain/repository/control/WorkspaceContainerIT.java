@@ -94,7 +94,7 @@ public class WorkspaceContainerIT {
   }
 
   /**
-   * The host→container channel the daemon web-view proxy rides on: with qits and the container on
+   * The host→container channel the service web-view proxy rides on: with qits and the container on
    * the shared {@code qits-net}, {@code resolveTarget} yields the container's DNS name + the real
    * port for <em>any</em> port — no host publish, no create-time port set — and the container
    * publishes no host ports. (Host-side HTTP reachability isn't asserted: by design only a peer on
@@ -398,29 +398,30 @@ public class WorkspaceContainerIT {
   }
 
   /**
-   * The tmux-backed daemon interactive terminal (Increment 2) end-to-end against real tmux: a
-   * detached daemon session is started, then a {@code docker exec -it tmux attach} PTY (built from
-   * {@link DockerExecutor#attachDaemonCommand}) renders the live pane back through the client.
-   * Detaching (killing the attach client) must leave the daemon running — only {@code killDaemon}
+   * The tmux-backed service interactive terminal (Increment 2) end-to-end against real tmux: a
+   * detached service session is started, then a {@code docker exec -it tmux attach} PTY (built from
+   * {@link DockerExecutor#attachServiceCommand}) renders the live pane back through the client.
+   * Detaching (killing the attach client) must leave the daemon running — only {@code killService}
    * tears it down. This is the real-tmux behavior the fake-based unit test cannot exercise.
    */
   @Test
-  public void tmuxDaemonAttachStreamsThePaneAndDetachLeavesTheDaemonRunning() throws Exception {
+  public void tmuxServiceAttachStreamsThePaneAndDetachLeavesTheServiceRunning() throws Exception {
     DockerExecutor de = executor();
     assumeTrue(dockerAndImageAvailable(de), "docker + " + IMAGE + " required for this IT");
 
     String repoId = UUID.randomUUID().toString();
     String workspaceId = "it-daemon";
     String container = de.containerName(workspaceId, repoId);
-    String daemonId = "it-daemon-" + UUID.randomUUID();
+    String serviceId = "it-daemon-" + UUID.randomUUID();
     de.rm(container);
     try {
       de.run(repoId, workspaceId, "it-branch", "main");
 
       // Start the daemon as a detached tmux session that keeps printing a recognizable marker.
       String script = "while true; do echo tmux-marker; sleep 0.3; done";
-      de.startDaemon(container, daemonId, script, Map.of("QITS_DAEMON_ID", daemonId));
-      assertTrue(de.daemonAlive(container, daemonId), "the tmux daemon session should be running");
+      de.startService(container, serviceId, script, Map.of("QITS_DAEMON_ID", serviceId));
+      assertTrue(
+          de.serviceAlive(container, serviceId), "the tmux service session should be running");
 
       // Attach exactly as ServiceTerminalSocket does: a docker exec -it PTY running the attach
       // command, with TERM set container-side so tmux renders.
@@ -429,7 +430,7 @@ public class WorkspaceContainerIT {
               de.execArgv(container, true, "/workspace", Map.of("TERM", "xterm-256color")));
       argv.add("bash");
       argv.add("-lc");
-      argv.add(de.attachDaemonCommand(daemonId));
+      argv.add(de.attachServiceCommand(serviceId));
 
       Map<String, String> env = new HashMap<>(System.getenv());
       env.put("TERM", "xterm-256color");
@@ -480,12 +481,14 @@ public class WorkspaceContainerIT {
       attach.waitFor();
       Thread.sleep(500);
       assertTrue(
-          de.daemonAlive(container, daemonId), "detaching must leave the daemon session running");
+          de.serviceAlive(container, serviceId),
+          "detaching must leave the service session running");
 
-      // Only killDaemon tears the session down.
-      de.killDaemon(container, daemonId);
+      // Only killService tears the session down.
+      de.killService(container, serviceId);
       Thread.sleep(500);
-      assertTrue(!de.daemonAlive(container, daemonId), "killDaemon must stop the daemon session");
+      assertTrue(
+          !de.serviceAlive(container, serviceId), "killService must stop the service session");
     } finally {
       de.rm(container);
     }

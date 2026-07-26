@@ -24,7 +24,7 @@ import org.jboss.logging.Logger;
 /**
  * The in-memory registry of live remote-login sign-in terminals — one {@link RemoteLoginSession}
  * per repository at most, spawned on the first WebSocket attach (the socket-only precedent of
- * {@code DaemonTerminalSocket}: no REST trigger, so a dialog re-open or the terminal's
+ * {@code ServiceTerminalSocket}: no REST trigger, so a dialog re-open or the terminal's
  * auto-reconnect simply re-attaches with replay instead of killing git mid-prompt).
  *
  * <p>The session runs exactly the interactive form of {@code RepositoryService#pushRepository}'s

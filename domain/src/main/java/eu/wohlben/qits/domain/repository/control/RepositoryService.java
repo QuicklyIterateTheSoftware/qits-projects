@@ -781,12 +781,12 @@ public class RepositoryService {
             () -> {
               try {
                 pullRepository(repoId, new HashSet<>(), process, rootSegment, usedSegments);
-                // No asynchronous second phase: declare an empty daemon set and settle the
+                // No asynchronous second phase: declare an empty service set and settle the
                 // provision
                 // so `done` fires immediately. A child segment settled `failed` still makes
                 // finish()
                 // compute overall `done failed`.
-                process.expectDaemons(List.of());
+                process.expectServices(List.of());
                 process.finishProvision(true);
               } catch (RuntimeException e) {
                 // Root failure (diverged branch, unreachable remote, auth wall): settle the open
@@ -1302,7 +1302,7 @@ public class RepositoryService {
                   process.appendLine(pushSegment, "push failed: " + e.getMessage());
                   settleWithAuthHint(process, pushSegment, e.getMessage(), repoId);
                 }
-                process.expectDaemons(List.of());
+                process.expectServices(List.of());
                 process.finishProvision(true);
               } catch (RuntimeException e) {
                 // Root pull failure (diverged branch, unreachable remote): settle the open pull
@@ -1351,7 +1351,7 @@ public class RepositoryService {
                   process.appendLine(rootSegment, "push failed: " + e.getMessage());
                   settleWithAuthHint(process, rootSegment, e.getMessage(), repoId);
                 }
-                process.expectDaemons(List.of());
+                process.expectServices(List.of());
                 process.finishProvision(true);
               } catch (RuntimeException e) {
                 process.failProvision(e.getMessage());
@@ -1591,7 +1591,7 @@ public class RepositoryService {
     // Delete the whole footprint, not just the DB row: otherwise every delete (and every seed
     // reset, which deletes then recreates) leaks the repo's workspace containers, their persistent
     // /workspace volumes, and its on-disk clone directory as orphans. DB rows for
-    // workspaces/commands/events/daemons cascade off the repository row deletion below.
+    // workspaces/commands/events/services cascade off the repository row deletion below.
     for (ContainerRuntime.ContainerInfo info : containerRuntime.listWorkspaceContainers(repoId)) {
       try {
         containerRuntime.rm(info.name());

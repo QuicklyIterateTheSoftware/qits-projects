@@ -5,13 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
-import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.service.entity.HealthCheckKind;
+import eu.wohlben.qits.domain.service.entity.RestartPolicy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -141,7 +141,7 @@ class QitsConfigParserTest {
   }
 
   @Test
-  void parsesFullDaemonWithNestedEmbeddables() {
+  void parsesFullServiceWithNestedEmbeddables() {
     QitsConfig config =
         parser.parse(
             """
@@ -222,7 +222,7 @@ class QitsConfigParserTest {
   }
 
   @Test
-  void unknownEnumInDaemonThrows() {
+  void unknownEnumInServiceThrows() {
     assertThrows(
         QitsConfigException.class,
         () ->

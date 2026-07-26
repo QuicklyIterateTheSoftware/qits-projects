@@ -1,7 +1,5 @@
 package eu.wohlben.qits.domain.repository.control;
 
-import eu.wohlben.qits.domain.daemon.entity.HealthCheckKind;
-import eu.wohlben.qits.domain.daemon.entity.RestartPolicy;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ActionDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.FrameworkDecl;
@@ -10,6 +8,8 @@ import eu.wohlben.qits.domain.repository.control.QitsConfig.RepositorySection;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.domain.repository.control.QitsConfig.WebViewDecl;
 import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
+import eu.wohlben.qits.domain.service.entity.HealthCheckKind;
+import eu.wohlben.qits.domain.service.entity.RestartPolicy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.File;
@@ -197,7 +197,7 @@ public class QitsConfigParser {
               enumOf(RestartPolicy.class, m.get("restart-policy"), "restart-policy"),
               intOrNull(m.get("max-restarts"), "max-restarts"),
               str(m, "stop-signal"),
-              strMap(m.get("environment"), "daemons[].environment"),
+              strMap(m.get("environment"), "services[].environment"),
               webView(m.get("web-view")),
               healthChecks(m.get("health-checks"))));
     }

@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm/
+
+# Build outputs
+target/
+dist/
+build/
+.allure/
+allure-results/
+
+# IDE
+.vscode/
+.idea/
+.project
+.classpath
+.factorypath
+.settings/
+
+# OS
+.DS_Store
+
+# Home-relative caches/config a tool leaks into the repo root when run with the repo as its
+# cwd — their real homes are under $HOME, never here. `.m2` here is only the Maven *wrapper's*
+# distribution download (the dependency repo lives on the shared /caches/m2 volume via
+# MAVEN_OPTS); `.qits` here is stray (qits' real data dir is ~/.qits).
+.cache/
+.m2/
+.local/
+.redhat/
+.testcontainers.properties
+/.qits/
+
+# Logs
+*.log
+# Rotated log files (e.g. quarkus.log.1) that *.log doesn't catch
+*.log.*
+
+# Local DB files
+*.db
+*.db-shm
+*.db-wal
+
+# Misc — agent tool config is local, but skills are shared team content and tracked
+**/.claude/*
+!**/.claude/skills/
+
+# Starter migration scratch file — written to the repo root by `cli generate-migration`
+# as a reminder/template; turn it into a hand-written db/migration/V#__name.sql, then delete it.
+PENDING_MIGRATION.sql
+
+# Local per-machine Quarkus config overrides (e.g. WSL2 git-host); never committed.
+.env
+
+# IDE (m2e/jdtls) build output — kept separate from Maven's target/ so the language server
+# never clobbers target/classes (see the m2e-separate-output profile in pom.xml).
+target-ide/
+
+# Sibling working clone of the @qits/angular integration library (its own repository,
+# github.com/wohlben/qits-angular-integration) — checked out here for convenience, never part of qits.
+/qits-angular-integration/

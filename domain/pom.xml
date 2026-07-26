@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-projects</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The projects DOMAIN: the Project aggregate, the Repository entity and its bare origin on
+         disk, name aliases, the submodule graph, remote-login sessions, .qits-config.yml ingestion,
+         and the ports this context reaches the rest of the application through. A plain library jar
+         in the shape of the monorepo's `artifacts`/`ci`/`epics` modules — NO web, NO JAX-RS, NO
+         websockets; those live in the sibling `service` module.
+
+         It owns its OWN named datasource + persistence unit + Flyway lineage (a separate H2 under
+         ~/.qits/data/projects, see src/main/resources/META-INF/microprofile-config.properties),
+         squashed from the monorepo's V1..V45 shared lineage. The Project↔Repository↔RepositoryName↔
+         RepositorySubmodule relations are REAL JPA relations with real foreign keys — all four
+         tables are owned here, in one database. Everything OUTSIDE it (workspaces, commands,
+         agents, technical processes) is reached by String id through a `control/` port, never a
+         join. -->
+    <artifactId>qits-projects-domain</artifactId>
+    <name>qits-projects :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean for the repository metadata sidecars (no REST needed). -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-h2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Parses the repository's committed .qits-config.yml into plain config records. This
+                 is repository content, not app config, so it is read straight from the bare origin
+                 (no Quarkus config machinery). Version is managed by the Quarkus BOM. -->
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Server-side pseudo-terminal for the interactive remote-login session (a real TTY so
+                 `git push` can prompt for credentials). RemoteLoginSession owns the PTY process;
+                 the service module's websocket only attaches to it. Not in the Quarkus BOM. -->
+            <groupId>org.jetbrains.pty4j</groupId>
+            <artifactId>pty4j</artifactId>
+            <version>0.13.4</version>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- Index the jar so a consuming app discovers its CDI beans and entities without
+                     needing a quarkus.index-dependency entry. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

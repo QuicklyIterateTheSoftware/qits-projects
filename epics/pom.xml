@@ -3,8 +3,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>eu.wohlben</groupId>
-        <artifactId>qits</artifactId>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-projects</artifactId>
         <version>1.0.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
@@ -17,7 +17,8 @@
          OWN named datasource + persistence unit + Flyway lineage — a separate file-based H2 under
          ~/.qits/data/epics (see src/main/resources/META-INF/microprofile-config.properties) — so the
          likely future standalone deployable moves files, not data (the artifacts precedent). -->
-    <artifactId>epics</artifactId>
+    <artifactId>qits-projects-epics</artifactId>
+    <name>qits-projects :: epics</name>
 
     <dependencies>
         <dependency>
@@ -55,7 +56,7 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-junit5</artifactId>
+            <artifactId>quarkus-junit</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

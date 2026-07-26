@@ -10,13 +10,13 @@ import java.util.Set;
 
 /**
  * Hides the <em>mutating</em> repository tools from a session that connected read-only — the {@code
- * agentReadOnly=true} marker {@code AgentLaunchService.renderAutonomous} stamps into the MCP URL of
- * an <strong>autonomous</strong> run. An unattended {@code claude -p
- * --dangerously-skip-permissions} run (today only conflict resolution) attaches the repository
- * server solely for {@code taskPrompt}; it must not be able to drive host-side, cross-repository
- * mutations (create workspaces, integrate or clean up branches) with no human in the loop — its own
- * git work happens inside its container. Interactive/chat sessions do not set the marker, so their
- * tool set is unchanged.
+ * agentReadOnly=true} marker {@code AgentLaunchService.renderAutonomousChat} stamps into the MCP
+ * URL of an <strong>autonomous</strong> run. An unattended run under {@code
+ * --dangerously-skip-permissions} (today only conflict resolution, riding the chat pipeline)
+ * attaches the repository server solely for {@code taskPrompt}; it must not be able to drive
+ * host-side, cross-repository mutations (create workspaces, integrate or clean up branches) with no
+ * human in the loop — its own git work happens inside its container. Interactive/chat sessions do
+ * not set the marker, so their tool set is unchanged.
  *
  * <p>Mirrors {@link TaskPromptToolFilter}: fails <em>closed</em> (hide the mutating tool) if the
  * request scope can't be read, so a listing error never widens access.

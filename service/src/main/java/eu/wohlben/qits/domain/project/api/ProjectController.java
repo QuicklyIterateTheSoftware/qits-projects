@@ -9,6 +9,7 @@ import eu.wohlben.qits.domain.project.mapper.ProjectMapper;
 import eu.wohlben.qits.domain.repository.dto.RepositoryDto;
 import eu.wohlben.qits.domain.repository.mapper.RepositoryMapper;
 import eu.wohlben.qits.validation.NotBlankIfPresent;
+import eu.wohlben.qits.validation.ProjectSlug;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -40,14 +41,30 @@ public class ProjectController {
 
   // --- Project CRUD ---
 
-  public static record CreateProjectRequest(@NotBlank String name, String description) {
-    public record Response(ProjectDto project) {}
+  /**
+   * @param slug the git-safe, immutable project identity the wrapper repository is named after
+   *     ({@code <slug>-<slug>}). Optional — derived from {@code name} when omitted. Unlike {@code
+   *     name} it can never be changed afterwards, so a wrapper's alias cannot go stale.
+   * @param url an existing upstream to adopt as the wrapper repository. Optional — omitted, the
+   *     wrapper is initialized locally with no backup remote. An adopted upstream may be completely
+   *     empty (it is seeded with the project template skeleton) but its basename must be exactly
+   *     {@code <slug>-<slug>}.
+   */
+  public static record CreateProjectRequest(
+      @NotBlank String name, @ProjectSlug String slug, String description, String url) {
+    /**
+     * @param wrapper the wrapper repository project creation always ends with.
+     */
+    public record Response(ProjectDto project, RepositoryDto wrapper) {}
   }
 
   @POST
   public CreateProjectRequest.Response create(@Valid CreateProjectRequest request) {
-    var project = projectService.create(request.name(), request.description());
-    return new CreateProjectRequest.Response(projectMapper.toDto(project));
+    var project =
+        projectService.create(request.name(), request.slug(), request.description(), request.url());
+    var wrapper = projectService.findWrapper(project.id).orElseThrow();
+    return new CreateProjectRequest.Response(
+        projectMapper.toDto(project), repositoryMapper.toDto(wrapper));
   }
 
   public static record GetProjectRequest() {

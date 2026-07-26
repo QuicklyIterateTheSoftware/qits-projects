@@ -216,7 +216,7 @@ public class TaskPromptDeliveryIT {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.domain.project.api.ProjectController.CreateProjectRequest(
-                    "Task Prompt Delivery IT", null))
+                    "Task Prompt Delivery IT", null, null, null))
             .when()
             .post("/api/projects")
             .then()

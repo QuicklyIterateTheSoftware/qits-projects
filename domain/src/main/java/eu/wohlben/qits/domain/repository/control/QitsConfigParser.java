@@ -23,12 +23,13 @@ import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 /**
- * Reads and parses a repository's committed {@code .qits-config.yml}. Mirrors {@link
- * GitSubmoduleParser} exactly: a pure, framework-light helper kept separate from the transactional
- * services so parsing is unit-testable without cloning. {@link #readConfig} pulls the file straight
- * from the bare origin (no checkout, no container) via {@link GitExecutor#showFile}; an absent file
- * (non-zero {@code git show}) or any read failure yields {@link QitsConfig#EMPTY} — the no-op
- * branch that keeps a config-free repository on the old path.
+ * Reads and parses a repository's committed qits config file. Mirrors {@link GitSubmoduleParser}
+ * exactly: a pure, framework-light helper kept separate from the transactional services so parsing
+ * is unit-testable without cloning. {@link #readConfig} pulls the file straight from the bare
+ * origin (no checkout, no container) via {@link GitExecutor#showFile}, trying the default location
+ * {@code .config/qits/repository.yml} first and falling back to the legacy root-level {@code
+ * .qits-config.yml}; both absent (non-zero {@code git show}) or any read failure yields {@link
+ * QitsConfig#EMPTY} — the no-op branch that keeps a config-free repository on the old path.
  *
  * <p>{@link #parse} is stricter: a structurally invalid file (bad YAML, wrong {@code version},
  * unknown enum) throws {@link QitsConfigException} so the caller can surface it as a warning while
@@ -40,8 +41,11 @@ public class QitsConfigParser {
 
   private static final Logger LOG = Logger.getLogger(QitsConfigParser.class);
 
-  /** The committed file this feature reads, at the repository root. */
-  public static final String CONFIG_PATH = ".qits-config.yml";
+  /** The default committed config location. */
+  public static final String CONFIG_PATH = ".config/qits/repository.yml";
+
+  /** The legacy root-level location, read when {@link #CONFIG_PATH} is absent. */
+  public static final String LEGACY_CONFIG_PATH = ".qits-config.yml";
 
   @Inject GitExecutor git;
 
@@ -57,24 +61,26 @@ public class QitsConfigParser {
   }
 
   /**
-   * The config declared in {@code branch}'s {@code .qits-config.yml} in the bare origin. A missing
-   * file (non-zero {@code git show}) or any read/IO failure yields {@link QitsConfig#EMPTY}, never
-   * an error — reading config must never fail a clone or sync. A structurally invalid file DOES
-   * propagate ({@link QitsConfigException}), so the caller can record it as a warning.
+   * The config declared in {@code branch}'s qits config file in the bare origin — {@link
+   * #CONFIG_PATH} if present, else the legacy {@link #LEGACY_CONFIG_PATH}. Both missing (non-zero
+   * {@code git show}) or any read/IO failure yields {@link QitsConfig#EMPTY}, never an error —
+   * reading config must never fail a clone or sync. A structurally invalid file DOES propagate
+   * ({@link QitsConfigException}), so the caller can record it as a warning.
    */
   public QitsConfig readConfig(File bareOrigin, String branch) {
-    GitExecutor.ExecResult result;
-    try {
-      result = git.showFile(bareOrigin, branch, CONFIG_PATH);
-    } catch (Exception e) {
-      LOG.warnf(
-          e, "Failed to read %s from %s@%s; treating as empty", CONFIG_PATH, bareOrigin, branch);
-      return QitsConfig.EMPTY;
+    for (String path : List.of(CONFIG_PATH, LEGACY_CONFIG_PATH)) {
+      GitExecutor.ExecResult result;
+      try {
+        result = git.showFile(bareOrigin, branch, path);
+      } catch (Exception e) {
+        LOG.warnf(e, "Failed to read %s from %s@%s; treating as empty", path, bareOrigin, branch);
+        return QitsConfig.EMPTY;
+      }
+      if (result.exitCode() == 0) {
+        return parse(result.output());
+      }
     }
-    if (result.exitCode() != 0) {
-      return QitsConfig.EMPTY;
-    }
-    return parse(result.output());
+    return QitsConfig.EMPTY;
   }
 
   /**
@@ -118,8 +124,18 @@ public class QitsConfigParser {
       return null;
     }
     Map<String, Object> m = asMap(raw, "repository");
-    return new RepositorySection(
-        str(m, "main-branch"), enumOf(RepositoryArchetype.class, m.get("archetype"), "archetype"));
+    RepositoryArchetype archetype =
+        enumOf(RepositoryArchetype.class, m.get("archetype"), "archetype");
+    // A committed config must not be able to promote its repository to the project's wrapper: that
+    // role is derived from the project slug and owned by ProjectService.adoptWrapperRepository.
+    // Left
+    // open, any repository could mint a second wrapper just by committing a line of YAML.
+    if (archetype == RepositoryArchetype.PROJECT) {
+      throw new QitsConfigException(
+          "repository.archetype: PROJECT is reserved for a project's wrapper repository and cannot"
+              + " be declared in .qits-config.yml");
+    }
+    return new RepositorySection(str(m, "main-branch"), archetype);
   }
 
   private List<FrameworkDecl> frameworks(Object raw) {

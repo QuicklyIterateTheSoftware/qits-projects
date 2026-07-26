@@ -68,6 +68,8 @@ public class RepositoryService {
 
   @Inject RepositoryNameRepository repositoryNameRepository;
 
+  @Inject ProjectTemplate projectTemplate;
+
   @Inject TechnicalProcessRegistry processes;
 
   /**
@@ -127,6 +129,40 @@ public class RepositoryService {
    */
   private Repository cloneOne(
       String url, RepositoryArchetype archetype, Project project, boolean createMainWorkspace) {
+    return cloneOne(url, archetype, project, createMainWorkspace, null, false);
+  }
+
+  /**
+   * Clones a project's <b>wrapper repository</b> from an upstream that may be completely empty —
+   * the brownfield half of wrapper creation.
+   *
+   * <p>{@code git clone --mirror} of an empty remote succeeds but yields no refs, and there is no
+   * {@code HEAD} for {@link #detectDefaultBranch} to read (it would answer {@code "master"}).
+   * Rather than requiring a README be pushed first, HEAD is pointed at {@link
+   * #WRAPPER_DEFAULT_BRANCH} and the skeleton is seeded there — so a brand-new, never-pushed-to
+   * forge repository is a supported starting state. An upstream that <em>does</em> have history is
+   * left completely untouched.
+   *
+   * @param name the wrapper's project-scoped addressable name, {@code <slug>-<slug>}
+   */
+  @Transactional
+  public Repository cloneWrapperOrigin(Project project, String url, String name) {
+    return cloneOne(url, RepositoryArchetype.PROJECT, project, true, name, true);
+  }
+
+  /**
+   * @param selfName the addressable name to register, or {@code null} to derive it from the url
+   *     basename as usual
+   * @param seedSkeletonIfEmpty whether an upstream that came back with no refs at all should be
+   *     given the project template skeleton on {@link #WRAPPER_DEFAULT_BRANCH}
+   */
+  private Repository cloneOne(
+      String url,
+      RepositoryArchetype archetype,
+      Project project,
+      boolean createMainWorkspace,
+      String selfName,
+      boolean seedSkeletonIfEmpty) {
     if (url == null || url.isBlank()) {
       throw new BadRequestException("url is required");
     }
@@ -159,7 +195,11 @@ public class RepositoryService {
     // Give the repository a project-scoped addressable name (its url basename) so the git host can
     // serve it as a sibling under /git/<projectId>/<name> — this is what lets committed relative
     // submodule urls resolve natively, and what its own workspace container clones itself under.
-    repositoryNameRepository.registerSelfName(repo);
+    if (selfName != null) {
+      registerWrapperName(repo, selfName);
+    } else {
+      repositoryNameRepository.registerSelfName(repo);
+    }
 
     Path originPath = Path.of(dataDir, repo.id, "origin");
     try {
@@ -170,6 +210,26 @@ public class RepositoryService {
               "clone", "--mirror", "--end-of-options", repo.url, originPath.toString()));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
+    }
+
+    // An empty upstream mirrors successfully but brings no refs, leaving nothing for a workspace
+    // container's clone to land on. Give it the skeleton on `main` instead of demanding the user
+    // push a first commit by hand — this is what makes a brand-new, never-pushed-to forge
+    // repository
+    // a supported starting state. Never reached for an upstream that has history.
+    if (seedSkeletonIfEmpty && !hasAnyRef(originPath)) {
+      try {
+        git.exec(
+            originPath.toFile(),
+            "git",
+            "symbolic-ref",
+            "HEAD",
+            "refs/heads/" + WRAPPER_DEFAULT_BRANCH);
+      } catch (Exception e) {
+        throw new InternalServerErrorException(
+            "Failed to point the empty mirror's HEAD at " + WRAPPER_DEFAULT_BRANCH);
+      }
+      seedProjectTemplate(repo.id, originPath, WRAPPER_DEFAULT_BRANCH);
     }
 
     // The main branch defaults to the remote's default branch (the mirror's HEAD).
@@ -224,6 +284,20 @@ public class RepositoryService {
     Path originPath = originPath(repo.id);
     for (GitSubmoduleParser.Submodule sub :
         submoduleParser.readSubmodules(originPath.toFile(), repo.mainBranch)) {
+      // A RELATIVE url folds against the superproject's real backend; with no backup remote
+      // configured there is nothing to fold it against, and resolveSubmoduleUrl would NPE. An
+      // absolute url ignores the superproject's url entirely, so those keep importing normally.
+      if (!hasBackupRemote(repo) && isRelativeSubmoduleUrl(sub.url())) {
+        throw new BadRequestException(
+            "Submodule '"
+                + sub.name()
+                + "' uses a relative url ("
+                + sub.url()
+                + ") but repository '"
+                + repoLabel(repo)
+                + "' has no backup remote configured, so there is nothing to resolve it against."
+                + " Configure the backup remote first, or commit an absolute url.");
+      }
       String childUrl = submoduleParser.resolveSubmoduleUrl(repo.url, sub.url());
 
       // A submodule whose url resolves to qits' own git host would make the imported sister clone
@@ -309,6 +383,16 @@ public class RepositoryService {
           "Could not derive a submodule name from backendUrl: " + trimmed);
     }
     String relativeUrl = "../" + name + ".git";
+    // The pre-serve clones from the canonical url the superproject's own re-import will resolve for
+    // ../<name>.git — which only exists if the superproject has a backend to fold it against.
+    if (!hasBackupRemote(superproject)) {
+      throw new BadRequestException(
+          "Cannot pre-serve a submodule backend under '"
+              + repoLabel(superproject)
+              + "': it has no backup remote configured, so "
+              + relativeUrl
+              + " has nothing to resolve against. Configure the backup remote first.");
+    }
     String canonicalUrl = submoduleParser.resolveSubmoduleUrl(superproject.url, relativeUrl);
     Repository sibling =
         repositoryRepository
@@ -339,15 +423,291 @@ public class RepositoryService {
         .map(
             sub ->
                 new GitSubmoduleParser.Submodule(
-                    sub.name(),
-                    sub.path(),
-                    submoduleParser.resolveSubmoduleUrl(repo.url, sub.url()),
-                    sub.branch()))
+                    sub.name(), sub.path(), resolveAgainst(repo, sub.url()), sub.branch()))
         .toList();
+  }
+
+  /**
+   * {@link GitSubmoduleParser#resolveSubmoduleUrl} for read paths: a relative url under a
+   * repository with no backup remote has nothing to fold against, so the raw value is surfaced
+   * unresolved rather than throwing. Listing what a repository declares must never fail on it.
+   */
+  private String resolveAgainst(Repository repo, String rawUrl) {
+    if (!hasBackupRemote(repo) && isRelativeSubmoduleUrl(rawUrl)) {
+      return rawUrl;
+    }
+    return submoduleParser.resolveSubmoduleUrl(repo.url, rawUrl);
+  }
+
+  /**
+   * Whether a committed submodule url is relative, i.e. resolved against the superproject's url.
+   */
+  private static boolean isRelativeSubmoduleUrl(String rawUrl) {
+    String trimmed = rawUrl == null ? "" : rawUrl.trim();
+    return trimmed.startsWith("./") || trimmed.startsWith("../");
   }
 
   private Path originPath(String repoId) {
     return Path.of(dataDir, repoId, "origin");
+  }
+
+  /**
+   * A repository's human identity for process segment names and log lines. {@code Repository} has
+   * no display name, so this is its project-scoped alias — which {@code registerSelfName}
+   * guarantees at creation, and which is defined even for a wrapper that has no url to take a
+   * basename from.
+   */
+  private String repoLabel(Repository repo) {
+    return repositoryNameRepository.nameFor(repo).orElse(repo.id);
+  }
+
+  /**
+   * Whether a backup remote is configured — a greenfield wrapper has none until one is attached.
+   */
+  private static boolean hasBackupRemote(Repository repo) {
+    return repo.url != null && !repo.url.isBlank();
+  }
+
+  /**
+   * The default branch a wrapper repository is born on. A greenfield origin has no remote to
+   * inherit a default from, and {@link #detectDefaultBranch} would answer {@code "master"}.
+   */
+  static final String WRAPPER_DEFAULT_BRANCH = "main";
+
+  /**
+   * Creates a project's <b>wrapper repository</b> with a locally-initialized, remote-less bare
+   * origin, seeded with the {@link ProjectTemplate} skeleton — the greenfield half of wrapper
+   * creation, the sibling of {@link #cloneOne} for a project that has no upstream at all.
+   *
+   * <p>{@code git init --bare} yields no {@code HEAD} a {@link #detectDefaultBranch} could read, so
+   * HEAD is pointed at {@link #WRAPPER_DEFAULT_BRANCH} explicitly and the skeleton commit is what
+   * gives that branch a commit to resolve to. Without it a workspace container's clone would land
+   * on an unborn branch.
+   *
+   * <p>{@code url} stays null: a wrapper has no backup remote until one is attached ({@link
+   * #attachBackupRemote}). Runs within the caller's transaction.
+   *
+   * @param name the wrapper's project-scoped addressable name, {@code <slug>-<slug>}
+   */
+  @Transactional
+  public Repository initWrapperOrigin(Project project, String name) {
+    Repository repo = new Repository();
+    repo.id = UUID.randomUUID().toString();
+    repo.url = null;
+    repo.archetype = RepositoryArchetype.PROJECT;
+    repo.project = project;
+    repo.mainBranch = WRAPPER_DEFAULT_BRANCH;
+    repositoryRepository.persist(repo);
+
+    // The wrapper's alias must be exactly <slug>-<slug>, never the disambiguated fallback — see
+    // registerWrapperName.
+    registerWrapperName(repo, name);
+
+    Path originPath = originPath(repo.id);
+    try {
+      Files.createDirectories(originPath.getParent());
+      git.exec(null, "git", "init", "--bare", "--end-of-options", originPath.toString());
+      git.exec(
+          originPath.toFile(),
+          "git",
+          "symbolic-ref",
+          "HEAD",
+          "refs/heads/" + WRAPPER_DEFAULT_BRANCH);
+    } catch (Exception e) {
+      throw new InternalServerErrorException(
+          "Failed to initialize the wrapper repository origin: " + e.getMessage());
+    }
+
+    seedProjectTemplate(repo.id, originPath, WRAPPER_DEFAULT_BRANCH);
+    metadataService.writeRepositoryMetadata(repo);
+    workspaceService.createMainWorkspace(repo.id, repo.mainBranch);
+    return repo;
+  }
+
+  /**
+   * Registers the wrapper's addressable name, refusing to fall back to {@code
+   * RepositoryNameRepository}'s {@code <name>-<idPrefix>} disambiguation.
+   *
+   * <p>The whole point of the {@code <slug>-<slug>} rule is that a wrapper's <b>local alias equals
+   * its remote basename</b>, which is what makes a committed relative submodule url ({@code
+   * ../<name>.git}) resolve identically in a workspace container and at the forge. Silently
+   * accepting {@code qits-qits-a1b2c3d4} would destroy that invariant without any error, so a taken
+   * name is a hard failure instead.
+   */
+  private void registerWrapperName(Repository repo, String name) {
+    repositoryNameRepository
+        .findRepositoryByProjectAndName(repo.project.id, name)
+        .filter(owner -> !owner.id.equals(repo.id))
+        .ifPresent(
+            owner -> {
+              throw new BadRequestException(
+                  "The name '"
+                      + name
+                      + "' is already taken in this project by repository "
+                      + owner.id
+                      + "; a project's wrapper repository must be addressable as '"
+                      + name
+                      + "' exactly.");
+            });
+    repositoryNameRepository.registerSelfName(repo, name);
+  }
+
+  /**
+   * Attaches a backup remote to a repository that has none — the wrapper created greenfield, which
+   * later gains the forge repository it should be backed up to.
+   *
+   * <p>Sets {@code url}, adds the {@code origin} remote in the bare with a mirror refspec (so
+   * {@code ls-remote origin}, pull and push behave exactly as for a cloned origin), and <b>rewrites
+   * the metadata sidecar</b> — without that last step {@code RepositoryDiscoveryService} restores
+   * the null url from the sidecar on the next boot and the attachment silently undoes itself.
+   */
+  @Transactional
+  public Repository attachBackupRemote(String repoId, String url) {
+    Repository repo = get(repoId);
+    if (url == null || url.isBlank()) {
+      throw new BadRequestException("url is required");
+    }
+    String trimmedUrl = url.trim();
+    if (trimmedUrl.startsWith("-") || trimmedUrl.regionMatches(true, 0, "ext::", 0, 5)) {
+      throw new BadRequestException("Invalid repository URL: " + trimmedUrl);
+    }
+    if (submoduleParser.isQitsHostUrl(trimmedUrl)) {
+      throw new BadRequestException(
+          "Refusing to configure the qits git host ("
+              + trimmedUrl
+              + ") as a backup remote; it must point at the real backend, not qits' own cache.");
+    }
+    if (repo.url != null && !repo.url.isBlank()) {
+      throw new BadRequestException(
+          "Repository already has a backup remote configured (" + repo.url + ").");
+    }
+
+    repo.url = trimmedUrl;
+    Path originPath = originPath(repo.id);
+    try {
+      // Best-effort: a bare initialized by initWrapperOrigin has no remote yet, but re-running must
+      // not fail on "remote origin already exists".
+      git.execAllowNonZero(
+          originPath.toFile(), "git", "remote", "add", "--mirror=fetch", "origin", trimmedUrl);
+      git.exec(originPath.toFile(), "git", "remote", "set-url", "origin", trimmedUrl);
+    } catch (Exception e) {
+      throw new InternalServerErrorException(
+          "Failed to configure the backup remote: " + e.getMessage());
+    }
+    metadataService.writeRepositoryMetadata(repo);
+    return repo;
+  }
+
+  /**
+   * Registers {@code name} as an addressable alias of an <em>existing</em> repository being
+   * promoted to wrapper. Same no-disambiguation contract as {@link #registerWrapperName}.
+   */
+  public void registerWrapperAlias(Repository repo, String name) {
+    registerWrapperName(repo, name);
+  }
+
+  /**
+   * Rewrites the on-disk metadata sidecar from the row. Mandatory after any change to {@code url}
+   * or {@code archetype} outside the clone path: repository discovery restores both fields from the
+   * sidecar on every boot, so a change not written back is silently reverted.
+   */
+  public void rewriteMetadata(Repository repo) {
+    metadataService.writeRepositoryMetadata(repo);
+  }
+
+  /** Whether the origin has any branch at all — false for a freshly-initialized or empty mirror. */
+  private boolean hasAnyRef(Path originPath) {
+    try {
+      return !git.exec(
+              originPath.toFile(),
+              "git",
+              "for-each-ref",
+              "--count=1",
+              "--format=%(refname)",
+              "refs/heads/")
+          .trim()
+          .isEmpty();
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  /**
+   * Commits the {@link ProjectTemplate} skeleton as the <b>root commit</b> of {@code branch},
+   * directly in the bare origin.
+   *
+   * <p>Written with plumbing and no worktree — the same commit-without-checkout technique {@link
+   * #mergeDivergedRemote} uses, extended with a temporary index so a nested tree can be built:
+   * {@code hash-object} every blob, {@code update-index --add --cacheinfo <mode>,<sha>,<path>} them
+   * into a scratch index, then {@code write-tree} (which builds the subtrees, unlike {@code
+   * mktree}) + {@code commit-tree} + {@code update-ref}. The explicit per-entry mode is what lets
+   * {@code CLAUDE.md} land as a real git symlink ({@code 120000}) rather than a file.
+   *
+   * <p>The scratch lives at {@code <data-dir>/<repoId>/skeleton/}, a sibling of {@code origin}
+   * rather than {@code /tmp}: {@link #deleteDataDir} already reaps it if anything leaks, the test
+   * suite's per-class data-dir reset wipes it, and {@code RepositoryDiscoveryService} keys on the
+   * presence of {@code origin} so a stray sibling directory is invisible to it.
+   *
+   * <p>Only ever called for an origin with nothing to lose — a fresh {@code init} or a mirror that
+   * came back with no refs at all. It never overwrites or merges into existing history.
+   */
+  void seedProjectTemplate(String repoId, Path originPath, String branch) {
+    List<ProjectTemplate.TemplateEntry> entries = projectTemplate.entries();
+    Path scratch = Path.of(dataDir, repoId, "skeleton");
+    Path tree = scratch.resolve("tree");
+    Path index = scratch.resolve("index");
+    try {
+      // Materialize the blobs so `git hash-object` can read them as files (GitExecutor has no stdin
+      // seam, and a file list keeps this to one process for the whole template).
+      List<String> hashArgs = new ArrayList<>(List.of("git", "hash-object", "-w", "--no-filters"));
+      for (ProjectTemplate.TemplateEntry entry : entries) {
+        Path file = tree.resolve(entry.path());
+        Files.createDirectories(file.getParent());
+        Files.write(file, entry.content());
+        hashArgs.add(file.toAbsolutePath().toString());
+      }
+
+      List<String> shas =
+          git.exec(originPath.toFile(), hashArgs.toArray(String[]::new))
+              .lines()
+              .map(String::trim)
+              .filter(line -> !line.isEmpty())
+              .toList();
+      if (shas.size() != entries.size()) {
+        throw new InternalServerErrorException(
+            "Expected " + entries.size() + " template blobs, got " + shas.size());
+      }
+
+      // One update-index for every entry. The index is flat, so nested paths need no directory
+      // entries — write-tree derives the subtrees.
+      List<String> indexArgs = new ArrayList<>(List.of("git", "update-index", "--add"));
+      for (int i = 0; i < entries.size(); i++) {
+        ProjectTemplate.TemplateEntry entry = entries.get(i);
+        indexArgs.add("--cacheinfo");
+        indexArgs.add(entry.mode() + "," + shas.get(i) + "," + entry.path());
+      }
+      var indexEnv = java.util.Map.of("GIT_INDEX_FILE", index.toAbsolutePath().toString());
+      git.exec(originPath.toFile(), indexEnv, indexArgs.toArray(String[]::new));
+
+      String treeSha = git.exec(originPath.toFile(), indexEnv, "git", "write-tree").trim();
+
+      // A root commit: no -p. Attributed like every other commit qits manufactures.
+      List<String> commitArgs = new ArrayList<>(List.of("git"));
+      commitArgs.addAll(gitIdentity.inlineArgs());
+      commitArgs.addAll(
+          List.of("commit-tree", treeSha, "-m", "Initialize the project template skeleton"));
+      String commitSha =
+          git.exec(originPath.toFile(), gitIdentity.envMap(), commitArgs.toArray(String[]::new))
+              .trim();
+
+      git.exec(originPath.toFile(), "git", "update-ref", "refs/heads/" + branch, commitSha);
+      LOG.infof("Seeded the project template skeleton on '%s' of repository %s", branch, repoId);
+    } catch (Exception e) {
+      throw new InternalServerErrorException(
+          "Failed to seed the project template skeleton: " + e.getMessage());
+    } finally {
+      deleteRecursively(scratch);
+    }
   }
 
   /** The mirror's HEAD points at the remote's default branch (e.g. "master"/"main"). */
@@ -403,8 +763,7 @@ public class RepositoryService {
     // repo's url basename — Repository has no display name; this is the identity the WARNING lines
     // (and reposByName in tests) already use.
     String rootSegment =
-        QuarkusTransaction.requiringNew()
-            .call(() -> "pull:" + Path.of(get(repoId).url).getFileName().toString());
+        QuarkusTransaction.requiringNew().call(() -> "pull:" + repoLabel(get(repoId)));
     return switch (processes.beginForRepository(repoId, "pull")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
@@ -527,6 +886,15 @@ public class RepositoryService {
                       mainWorkspace.orElse(originPath),
                       mainWorkspace.isPresent());
                 });
+
+    // A repository with no backup remote (a greenfield wrapper) has nothing to pull FROM. That is a
+    // normal state, not a failure: settle the segment ok and keep walking, since its imported
+    // submodule children may well have remotes of their own.
+    if (ctx.url() == null || ctx.url().isBlank()) {
+      streamLine(process, segmentName, "No backup remote configured — nothing to pull");
+      settleOk(process, segmentName);
+      return withImportedChildPulls(repoId, "", visited, process, usedSegments);
+    }
 
     try {
       // `--end-of-options`: url and branch are positional, never parsed as flags, so neither a
@@ -792,6 +1160,12 @@ public class RepositoryService {
    */
   public String pushRepository(String repoId) {
     PushSpec ctx = pushSpec(repoId);
+    // Nothing to push TO: a greenfield wrapper has no backup remote until one is attached. Report
+    // it
+    // rather than failing — the remote is a backup, so its absence is a configuration state.
+    if (ctx.url() == null || ctx.url().isBlank()) {
+      return "No backup remote configured — nothing to push";
+    }
     try {
       return push(ctx);
     } catch (Exception e) {
@@ -897,9 +1271,7 @@ public class RepositoryService {
     // Validate in-request (unknown id → plain 404, not a process) and derive the url basename
     // shared
     // by the root pull segment and the final push segment.
-    String basename =
-        QuarkusTransaction.requiringNew()
-            .call(() -> Path.of(get(repoId).url).getFileName().toString());
+    String basename = QuarkusTransaction.requiringNew().call(() -> repoLabel(get(repoId)));
     return switch (processes.beginForRepository(repoId, "sync")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
@@ -959,8 +1331,7 @@ public class RepositoryService {
     // Validate in-request (unknown id → plain 404, not a process) and name the sole segment by the
     // repo's url basename, matching the sync's push segment shape.
     String rootSegment =
-        QuarkusTransaction.requiringNew()
-            .call(() -> "push:" + Path.of(get(repoId).url).getFileName().toString());
+        QuarkusTransaction.requiringNew().call(() -> "push:" + repoLabel(get(repoId)));
     return switch (processes.beginForRepository(repoId, "push")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
@@ -1014,6 +1385,13 @@ public class RepositoryService {
     Repository repo = get(repoId);
     Path originPath = requireOrigin(repoId);
     String branch = resolveMainBranch(repo, originPath);
+
+    // No backup remote configured (a greenfield wrapper): the query itself succeeded, there is just
+    // no remote branch to compare against. The UI keys its "configure backup remote" affordance off
+    // the repository's null url, not off this DTO.
+    if (!hasBackupRemote(repo)) {
+      return new SyncStatusDto(branch, true, false, null, null);
+    }
 
     String localSha;
     try {
@@ -1190,8 +1568,25 @@ public class RepositoryService {
     }
   }
 
+  /**
+   * Deletes a repository, <b>refusing the project's wrapper</b>: the wrapper is the project root
+   * and goes with the project, not on its own. {@code ProjectService.delete} tears it down through
+   * {@link #deleteInternal}.
+   */
   @Transactional
   public void delete(String repoId) {
+    Repository repo = get(repoId);
+    if (repo.archetype == RepositoryArchetype.PROJECT) {
+      throw new BadRequestException(
+          "This is the project's wrapper repository — the project root — and cannot be deleted on"
+              + " its own; delete the project instead.");
+    }
+    deleteInternal(repoId);
+  }
+
+  /** {@link #delete} without the wrapper guard — the path a project deletion takes. */
+  @Transactional
+  public void deleteInternal(String repoId) {
     Repository repo = get(repoId);
     // Delete the whole footprint, not just the DB row: otherwise every delete (and every seed
     // reset, which deletes then recreates) leaks the repo's workspace containers, their persistent
@@ -1223,16 +1618,26 @@ public class RepositoryService {
       }
     }
     deleteDataDir(repoId);
+    // The rows referencing this repository (workspaces and their events, name aliases, commands)
+    // go by the schema's `on delete cascade`, not one by one here. That is correct as long as each
+    // service call owns its transaction, which every caller does. A caller that instead CREATED
+    // this repository earlier in the SAME transaction would still hold those children managed, and
+    // Hibernate would flush a child pointing at a removed parent — so don't do that; give the
+    // create and the delete their own transactions, as production always does.
     repositoryRepository.delete(repo);
   }
 
   /** Recursively remove {@code <data-dir>/<repoId>} (bare origin + any transient merge scratch). */
   private void deleteDataDir(String repoId) {
-    Path repoDir = Path.of(dataDir, repoId);
-    if (!Files.exists(repoDir)) {
+    deleteRecursively(Path.of(dataDir, repoId));
+  }
+
+  /** Best-effort recursive delete — children before parents. */
+  private void deleteRecursively(Path dir) {
+    if (!Files.exists(dir)) {
       return;
     }
-    try (var paths = Files.walk(repoDir)) {
+    try (var paths = Files.walk(dir)) {
       paths
           .sorted(Comparator.reverseOrder())
           .forEach(
@@ -1244,7 +1649,7 @@ public class RepositoryService {
                 }
               });
     } catch (IOException e) {
-      LOG.warnf("Failed to remove data dir for repository %s: %s", repoId, e.getMessage());
+      LOG.warnf("Failed to remove directory %s: %s", dir, e.getMessage());
     }
   }
 }

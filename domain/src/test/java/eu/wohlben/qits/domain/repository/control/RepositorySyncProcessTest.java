@@ -122,11 +122,11 @@ public class RepositorySyncProcessTest {
 
     // The pull segment opens first, then the push segment — one push after the whole walk.
     assertEquals(
-        List.of("pull:testing-repo.git", "push:testing-repo.git"),
+        List.of("pull:testing-repo", "push:testing-repo"),
         segmentOpens(replay),
         "the pull segment precedes the push segment");
-    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
-    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
+    assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
   }
 
@@ -157,8 +157,8 @@ public class RepositorySyncProcessTest {
 
     // The pull segment stays green; only the push segment fails; a red segment makes overall
     // failed.
-    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
-    assertEquals("failed", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
+    assertEquals("failed", settledStatus(replay, "push:testing-repo"));
     assertTrue(hasLineContaining(replay, "push failed"), "the push error lands in the stream");
     assertEquals("failed", doneFrame(replay).status());
   }
@@ -208,8 +208,8 @@ public class RepositorySyncProcessTest {
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginSyncRepository(repo.id)));
 
-    assertEquals("ok", settledStatus(replay, "pull:testing-repo.git"));
-    assertEquals("ok", settledStatus(replay, "push:testing-repo.git"));
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
+    assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
     // The merge commit reached the remote: both tips now agree.

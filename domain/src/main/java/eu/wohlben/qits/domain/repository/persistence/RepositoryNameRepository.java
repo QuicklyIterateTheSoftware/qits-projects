@@ -94,6 +94,25 @@ public class RepositoryNameRepository implements PanacheRepositoryBase<Repositor
    */
   public String registerSelfName(Repository repository) {
     String base = basename(repository.url);
+    // A url-less repository (a greenfield wrapper) basenames to "", which is not addressable. Such
+    // a
+    // repository should come through registerSelfName(repository, name); this only keeps a blank
+    // alias from ever reaching the unique (project, name) index.
+    return registerSelfName(repository, base.isBlank() ? repository.id : base);
+  }
+
+  /**
+   * {@link #registerSelfName(Repository)} with an explicit preferred name — the wrapper path, where
+   * there is no url to derive a basename from and the name is derived from the project slug
+   * instead.
+   *
+   * <p>Note the disambiguation fallback below is <em>wrong</em> for a wrapper: {@code
+   * qits-qits-a1b2c3d4} would quietly break the local-alias-equals-remote-basename invariant that
+   * relative submodule urls depend on. Wrapper callers therefore assert the name is free first and
+   * fail loudly rather than relying on this.
+   */
+  public String registerSelfName(Repository repository, String preferredName) {
+    String base = preferredName;
     Optional<Repository> owner = findRepositoryByProjectAndName(repository.project.id, base);
     if (owner.isEmpty()) {
       ensureAlias(repository.project, base, repository);

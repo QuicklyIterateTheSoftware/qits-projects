@@ -3,7 +3,7 @@ package eu.wohlben.qits.epics.api;
 import eu.wohlben.qits.epics.control.TaskService;
 import eu.wohlben.qits.epics.dto.TaskDto;
 import eu.wohlben.qits.epics.mapper.TaskMapper;
-import eu.wohlben.qits.validation.NotBlankIfPresent;
+import eu.wohlben.qits.projects.validation.NotBlankIfPresent;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;

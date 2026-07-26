@@ -1,6 +1,6 @@
 package eu.wohlben.qits.epics.api;
 
-import eu.wohlben.qits.domain.project.control.ProjectService;
+import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.epics.control.EpicService;
 import eu.wohlben.qits.epics.dto.EpicDto;
 import eu.wohlben.qits.epics.mapper.EpicMapper;

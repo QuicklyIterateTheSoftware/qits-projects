@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.domain.command.entity.CommandKind;
 import eu.wohlben.qits.domain.command.persistence.CommandRepository;
 import eu.wohlben.qits.domain.project.control.ProjectService;
 import io.quarkus.narayana.jta.QuarkusTransaction;
@@ -20,8 +21,9 @@ import org.junit.jupiter.api.Test;
  * Verifies the resolve-merge-conflict composed flow against a real diverged-with-conflict
  * repository cloned from the fixture: a workspace and its parent both change the same new file. The
  * flow forks a resolution workspace, persists the composed prompt as that workspace's prompt draft,
- * and launches a fetch-model autonomous Claude run that pulls the prompt back over MCP via {@code
- * taskPrompt} — so the launched command carries only the bootstrap turn, not the prompt itself.
+ * and launches a fetch-model autonomous run on the chat pipeline that pulls the prompt back over
+ * MCP via {@code taskPrompt} — the command line carries neither the prompt nor the bootstrap turn
+ * (which rides stdin as the first chat turn).
  */
 @QuarkusTest
 public class ResolveConflictServiceTest {
@@ -43,7 +45,7 @@ public class ResolveConflictServiceTest {
   @ConfigProperty(name = "qits.repositories.data-dir")
   String dataDir;
 
-  /** The exact shell line a launched command ran — now the bootstrap turn, not the prompt. */
+  /** The exact shell line a launched command ran — the chat launch, carrying no prompt text. */
   private String executeScriptOf(String commandId) {
     return QuarkusTransaction.requiringNew()
         .call(() -> commandRepository.findById(commandId).executeScript);
@@ -126,14 +128,20 @@ public class ResolveConflictServiceTest {
             .parent();
     assertEquals("master", resolutionParent);
 
-    // The launched command is the fetch-model autonomous run: it carries the one-sentence bootstrap
-    // turn (not the prompt) and attaches the repository MCP server scoped to feat-resolve, so
-    // taskPrompt is reachable and workspace-narrowed.
+    // The launched command is the fetch-model autonomous run riding the chat pipeline (kind CHAT,
+    // so its command page renders the live conversation): a stream-json chat with the repository
+    // MCP server scoped to feat-resolve attached, so taskPrompt is reachable and
+    // workspace-narrowed. The bootstrap turn rides stdin, not the argv.
+    var command =
+        QuarkusTransaction.requiringNew()
+            .call(() -> commandRepository.findById(result.commandId()));
+    assertEquals(CommandKind.CHAT, command.kind);
     String script = executeScriptOf(result.commandId());
-    assertTrue(script.startsWith("claude -p '"), script);
+    assertTrue(script.contains("--input-format stream-json"), script);
     assertTrue(script.endsWith(" --dangerously-skip-permissions"), script);
     assertTrue(script.contains("/mcp/repository?"), script);
     assertTrue(script.contains("&workspaceId=feat-resolve"), script);
+    assertTrue(script.contains("agentReadOnly=true"), script);
     assertFalse(
         script.contains("diverged"), "the prompt must NOT be in the command line: " + script);
 
@@ -143,6 +151,13 @@ public class ResolveConflictServiceTest {
     assertTrue(prompt.contains("diverged"), prompt);
     assertTrue(prompt.contains("master"), "prompt should name the parent: " + prompt);
     assertTrue(prompt.contains("Merge `master`"), "prompt should instruct the merge: " + prompt);
+    assertTrue(
+        prompt
+            .trim()
+            .endsWith(
+                "If you can resolve the conflict fully on your own, do commit and push the"
+                    + " resolution."),
+        "prompt should close with the commit-and-push instruction: " + prompt);
   }
 
   @Test

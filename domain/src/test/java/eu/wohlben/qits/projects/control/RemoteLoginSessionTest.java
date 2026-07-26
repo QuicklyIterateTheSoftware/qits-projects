@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
-import eu.wohlben.qits.domain.command.control.CommandOutputSink;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;

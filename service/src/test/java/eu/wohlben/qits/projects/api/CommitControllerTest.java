@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.api;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.ws.rs.core.Response;
@@ -14,7 +15,7 @@ public class CommitControllerTest {
   private final String fixtureUrl;
 
   public CommitControllerTest() throws Exception {
-    fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
+    fixtureUrl = GitFixtures.path("testing-repo.git");
   }
 
   private String createProjectAndRepository() {
@@ -86,35 +87,10 @@ public class CommitControllerTest {
         .body("commits.size()", equalTo(3));
   }
 
-  @Test
-  public void testCommitsForWorkspaceBranchUseWorkspaceParent() {
-    String repoId = createProjectAndRepository();
-
-    // Fork a workspace off "feature": its new branch's parent is "feature".
-    given()
-        .contentType(ContentType.JSON)
-        .body(
-            new WorkspaceController.CreateWorkspaceRequest(
-                "child-wt", "feature", "child-branch", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/workspaces")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode());
-
-    // No commits added on the workspace yet, so feature..child-branch is empty, but the parent
-    // is resolved from the workspace rather than the main branch.
-    given()
-        .contentType(ContentType.JSON)
-        .queryParam("branch", "child-branch")
-        .when()
-        .get("/api/repositories/" + repoId + "/commits")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("branch", equalTo("child-branch"))
-        .body("parent", equalTo("feature"))
-        .body("commits.size()", equalTo(0));
-  }
-
+  // SEAM (migration-plan.md §6): testCommitsForWorkspaceBranchUseWorkspaceParent is not carried over — it POSTed a workspace
+  // through the (now qits-workspaces') /repositories/{id}/workspaces route to give the branch a
+  // parent, then asserted the commit log was scoped to it. The parent lookup is the optional
+  // WorkspaceLookup port now, and no route here can create a workspace. UNOWNED.
   @Test
   public void testCommitsRejectFlagLikeBranchName() {
     String repoId = createProjectAndRepository();

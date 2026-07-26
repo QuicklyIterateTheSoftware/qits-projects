@@ -16,8 +16,9 @@ import eu.wohlben.qits.projects.control.RepositoryService;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
-import eu.wohlben.qits.projects.persistence.WorkspaceRepository;
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.narayana.jta.QuarkusTransaction;
+import eu.wohlben.qits.projects.testsupport.RecordingWorkspaceLifecycle;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.nio.file.Path;
@@ -52,7 +53,7 @@ public class ProjectWrapperTest {
   @Inject ProjectService projectService;
   @Inject RepositoryService repositoryService;
   @Inject RepositoryNameRepository repositoryNameRepository;
-  @Inject WorkspaceRepository workspaceRepository;
+  @Inject RecordingWorkspaceLifecycle workspaceLifecycle;
   @Inject GitExecutor git;
   @Inject RepositoryDiscoveryService discoveryService;
 
@@ -68,7 +69,7 @@ public class ProjectWrapperTest {
   }
 
   private String fixture(String name) throws Exception {
-    return getClass().getResource("/fixtures/" + name).toURI().getPath();
+    return GitFixtures.path(name);
   }
 
   /** {@link #fixture} without the checked exception, for use inside lambdas. */
@@ -108,9 +109,10 @@ public class ProjectWrapperTest {
     var wrapper = wrapperOf(project);
 
     assertNotNull(gitIn(wrapper.id, "git", "rev-parse", "--verify", "refs/heads/main"));
+    // SEAM (migration-plan.md §6): the `workspace` table is qits-workspaces'. Re-expressed against
+    // the seam — this context asks for the wrapper's main workspace on creation.
     assertTrue(
-        workspaceRepository.findByRepositoryId(wrapper.id).stream()
-            .anyMatch(w -> "main".equals(w.branch)),
+        workspaceLifecycle.createdMainWorkspaceFor(wrapper.id),
         "the wrapper starts with a workspace on its main branch");
   }
 

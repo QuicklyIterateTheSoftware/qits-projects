@@ -36,47 +36,8 @@ public class MetadataServiceTest {
     assertTrue(read.isEmpty());
   }
 
-  @Test
-  public void testWriteAndReadWorkspaceMetadata() {
-    WorkspaceMetadata wt = new WorkspaceMetadata();
-    wt.workspaceId = "wt-01";
-    wt.parent = "master";
-
-    metadataService.writeWorkspaceMetadata("test-repo", wt);
-
-    Optional<WorkspaceMetadata> read = metadataService.readWorkspaceMetadata("test-repo", "wt-01");
-    assertTrue(read.isPresent());
-    assertEquals("wt-01", read.get().workspaceId);
-    assertEquals("master", read.get().parent);
-  }
-
-  @Test
-  public void testReadAllWorkspaceMetadata() {
-    WorkspaceMetadata wt1 = new WorkspaceMetadata();
-    wt1.workspaceId = "wt-01";
-    wt1.parent = null;
-
-    WorkspaceMetadata wt2 = new WorkspaceMetadata();
-    wt2.workspaceId = "wt-02";
-    wt2.parent = "wt-01";
-
-    metadataService.writeWorkspaceMetadata("test-repo", wt1);
-    metadataService.writeWorkspaceMetadata("test-repo", wt2);
-
-    var all = metadataService.readAllWorkspaceMetadata("test-repo");
-    assertEquals(2, all.size());
-  }
-
-  @Test
-  public void testDeleteWorkspaceMetadata() {
-    WorkspaceMetadata wt = new WorkspaceMetadata();
-    wt.workspaceId = "wt-01";
-    wt.parent = null;
-
-    metadataService.writeWorkspaceMetadata("test-repo", wt);
-    assertTrue(metadataService.readWorkspaceMetadata("test-repo", "wt-01").isPresent());
-
-    metadataService.deleteWorkspaceMetadata("test-repo", "wt-01");
-    assertTrue(metadataService.readWorkspaceMetadata("test-repo", "wt-01").isEmpty());
-  }
+  // SEAM (migration-plan.md §6, repository <-> workspace). Three tests over the workspace
+  // metadata sidecars (write/read, readAll, delete) went with the methods they covered — see the
+  // seam note in MetadataService. WorkspaceMetadata is qits-workspaces'. The repository sidecar
+  // tests above are unchanged.
 }

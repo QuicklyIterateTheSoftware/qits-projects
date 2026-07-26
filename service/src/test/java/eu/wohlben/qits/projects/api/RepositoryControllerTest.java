@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.api;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.ws.rs.core.Response;
@@ -16,7 +17,7 @@ public class RepositoryControllerTest {
   private final String fixtureUrl;
 
   public RepositoryControllerTest() throws Exception {
-    fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
+    fixtureUrl = GitFixtures.path("testing-repo.git");
   }
 
   private String createProjectAndRepository() {
@@ -107,30 +108,11 @@ public class RepositoryControllerTest {
         .body("branches.name", not(hasItem("feature")));
   }
 
-  @Test
-  public void testDeleteBranchWithChildrenRejected() {
-    String repoId = createProjectAndRepository();
-
-    // Fork a workspace from "feature": now a workspace's parent points at "feature".
-    given()
-        .contentType(ContentType.JSON)
-        .body(
-            new WorkspaceController.CreateWorkspaceRequest(
-                "child-wt", "feature", "child-branch", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/workspaces")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode());
-
-    // Deleting "feature" would orphan that workspace, so it is rejected.
-    given()
-        .contentType(ContentType.JSON)
-        .queryParam("branch", "feature")
-        .when()
-        .delete("/api/repositories/" + repoId + "/branches")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
+  // SEAM: testDeleteBranchWithChildrenRejected is not carried over. It made a branch "have
+  // children" by POSTing a workspace onto it, then asserted DELETE /branches rejects it. The child
+  // check now runs through the optional WorkspaceLookup port (RepositoryService.deleteBranch), and
+  // there is no route in this repo that can create the child. UNOWNED — it belongs with whichever
+  // repo can create a workspace.
 
   @Test
   public void testDeleteBranchRejectsFlagLikeName() {
@@ -355,273 +337,17 @@ public class RepositoryControllerTest {
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
 
-  @Test
-  public void testIntegrateBranchDefaultsToMainBranch() {
-    String repoId = createProjectAndRepository();
-
-    // No target given → integrate "feature" into the repo's configured main branch (master).
-    // feature only adds feature.txt relative to the merge base, so this is a clean merge.
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", null, null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("commitHash", not(emptyOrNullString()))
-        .body("hasConflicts", equalTo(false));
-  }
-
-  @Test
-  public void testIntegrateBranchIntoExplicitTarget() {
-    String repoId = createProjectAndRepository();
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("commitHash", not(emptyOrNullString()));
-  }
-
-  @Test
-  public void testIntegrateRejectsBranchIntoItself() {
-    String repoId = createProjectAndRepository();
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("master", "master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
-
-  @Test
-  public void testIntegrateRejectsFlagLikeSource() {
-    String repoId = createProjectAndRepository();
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("-D", "master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
-
-  @Test
-  public void testIntegrateRequiresSource() {
-    String repoId = createProjectAndRepository();
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("", "master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
-
-  @Test
-  public void testIntegrateUnknownRepoReturns404() {
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "master", null))
-        .when()
-        .post("/api/repositories/does-not-exist/branches/merge")
-        .then()
-        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
-  }
-
-  private void createWorkspace(String repoId, String id, String parent, String branch) {
-    given()
-        .contentType(ContentType.JSON)
-        .body(new WorkspaceController.CreateWorkspaceRequest(id, parent, branch, null))
-        .when()
-        .post("/api/repositories/" + repoId + "/workspaces")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode());
-  }
-
-  @Test
-  public void testIntegrateAutoCleansUpEligibleWorkspace() {
-    String repoId = createProjectAndRepository();
-    createWorkspace(repoId, "auto-wt", "master", "auto-b");
-
-    // Integrating a clean, dependent-free workspace into its parent removes it afterwards.
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("auto-b", "master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("hasConflicts", equalTo(false))
-        .body("cleanedUp", equalTo(true));
-
-    given()
-        .contentType(ContentType.JSON)
-        .when()
-        .get("/api/repositories/" + repoId + "/workspaces")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.workspace.workspaceId", not(hasItem("auto-wt")));
-  }
-
-  @Test
-  public void testIntegrateKeepsWorkspaceWithChildren() {
-    String repoId = createProjectAndRepository();
-    createWorkspace(repoId, "pwt", "master", "pb");
-    createWorkspace(repoId, "cwt", "pb", "cb");
-
-    // pb still has a dependent workspace (cwt), so it must not be cleaned up after integration.
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("pb", "master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("cleanedUp", equalTo(false));
-
-    given()
-        .contentType(ContentType.JSON)
-        .when()
-        .get("/api/repositories/" + repoId + "/workspaces")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.workspace.workspaceId", hasItem("pwt"));
-  }
-
-  @Test
-  public void testIntegratePlainBranchAutoCleansUp() {
-    String repoId = createProjectAndRepository();
-
-    // "feature" is a plain branch (no workspace). Integrating it into master leaves it fully merged
-    // with no dependents, so it is deleted afterwards — the same behaviour as a workspace branch.
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("hasConflicts", equalTo(false))
-        .body("cleanedUp", equalTo(true));
-
-    given()
-        .contentType(ContentType.JSON)
-        .when()
-        .get("/api/repositories/" + repoId + "/branches")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("branches.name", not(hasItem("feature")));
-  }
-
-  @Test
-  public void testBranchesReportCanCleanup() {
-    String repoId = createProjectAndRepository();
-    createWorkspace(repoId, "cc-wt", "master", "cc-b");
-
-    given()
-        .contentType(ContentType.JSON)
-        .when()
-        .get("/api/repositories/" + repoId + "/branches")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        // a fresh fork is fully merged, clean and dependent-free → cleanable
-        .body("branches.find { it.name == 'cc-b' }.canCleanup", equalTo(true))
-        // the main branch is never cleanable, and feature has unmerged commits
-        .body("branches.find { it.name == 'master' }.canCleanup", equalTo(false))
-        .body("branches.find { it.name == 'feature' }.canCleanup", equalTo(false));
-  }
-
-  @Test
-  public void testCleanupBranchRemovesEligibleWorkspace() {
-    String repoId = createProjectAndRepository();
-    createWorkspace(repoId, "elig-wt", "master", "elig-b");
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("elig-b", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/cleanup")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("success", equalTo(true));
-
-    given()
-        .contentType(ContentType.JSON)
-        .when()
-        .get("/api/repositories/" + repoId + "/workspaces")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("entries.workspace.workspaceId", not(hasItem("elig-wt")));
-  }
-
-  @Test
-  public void testCleanupBranchRejectsUnmergedCommits() {
-    String repoId = createProjectAndRepository();
-    createWorkspace(repoId, "ahead-wt", "master", "ahead-b");
-    // Advance ahead-b past master by integrating the diverged feature branch into it.
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.MergeBranchRequest("feature", "ahead-b", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/merge")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode());
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("ahead-b", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/cleanup")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
-
-  @Test
-  public void testCleanupBranchRejectsBranchWithChildren() {
-    String repoId = createProjectAndRepository();
-    createWorkspace(repoId, "par-wt", "master", "par-b");
-    createWorkspace(repoId, "chi-wt", "par-b", "chi-b");
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("par-b", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/cleanup")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
-
-  @Test
-  public void testCleanupBranchRejectsMainBranch() {
-    String repoId = createProjectAndRepository();
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("master", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/cleanup")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
-
-  @Test
-  public void testCleanupBranchRequiresBranch() {
-    String repoId = createProjectAndRepository();
-
-    given()
-        .contentType(ContentType.JSON)
-        .body(new RepositoryController.CleanupBranchRequest("", null))
-        .when()
-        .post("/api/repositories/" + repoId + "/branches/cleanup")
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-  }
+  // SEAM (migration-plan.md §6, repository <-> workspace). Fourteen tests stood here, all over
+  // POST /repositories/{id}/branches/merge and .../branches/cleanup — the two routes that forwarded
+  // to WorkspaceService and are cut from RepositoryController (see the seam note there):
+  // testIntegrateBranchDefaultsToMainBranch, testIntegrateBranchIntoExplicitTarget,
+  // testIntegrateRejectsBranchIntoItself, testIntegrateRejectsFlagLikeSource,
+  // testIntegrateRequiresSource, testIntegrateUnknownRepoReturns404,
+  // testIntegrateAutoCleansUpEligibleWorkspace, testIntegrateKeepsWorkspaceWithChildren,
+  // testIntegratePlainBranchAutoCleansUp, testBranchesReportCanCleanup,
+  // testCleanupBranchRemovesEligibleWorkspace, testCleanupBranchRejectsUnmergedCommits,
+  // testCleanupBranchRejectsBranchWithChildren, testCleanupBranchRejectsMainBranch and
+  // testCleanupBranchRequiresBranch.
+  //
+  // NOTE FOR THE ORCHESTRATOR: they are UNOWNED as of this extraction, with the routes they cover.
 }

@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.ws.rs.core.Response;
@@ -23,7 +24,7 @@ public class RepositorySubmoduleControllerTest {
   }
 
   private String importRepository(String fixture, Boolean importSubmodules) throws Exception {
-    String url = getClass().getResource("/fixtures/" + fixture).toURI().getPath();
+    String url = GitFixtures.path(fixture);
     String projectId =
         given()
             .contentType(ContentType.JSON)
@@ -108,7 +109,7 @@ public class RepositorySubmoduleControllerTest {
   public void prepareServesTheBackendAndImportDedupsOntoIt() throws Exception {
     // A superproject with an unimported `lib` -> ../submodule-shared.git submodule.
     String superId = importRepository("submodule-simple-super.git", false);
-    String backend = getClass().getResource("/fixtures/submodule-shared.git").toURI().getPath();
+    String backend = GitFixtures.path("submodule-shared.git");
 
     // Pre-serve the backend as a sibling; the response tells the user what to `git submodule add`.
     given()

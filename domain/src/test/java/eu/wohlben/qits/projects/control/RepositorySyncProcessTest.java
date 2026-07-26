@@ -6,10 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.projects.error.NotFoundException;
-import eu.wohlben.qits.domain.process.control.TechnicalProcess;
-import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
-import eu.wohlben.qits.domain.process.dto.TechnicalProcessFrame;
-import eu.wohlben.qits.projects.control.ProjectService;
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.nio.file.Files;
@@ -62,7 +59,7 @@ public class RepositorySyncProcessTest {
   }
 
   private String fixture(String name) throws Exception {
-    return getClass().getResource("/fixtures/" + name).toURI().getPath();
+    return GitFixtures.path(name);
   }
 
   private Path originOf(String repoId) {

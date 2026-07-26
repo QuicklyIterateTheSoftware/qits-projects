@@ -6,9 +6,10 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import eu.wohlben.qits.domain.process.control.RepoProcessLease;
-import eu.wohlben.qits.domain.process.control.TechnicalProcess;
-import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
+import eu.wohlben.qits.projects.control.RepoProcessLease;
+import eu.wohlben.qits.projects.control.TechnicalProcess;
+import eu.wohlben.qits.projects.control.TechnicalProcessRegistry;
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
@@ -30,7 +31,7 @@ public class RepositoryActiveProcessTest {
   private final String fixtureUrl;
 
   public RepositoryActiveProcessTest() throws Exception {
-    fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
+    fixtureUrl = GitFixtures.path("testing-repo.git");
   }
 
   private String createProjectAndRepository() {

@@ -8,14 +8,20 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.notNullValue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.security.TestSecurity;
 import io.restassured.http.ContentType;
 import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.Test;
 
 /**
- * REST round-trips for the epics boundary hosted by {@code service}. Runs under forwardauth (the
- * suite default), whose fallback identity is {@code dev} — asserted via the audit "changed-by".
+ * REST round-trips for the epics boundary hosted by {@code service}.
+ *
+ * <p>The monorepo ran this under the forwardauth auth variant, whose fallback identity is {@code
+ * dev}, and asserted it through the audit "changed-by". Auth is unassigned (migration-plan.md §4)
+ * and no {@code auth/*} module is carried here, so the caller is named with {@code @TestSecurity}
+ * instead — same assertion, no dependency on a variant this repo does not ship.
  */
 @QuarkusTest
 class EpicApiTest {
@@ -23,7 +29,7 @@ class EpicApiTest {
   private final String fixtureUrl;
 
   EpicApiTest() throws Exception {
-    fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
+    fixtureUrl = GitFixtures.path("testing-repo.git");
   }
 
   private String createProject() {
@@ -51,6 +57,7 @@ class EpicApiTest {
   }
 
   @Test
+  @TestSecurity(user = "dev")
   void fullEpicFeatureTaskLifecycle() {
     String projectId = createProject();
     String repoId = createRepository(projectId);

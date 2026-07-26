@@ -10,8 +10,6 @@ import eu.wohlben.qits.projects.control.QitsConfig.BootstrapDecl;
 import eu.wohlben.qits.projects.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.projects.control.QitsConfigParser.QitsConfigException;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
-import eu.wohlben.qits.domain.service.entity.HealthCheckKind;
-import eu.wohlben.qits.domain.service.entity.RestartPolicy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;

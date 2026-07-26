@@ -12,6 +12,7 @@ import eu.wohlben.qits.projects.entity.RepositorySubmodule;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import eu.wohlben.qits.projects.persistence.RepositorySubmoduleRepository;
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -71,7 +72,7 @@ public class SelfSeedServiceTest {
     }
 
     private static String fixturePath(String name) throws Exception {
-      return SelfSeedServiceTest.class.getResource("/fixtures/" + name).toURI().getPath();
+      return GitFixtures.path(name);
     }
   }
 
@@ -88,7 +89,7 @@ public class SelfSeedServiceTest {
   }
 
   private String fixture(String name) throws Exception {
-    return getClass().getResource("/fixtures/" + name).toURI().getPath();
+    return GitFixtures.path(name);
   }
 
   /** The qits project, or an assertion failure — there must be exactly one after a reconcile. */

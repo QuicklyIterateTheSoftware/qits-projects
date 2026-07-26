@@ -11,6 +11,7 @@ import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
+import io.quarkus.hibernate.orm.PersistenceUnit;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 
@@ -23,7 +24,10 @@ public class ProjectServiceTest {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject EntityManager entityManager;
+  // This context owns a NAMED persistence unit (`projects`), not the default one — see
+  // src/main/resources/META-INF/microprofile-config.properties. The qualifier is what the monorepo
+  // did not need, because there its entities lived in the app's default PU.
+  @Inject @PersistenceUnit("projects") EntityManager entityManager;
 
   @Test
   public void testCreateAndGet() {

@@ -14,7 +14,8 @@ import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.entity.RepositorySubmodule;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import eu.wohlben.qits.projects.persistence.RepositorySubmoduleRepository;
-import eu.wohlben.qits.projects.persistence.WorkspaceRepository;
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
+import eu.wohlben.qits.projects.testsupport.RecordingWorkspaceLifecycle;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.nio.file.Files;
@@ -45,14 +46,14 @@ public class RepositoryServiceSubmoduleTest {
   @Inject
   eu.wohlben.qits.projects.persistence.RepositoryNameRepository repositoryNameRepository;
 
-  @Inject WorkspaceRepository workspaceRepository;
+  @Inject RecordingWorkspaceLifecycle workspaceLifecycle;
   @Inject GitExecutor git;
 
   @org.eclipse.microprofile.config.inject.ConfigProperty(name = "qits.repositories.data-dir")
   String dataDir;
 
   private String fixture(String name) throws Exception {
-    return getClass().getResource("/fixtures/" + name).toURI().getPath();
+    return GitFixtures.path(name);
   }
 
   /**
@@ -157,15 +158,18 @@ public class RepositoryServiceSubmoduleTest {
     var superRepo =
         repositoryService.cloneRepository(fixture("submodule-super.git"), null, project, true);
 
-    assertFalse(
-        workspaceRepository.findByRepositoryId(superRepo.id).isEmpty(),
+    // SEAM (migration-plan.md §6): asserted against the WorkspaceLifecycle seam rather than the
+    // `workspace` table, which is qits-workspaces'. Same rule: cloneRepository's
+    // createMainWorkspace flag is true for a top-level clone and false for an imported child.
+    assertTrue(
+        workspaceLifecycle.createdMainWorkspaceFor(superRepo.id),
         "the top-level superproject keeps its default main workspace");
     for (Repository child : reposByName(project.id).values()) {
       if (child.id.equals(superRepo.id)) {
         continue;
       }
-      assertTrue(
-          workspaceRepository.findByRepositoryId(child.id).isEmpty(),
+      assertFalse(
+          workspaceLifecycle.createdMainWorkspaceFor(child.id),
           "imported child " + child.url + " must not get an independent main workspace");
     }
   }

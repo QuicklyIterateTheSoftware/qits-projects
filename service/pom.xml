@@ -37,6 +37,14 @@
             <artifactId>qits-projects-epics</artifactId>
         </dependency>
         <dependency>
+            <!-- domain's test-support only (see its jar plugin config): the port implementations
+                 this module's @QuarkusTests need on the classpath, not a second copy of them. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-domain</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc</artifactId>
         </dependency>
@@ -67,12 +75,28 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- SecurityIdentity only: the epics controllers stamp the audit log with the caller.
+                 NOT an auth variant — the monorepo's -Dqits.variant=oauth|forwardauth|local
+                 auth/* modules stay behind (migration-plan.md §4); this just makes the anonymous
+                 identity available so an app without them still deploys. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-security</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-smallrye-openapi</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- @TestSecurity, so the epics audit test can name its caller. The monorepo got a
+                 `dev` identity from the forwardauth auth variant; auth is unassigned
+                 (migration-plan.md §4) and no auth/* module is carried here. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-test-security</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -83,6 +107,21 @@
     </dependencies>
 
     <build>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <!-- The committed bare git fixtures (submodule-*.git) live in the domain module's
+                     test resources, which is where GitFixtures also writes the derived ones. They
+                     are copied rather than pulled from domain's test-jar because git cannot clone
+                     out of a jar: these have to be real directories on disk. -->
+                <directory>../domain/src/test/resources</directory>
+                <includes>
+                    <include>fixtures/**</include>
+                </includes>
+            </testResource>
+        </testResources>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>

@@ -9,6 +9,7 @@ import eu.wohlben.qits.projects.api.ProjectController;
 import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
 import io.quarkiverse.mcp.server.test.McpAssured.McpStreamableTestClient;
+import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.vertx.core.MultiMap;
@@ -29,7 +30,7 @@ public class RepositoryMcpToolsTest {
   private final String fixtureUrl;
 
   public RepositoryMcpToolsTest() throws Exception {
-    fixtureUrl = getClass().getResource("/fixtures/testing-repo.git").toURI().getPath();
+    fixtureUrl = GitFixtures.path("testing-repo.git");
   }
 
   private String createProject(String name) {
@@ -61,11 +62,6 @@ public class RepositoryMcpToolsTest {
     return response.content().stream()
         .map(c -> c.asText().text())
         .collect(Collectors.joining("\n"));
-  }
-
-  /** A streamable client on the unscoped discovery server ({@code /mcp}). */
-  private McpStreamableTestClient discoveryClient() {
-    return McpAssured.newStreamableClient().setMcpPath("/mcp").build().connect();
   }
 
   /** A streamable client on the repository server, scoped to {@code projectId} (or none). */
@@ -186,36 +182,10 @@ public class RepositoryMcpToolsTest {
         .thenAssertResults();
   }
 
-  @Test
-  public void discoveryServerListsProjectsAndContextServers() {
-    String project = createProject("Discoverable");
-
-    discoveryClient()
-        .when()
-        .toolsCall(
-            "listProjects",
-            Map.of(),
-            response -> {
-              assertFalse(response.isError());
-              assertTrue(
-                  text(response).contains(project),
-                  "discovery should list the project to scope with");
-            })
-        .toolsCall(
-            "listContextServers",
-            Map.of(),
-            response -> {
-              assertFalse(response.isError());
-              String text = text(response);
-              assertTrue(text.contains("repository"), "should advertise the repository server");
-              assertTrue(text.contains("/mcp/repository"), "should advertise its path: " + text);
-              assertTrue(
-                  text.contains(ProjectScope.PROJECT_HEADER),
-                  "should advertise the scope header: " + text);
-            })
-        .thenAssertResults();
-  }
-
+  // SEAM (migration-plan.md §3.9): discoveryServerListsProjectsAndContextServers is not carried
+  // over. It drove the DISCOVERY MCP server (listProjects / listContextServers), which lives in
+  // service/src/main/java/eu/wohlben/qits/mcp — a monolith-only package no target receives. The
+  // repository server this class otherwise tests is unaffected.
   /**
    * A client on the repository server carrying the {@code agentReadOnly=true} query-param marker an
    * autonomous (unattended, skip-permissions) launch stamps into its MCP URL.
@@ -292,16 +262,16 @@ public class RepositoryMcpToolsTest {
               var names = page.tools().stream().map(t -> t.name()).toList();
               assertEquals(
                   java.util.Set.of(
+                      // SEAM (migration-plan.md §6): listWorkspaces, createWorkspace,
+                      // cleanupBranch, integrateBranch and mergeParentIntoWorkspace were forwards
+                      // to WorkspaceService and are cut with it (see RepositoryMcpTools). Still an
+                      // exact-set assertion on purpose — that is what stops another context's
+                      // tools leaking back onto this server.
                       "listRepositories",
                       "listBranches",
-                      "listWorkspaces",
                       "listCommits",
                       "listCommitChanges",
                       "getCommitFileDiff",
-                      "createWorkspace",
-                      "cleanupBranch",
-                      "integrateBranch",
-                      "mergeParentIntoWorkspace",
                       "listSubmodules",
                       "prepareSubmoduleBackend"),
                   java.util.Set.copyOf(names),

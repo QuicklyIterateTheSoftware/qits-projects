@@ -15,8 +15,9 @@ import eu.wohlben.qits.domain.repository.entity.RepositoryArchetype;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the pure {@code .qits-config.yml} parse. Instantiated directly (no CDI) since
- * {@code parse} doesn't touch the injected {@code GitExecutor}.
+ * Unit tests for the pure qits-config parse, plus the {@code readConfig} location fallback (default
+ * {@code .config/qits/repository.yml}, legacy {@code .qits-config.yml}). Instantiated directly (no
+ * CDI) — {@code readConfig} tests wire a real {@link GitExecutor} over a throwaway repo.
  */
 class QitsConfigParserTest {
 
@@ -221,6 +222,62 @@ class QitsConfigParserTest {
     assertEquals(1, config.bootstrap().size());
     assertEquals("prepare-workspace", config.bootstrap().get(0).name());
     assertTrue(config.bootstrap().get(0).check().contains("/tmp/qits-bootstrap-marker"));
+  }
+
+  @Test
+  void readConfigPrefersDefaultLocationOverLegacy() throws Exception {
+    java.io.File repo =
+        initRepo(
+            java.util.Map.of(
+                QitsConfigParser.CONFIG_PATH,
+                "version: 1\nactions:\n  - name: preferred\n    execute: ls\n",
+                QitsConfigParser.LEGACY_CONFIG_PATH,
+                "version: 1\nactions:\n  - name: legacy\n    execute: ls\n"));
+    QitsConfig config = parser.readConfig(repo, "main");
+    assertEquals("preferred", config.actions().get(0).name());
+  }
+
+  @Test
+  void readConfigFallsBackToLegacyLocation() throws Exception {
+    java.io.File repo =
+        initRepo(
+            java.util.Map.of(
+                QitsConfigParser.LEGACY_CONFIG_PATH,
+                "version: 1\nactions:\n  - name: legacy\n    execute: ls\n"));
+    QitsConfig config = parser.readConfig(repo, "main");
+    assertEquals("legacy", config.actions().get(0).name());
+  }
+
+  @Test
+  void readConfigIsEmptyWhenNeitherLocationExists() throws Exception {
+    java.io.File repo = initRepo(java.util.Map.of("README.md", "hi\n"));
+    assertTrue(parser.readConfig(repo, "main").isEmpty());
+  }
+
+  /** A one-commit throwaway repo on {@code main} holding {@code files}, readable via git show. */
+  private java.io.File initRepo(java.util.Map<String, String> files) throws Exception {
+    java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("qits-config-repo");
+    GitExecutor git = new GitExecutor();
+    parser.git = git;
+    git.exec(dir.toFile(), "git", "init", "-b", "main");
+    for (var entry : files.entrySet()) {
+      java.nio.file.Path file = dir.resolve(entry.getKey());
+      java.nio.file.Files.createDirectories(file.getParent());
+      java.nio.file.Files.writeString(file, entry.getValue());
+    }
+    git.exec(dir.toFile(), "git", "add", "-A");
+    git.exec(
+        dir.toFile(),
+        java.util.Map.of(
+            "GIT_AUTHOR_NAME", "test",
+            "GIT_AUTHOR_EMAIL", "test@test",
+            "GIT_COMMITTER_NAME", "test",
+            "GIT_COMMITTER_EMAIL", "test@test"),
+        "git",
+        "commit",
+        "-m",
+        "init");
+    return dir.toFile();
   }
 
   @Test

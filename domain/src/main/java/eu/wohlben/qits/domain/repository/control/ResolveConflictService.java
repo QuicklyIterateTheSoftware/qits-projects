@@ -28,7 +28,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * workspace's prompt draft, and {@link AgentLaunchService#launchAutonomous} spawns a fetch-model
  * run that pulls it back over MCP via {@code taskPrompt} — the same push→fetch delivery every other
  * Claude launch now uses, so there is no bespoke {@code claude} script or per-workspace prompt file
- * here.
+ * here. The run rides the chat pipeline (kind {@code CHAT}), so its command page renders the live
+ * conversation while the agent works.
  */
 @ApplicationScoped
 public class ResolveConflictService {
@@ -103,9 +104,9 @@ public class ResolveConflictService {
   /**
    * Starts resolving a workspace's conflict: forks a resolution workspace off the conflicting
    * branch and launches an autonomous Claude agent to merge the parent in and resolve the
-   * conflicts. The caller opens a terminal on the returned command to watch it work. The fork is
-   * committed in its own transaction <em>before</em> the agent is spawned, so the resolution
-   * workspace's row is visible when the command registry validates it.
+   * conflicts. The caller opens the returned command's page (a live chat) to watch it work. The
+   * fork is committed in its own transaction <em>before</em> the agent is spawned, so the
+   * resolution workspace's row is visible when the command registry validates it.
    */
   public ResolveResult resolveConflict(String repoId, String workspaceId) {
     Resolution resolution =
@@ -215,6 +216,9 @@ public class ResolveConflictService {
         .append("` does not:\n");
     sb.append(commitLines(outgoing));
     sb.append(UNTRUSTED_END).append('\n');
+    sb.append(
+        "\nIf you can resolve the conflict fully on your own, do commit and push the"
+            + " resolution.\n");
     return sb.toString();
   }
 

@@ -2,7 +2,6 @@ package eu.wohlben.qits.projects.control;
 
 import com.pty4j.PtyProcess;
 import com.pty4j.WinSize;
-import eu.wohlben.qits.domain.command.control.CommandOutputSink;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;

@@ -2,7 +2,7 @@ package eu.wohlben.qits.projects.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import eu.wohlben.qits.domain.command.control.CommandOutputSink;
+import eu.wohlben.qits.projects.control.CommandOutputSink;
 import eu.wohlben.qits.projects.control.RemoteLoginSessions;
 import io.quarkus.websockets.next.OnClose;
 import io.quarkus.websockets.next.OnOpen;

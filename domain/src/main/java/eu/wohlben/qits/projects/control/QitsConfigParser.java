@@ -8,8 +8,6 @@ import eu.wohlben.qits.projects.control.QitsConfig.RepositorySection;
 import eu.wohlben.qits.projects.control.QitsConfig.ServiceDecl;
 import eu.wohlben.qits.projects.control.QitsConfig.WebViewDecl;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
-import eu.wohlben.qits.domain.service.entity.HealthCheckKind;
-import eu.wohlben.qits.domain.service.entity.RestartPolicy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.File;

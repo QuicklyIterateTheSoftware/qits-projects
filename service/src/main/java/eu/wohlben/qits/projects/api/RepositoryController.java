@@ -1,9 +1,8 @@
 package eu.wohlben.qits.projects.api;
 
-import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.projects.control.CommitService;
+import eu.wohlben.qits.projects.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.projects.control.RepositoryService;
-import eu.wohlben.qits.projects.control.WorkspaceService;
 import eu.wohlben.qits.projects.dto.BranchDto;
 import eu.wohlben.qits.projects.dto.CommitChangesDto;
 import eu.wohlben.qits.projects.dto.CommitFileDiffDto;
@@ -11,6 +10,7 @@ import eu.wohlben.qits.projects.dto.CommitLogDto;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
 import eu.wohlben.qits.projects.dto.SyncStatusDto;
 import eu.wohlben.qits.projects.mapper.RepositoryMapper;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -35,11 +35,10 @@ public class RepositoryController {
 
   @Inject CommitService commitService;
 
-  @Inject WorkspaceService workspaceService;
-
   @Inject RepositoryMapper repositoryMapper;
 
-  @Inject TechnicalProcessRegistry technicalProcesses;
+  /** SEAM: the technical-process framework is an optional port here (see the interface). */
+  @Inject Instance<TechnicalProcessRegistry> technicalProcesses;
 
   public static record GetRepositoryRequest() {
     public record Response(RepositoryDto repository) {}
@@ -88,36 +87,15 @@ public class RepositoryController {
     return commitService.getFileDiff(repoId, commitHash, parent, path);
   }
 
-  public static record MergeBranchRequest(@NotBlank String source, String target, String result) {
-    /**
-     * @param cleanedUp whether the integrated source workspace+branch was removed afterwards (it
-     *     was fully merged with no dependents)
-     */
-    public record Response(
-        String commitHash, boolean hasConflicts, String output, boolean cleanedUp) {}
-  }
-
-  @POST
-  @Path("/{repoId}/branches/merge")
-  public MergeBranchRequest.Response mergeBranch(
-      @PathParam("repoId") String repoId, @Valid MergeBranchRequest request) {
-    var result =
-        workspaceService.mergeBranch(repoId, request.source(), request.target(), request.result());
-    return new MergeBranchRequest.Response(
-        result.commitHash(), result.hasConflicts(), result.output(), result.cleanedUp());
-  }
-
-  public static record CleanupBranchRequest(@NotBlank String branch, String result) {
-    public record Response(boolean success) {}
-  }
-
-  @POST
-  @Path("/{repoId}/branches/cleanup")
-  public CleanupBranchRequest.Response cleanupBranch(
-      @PathParam("repoId") String repoId, @Valid CleanupBranchRequest request) {
-    workspaceService.cleanupBranch(repoId, request.branch(), request.result());
-    return new CleanupBranchRequest.Response(true);
-  }
+  // SEAM (migration-plan.md §6, repository <-> workspace). Two routes stood here —
+  // POST /repositories/{repoId}/branches/merge and .../branches/cleanup — and both were thin
+  // forwards to WorkspaceService.mergeBranch / cleanupBranch, which is WS_REPO (qits-workspaces').
+  // Branch integration is a workspace operation exposed on the repository path; it is cut rather
+  // than ported, because a port whose whole body is "call the other context's service" is just a
+  // dependency with extra steps.
+  //
+  // NOTE FOR THE ORCHESTRATOR: qits-workspaces' own WorkspaceController does not currently expose
+  // them under /repositories, so these two routes are unowned as of this extraction.
 
   public static record DeleteBranchRequest() {
     public record Response(boolean success) {}
@@ -201,7 +179,9 @@ public class RepositoryController {
   public ActiveProcessRequest.Response activeProcess(@PathParam("repoId") String repoId) {
     repositoryService.get(repoId); // 404 on an unknown/deleted repository
     return new ActiveProcessRequest.Response(
-        technicalProcesses.activeForRepository(repoId).orElse(null));
+        technicalProcesses.isUnsatisfied()
+            ? null
+            : technicalProcesses.get().activeForRepository(repoId).orElse(null));
   }
 
   public static record SetMainBranchRequest(@NotBlank String branch) {

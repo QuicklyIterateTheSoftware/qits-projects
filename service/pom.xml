@@ -54,9 +54,17 @@
             <artifactId>quarkus-hibernate-validator</artifactId>
         </dependency>
         <dependency>
-            <!-- The repository/submodule/task MCP tool surface. -->
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-mcp-server-sse</artifactId>
+            <!-- The repository/submodule MCP tool surface. Not in the Quarkus BOM, so the version
+                 is pinned as in the monorepo; 1.13.0 is built against Quarkus 3.33.x (~ 3.34.6). -->
+            <groupId>io.quarkiverse.mcp</groupId>
+            <artifactId>quarkus-mcp-server-http</artifactId>
+            <version>1.13.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkiverse.mcp</groupId>
+            <artifactId>quarkus-mcp-server-test</artifactId>
+            <version>1.13.0</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>

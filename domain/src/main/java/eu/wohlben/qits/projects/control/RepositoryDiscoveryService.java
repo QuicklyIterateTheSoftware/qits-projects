@@ -1,16 +1,7 @@
 package eu.wohlben.qits.projects.control;
 
 import eu.wohlben.qits.projects.entity.Repository;
-import eu.wohlben.qits.projects.entity.Workspace;
-import eu.wohlben.qits.projects.entity.WorkspaceEvent;
-import eu.wohlben.qits.projects.entity.WorkspaceEventType;
-import eu.wohlben.qits.projects.entity.WorkspaceRuntimeStatus;
-import eu.wohlben.qits.projects.entity.WorkspaceStatus;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
-import eu.wohlben.qits.projects.persistence.WorkspaceEventRepository;
-import eu.wohlben.qits.projects.persistence.WorkspacePromptAttachmentRepository;
-import eu.wohlben.qits.projects.persistence.WorkspacePromptDraftRepository;
-import eu.wohlben.qits.projects.persistence.WorkspaceRepository;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
@@ -18,11 +9,8 @@ import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -36,19 +24,7 @@ public class RepositoryDiscoveryService {
 
   @Inject MetadataService metadataService;
 
-  @Inject ContainerRuntime containers;
-
-  @Inject WorkspaceService workspaceService;
-
   @Inject RepositoryRepository repositoryRepository;
-
-  @Inject WorkspaceRepository workspaceRepository;
-
-  @Inject WorkspaceEventRepository workspaceEventRepository;
-
-  @Inject WorkspacePromptDraftRepository workspacePromptDraftRepository;
-
-  @Inject WorkspacePromptAttachmentRepository workspacePromptAttachmentRepository;
 
   @Transactional
   void onStart(@Observes StartupEvent event) {
@@ -87,112 +63,22 @@ public class RepositoryDiscoveryService {
           repo.url = metadata.url;
           repo.archetype = metadata.archetype;
         }
-
-        // Workspaces are now containers, not on-disk checkouts, so reconcile the DB against the
-        // live containers (keyed by their qits.* labels) rather than the metadata sidecar files.
-        List<ContainerRuntime.ContainerInfo> containerList =
-            containers.listWorkspaceContainers(repoId);
-        Set<String> containerWorkspaceIds = new HashSet<>();
-        for (ContainerRuntime.ContainerInfo info : containerList) {
-          containerWorkspaceIds.add(info.workspaceId());
-          // Upsert against the ACTIVE row only, so a resolved workspace of the same id is never
-          // revived back to ACTIVE; a container with no active row means a fresh workspace whose
-          // row
-          // was lost (rebuild it from the labels).
-          Workspace workspace =
-              workspaceRepository
-                  .findActiveByRepositoryAndWorkspaceId(repoId, info.workspaceId())
-                  .orElseGet(
-                      () -> {
-                        Workspace w = new Workspace();
-                        w.workspaceId = info.workspaceId();
-                        w.repository = repo;
-                        w.status = WorkspaceStatus.ACTIVE;
-                        workspaceRepository.persist(w);
-                        workspaceEventRepository.persist(
-                            WorkspaceEvent.builder()
-                                .workspace(w)
-                                .type(WorkspaceEventType.CREATED)
-                                .branch(info.branch())
-                                .parent(info.parent())
-                                .at(Instant.now())
-                                .build());
-                        return w;
-                      });
-          workspace.parent = info.parent();
-          workspace.branch = info.branch();
-          workspace.runtimeStatus = WorkspaceRuntimeStatus.RUNNING;
-          workspaceRepository.persist(workspace);
-        }
-
-        // Reconcile ACTIVE rows whose container is absent. The durable branch — not the container —
-        // is the source of truth, so a missing container is not death: if the branch still exists
-        // we
-        // only lost a recreatable cache (mark STOPPED; lazy ensureContainer re-provisions it on
-        // next
-        // use — we deliberately don't docker-run here, to keep startup fast). Only when the branch
-        // itself is gone from origin is the work genuinely lost; only then is the workspace
-        // ABANDONED
-        // (soft-delete, so its history survives). This is now the only path to abandonment.
-        for (Workspace existing : workspaceRepository.findActiveByRepositoryId(repoId)) {
-          if (containerWorkspaceIds.contains(existing.workspaceId)) {
-            continue; // healthy — handled above
-          }
-          if (existing.branch != null && workspaceService.branchExists(repoId, existing.branch)) {
-            existing.runtimeStatus = WorkspaceRuntimeStatus.STOPPED;
-          } else {
-            existing.status = WorkspaceStatus.ABANDONED;
-            existing.resolvedAt = Instant.now();
-            existing.runtimeStatus = WorkspaceRuntimeStatus.STOPPED;
-            // Abandonment is a soft-delete, so the workspace-child FK cascade never fires — hard
-            // delete the pre-launch prompt draft + its attachment BLOBs here too, exactly as the
-            // other termination paths (doDiscard, ensureContainer branch-gone) do, or they orphan
-            // and leak storage forever.
-            workspacePromptDraftRepository.deleteByWorkspaceId(existing.id);
-            workspacePromptAttachmentRepository.deleteByWorkspaceId(existing.id);
-            workspaceEventRepository.persist(
-                WorkspaceEvent.builder()
-                    .workspace(existing)
-                    .type(WorkspaceEventType.ABANDONED)
-                    .parent(existing.parent)
-                    .at(Instant.now())
-                    .build());
-          }
-        }
+        // SEAM (migration-plan.md §6, repository <-> workspace). What stood here was the
+        // workspace half of discovery: reconciling ACTIVE `workspace` rows against the live
+        // containers, marking STOPPED/ABANDONED, reaping dangling per-workspace volumes and hard
+        // deleting orphaned prompt drafts + attachment BLOBs. Every table and every collaborator it
+        // touched — Workspace, WorkspaceEvent, WorkspaceRepository, WorkspaceEventRepository,
+        // WorkspacePromptDraftRepository, WorkspacePromptAttachmentRepository, WorkspaceService,
+        // ContainerRuntime — is WS_REPO, i.e. qits-workspaces', and lives in another database (§7).
+        // It cannot be a port either: it is not a question this context asks, it is work the
+        // workspaces context does. So it is cut, not translated.
+        //
+        // NOTE FOR THE ORCHESTRATOR: as of this extraction that reconcile is UNOWNED —
+        // qits-workspaces ships no startup reconciler. Same shape as qits-ci's dropped
+        // branchDeletionRecordsNoRun. It belongs in qits-workspaces.
       }
-      // With per-repo container↔row reconcile done (every live-container workspace now has an
-      // ACTIVE
-      // row), reap dangling per-workspace /workspace volumes — those left by a crash, a manual
-      // docker rm, an older build, or a leak between a container rm and its removeWorkspaceVolume.
-      reconcileWorkspaceVolumes();
     } catch (Exception e) {
       throw new RuntimeException("Repository discovery failed", e);
-    }
-  }
-
-  /**
-   * Mirror of the container↔row reconcile for the per-workspace {@code /workspace} volumes: list
-   * the qits-managed volumes and remove any with no ACTIVE {@link Workspace} row for its {@code
-   * qits.workspace}/{@code qits.repository} labels. Like the container reconcile this only
-   * <em>removes</em> orphans — it never provisions. A volume still referenced by a live container
-   * is spared by docker's own in-use protection (removal is best-effort); a healthy workspace keeps
-   * its volume because its ACTIVE row exists (upserted above).
-   */
-  private void reconcileWorkspaceVolumes() {
-    for (ContainerRuntime.VolumeInfo vol : containers.listWorkspaceVolumes()) {
-      if (vol.workspaceId() == null || vol.workspaceId().isBlank() || vol.repoId() == null) {
-        continue;
-      }
-      boolean hasActiveRow =
-          workspaceRepository
-              .findActiveByRepositoryAndWorkspaceId(vol.repoId(), vol.workspaceId())
-              .isPresent();
-      if (!hasActiveRow) {
-        LOG.infof(
-            "Reaping dangling workspace volume %s (repo %s, workspace %s — no active row)",
-            vol.name(), vol.repoId(), vol.workspaceId());
-        containers.removeWorkspaceVolume(vol.workspaceId());
-      }
     }
   }
 }

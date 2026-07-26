@@ -2,7 +2,6 @@ package eu.wohlben.qits.projects.control;
 
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.NotFoundException;
-import eu.wohlben.qits.domain.featureflow.persistence.FeatureFlowConfigurationRepository;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.persistence.ProjectRepository;
 import eu.wohlben.qits.projects.control.RepositoryService;
@@ -30,8 +29,6 @@ public class ProjectService {
   @Inject RepositoryRepository repositoryRepository;
 
   @Inject RepositoryNameRepository repositoryNameRepository;
-
-  @Inject FeatureFlowConfigurationRepository featureFlowConfigurationRepository;
 
   @Inject RepositoryService repositoryService;
 
@@ -175,13 +172,11 @@ public class ProjectService {
   @Transactional
   public void delete(String id) {
     Project project = get(id);
-    // Flow configurations go first: their phase actions may bind repository-scoped actions, and
-    // that FK has no cascade — deleting a repository (which cascades its actions) while a flow
-    // still binds them would fail.
-    featureFlowConfigurationRepository
-        .find("project.id", id)
-        .list()
-        .forEach(featureFlowConfigurationRepository::delete);
+    // SEAM (migration-plan.md §6, project <-> featureflow): the monorepo deleted this project's
+    // flow configurations first, because their phase actions bind repository-scoped actions over an
+    // FK with no cascade. domain.featureflow is monolith-only and deferred (§9 item 6), so neither
+    // the entity nor its table exists in this context's database and there is nothing to delete
+    // ahead of the repositories.
     // Delegate to RepositoryService.delete (not a raw row delete) so each repository's containers
     // and on-disk clone are torn down too — otherwise deleting a project (e.g. a seed reset) leaks
     // them as orphans.

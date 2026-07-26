@@ -1,8 +1,5 @@
 package eu.wohlben.qits.projects.api;
 
-import eu.wohlben.qits.domain.featureflow.control.FeatureFlowConfigurationService;
-import eu.wohlben.qits.domain.featureflow.dto.FeatureFlowConfigurationDto;
-import eu.wohlben.qits.domain.featureflow.mapper.FeatureFlowConfigurationMapper;
 import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.dto.ProjectDto;
 import eu.wohlben.qits.projects.mapper.ProjectMapper;
@@ -34,10 +31,6 @@ public class ProjectController {
   @Inject ProjectMapper projectMapper;
 
   @Inject RepositoryMapper repositoryMapper;
-
-  @Inject FeatureFlowConfigurationService featureFlowConfigurationService;
-
-  @Inject FeatureFlowConfigurationMapper featureFlowConfigurationMapper;
 
   // --- Project CRUD ---
 
@@ -162,41 +155,10 @@ public class ProjectController {
     return new CreateProjectRepositoryRequest.Response(repositoryMapper.toDto(repo), projectId);
   }
 
-  // --- Feature Flow Configuration sub-resources ---
-
-  public static record ListProjectFeatureFlowConfigurationsRequest() {
-    public record Response(List<Entry> entries) {
-      public record Entry(FeatureFlowConfigurationDto featureFlowConfiguration) {}
-    }
-  }
-
-  @GET
-  @Path("/{projectId}/feature-flow-configurations")
-  public ListProjectFeatureFlowConfigurationsRequest.Response listFeatureFlowConfigurations(
-      @PathParam("projectId") String projectId) {
-    projectService.get(projectId); // verify project exists
-    var configs = featureFlowConfigurationService.listByProject(projectId);
-    var entries =
-        configs.stream()
-            .map(
-                c ->
-                    new ListProjectFeatureFlowConfigurationsRequest.Response.Entry(
-                        featureFlowConfigurationMapper.toDto(c)))
-            .toList();
-    return new ListProjectFeatureFlowConfigurationsRequest.Response(entries);
-  }
-
-  public static record CreateProjectFeatureFlowConfigurationRequest(@NotBlank String name) {
-    public record Response(FeatureFlowConfigurationDto featureFlowConfiguration) {}
-  }
-
-  @POST
-  @Path("/{projectId}/feature-flow-configurations")
-  public CreateProjectFeatureFlowConfigurationRequest.Response createFeatureFlowConfiguration(
-      @PathParam("projectId") String projectId,
-      @Valid CreateProjectFeatureFlowConfigurationRequest request) {
-    var config = featureFlowConfigurationService.createUnderProject(projectId, request.name());
-    return new CreateProjectFeatureFlowConfigurationRequest.Response(
-        featureFlowConfigurationMapper.toDto(config));
-  }
+  // SEAM (migration-plan.md §6, project <-> featureflow). The two feature-flow sub-resources
+  // (GET/POST /projects/{projectId}/feature-flow-configurations) are cut, NOT ported. Unlike the
+  // workspaces edges there is no other side to declare a port against: domain.featureflow is
+  // monolith-only and deferred (§9 item 6), coupled to project in both directions, with no target
+  // repository at all. An application that wants those two routes back must reinstate them
+  // alongside whatever eventually owns featureflow.
 }

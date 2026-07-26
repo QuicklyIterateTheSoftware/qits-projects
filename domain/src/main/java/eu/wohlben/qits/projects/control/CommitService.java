@@ -9,10 +9,9 @@ import eu.wohlben.qits.projects.dto.CommitFileChangeDto;
 import eu.wohlben.qits.projects.dto.CommitFileDiffDto;
 import eu.wohlben.qits.projects.dto.CommitLogDto;
 import eu.wohlben.qits.projects.entity.Repository;
-import eu.wohlben.qits.projects.entity.Workspace;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
-import eu.wohlben.qits.projects.persistence.WorkspaceRepository;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,7 +40,12 @@ public class CommitService {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject WorkspaceRepository workspaceRepository;
+  /**
+   * SEAM (migration-plan.md §6): was {@code WorkspaceRepository}. The `workspace` table is
+   * qits-workspaces', in another database — see {@link WorkspaceLookup} for the absent-behaviour
+   * contract.
+   */
+  @Inject Instance<WorkspaceLookup> workspaces;
 
   @Inject GitExecutor git;
 
@@ -95,18 +99,23 @@ public class CommitService {
     repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
-    Workspace workspace =
-        workspaceRepository
-            .findActiveByRepositoryAndWorkspaceId(repoId, workspaceId)
-            .orElseThrow(() -> new NotFoundException("Workspace not found: " + workspaceId));
+    WorkspaceLookup.WorkspaceView workspace =
+        workspaces.isUnsatisfied()
+            ? null
+            : workspaces.get().findActive(repoId, workspaceId).orElse(null);
+    if (workspace == null) {
+      // With no workspaces implementation wired in there is no such workspace as far as this
+      // context can tell — the same 404 an unknown id already produced.
+      throw new NotFoundException("Workspace not found: " + workspaceId);
+    }
 
     Path originPath = requireOrigin(repoId);
 
     // The branch is the workspace's stored column (there is no host checkout to read it from — the
     // checkout lives in the container). The log range below runs against the bare origin, which
     // holds every workspace branch as a ref.
-    String branch = workspace.branch;
-    String parent = workspace.parent;
+    String branch = workspace.branch();
+    String parent = workspace.parent();
     boolean usable =
         branch != null
             && !branch.isBlank()
@@ -282,9 +291,14 @@ public class CommitService {
    * checkout lives in the container now — there is no host path to read the branch from).
    */
   private String resolveParent(String repoId, Repository repo, String branch) {
-    for (Workspace wt : workspaceRepository.findActiveByRepositoryId(repoId)) {
-      if (branch.equals(wt.branch)) {
-        return wt.parent;
+    // SEAM: with no WorkspaceLookup wired in, no branch is workspace-backed, so every branch falls
+    // back to the repository's main branch — the same answer this loop already gave for a branch
+    // that no workspace owns.
+    if (!workspaces.isUnsatisfied()) {
+      for (WorkspaceLookup.WorkspaceView wt : workspaces.get().findActiveByRepository(repoId)) {
+        if (branch.equals(wt.branch())) {
+          return wt.parent();
+        }
       }
     }
     return repo.mainBranch;

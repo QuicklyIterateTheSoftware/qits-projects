@@ -49,58 +49,11 @@ public class MetadataService {
     }
   }
 
-  public void writeWorkspaceMetadata(String repoId, WorkspaceMetadata wt) {
-    try {
-      Path metadataPath = getMetadataDir(repoId);
-      Files.createDirectories(metadataPath);
-      objectMapper
-          .writerWithDefaultPrettyPrinter()
-          .writeValue(metadataPath.resolve("workspace_" + wt.workspaceId + ".json").toFile(), wt);
-    } catch (IOException e) {
-      throw new RuntimeException(
-          "Failed to write workspace metadata for " + repoId + "/" + wt.workspaceId, e);
-    }
-  }
-
-  public Optional<WorkspaceMetadata> readWorkspaceMetadata(String repoId, String workspaceId) {
-    Path file = getMetadataDir(repoId).resolve("workspace_" + workspaceId + ".json");
-    if (!Files.exists(file)) {
-      return Optional.empty();
-    }
-    try {
-      return Optional.of(objectMapper.readValue(file.toFile(), WorkspaceMetadata.class));
-    } catch (IOException e) {
-      throw new RuntimeException(
-          "Failed to read workspace metadata for " + repoId + "/" + workspaceId, e);
-    }
-  }
-
-  public List<WorkspaceMetadata> readAllWorkspaceMetadata(String repoId) {
-    List<WorkspaceMetadata> result = new ArrayList<>();
-    Path metadataPath = getMetadataDir(repoId);
-    if (!Files.exists(metadataPath)) {
-      return result;
-    }
-    try (DirectoryStream<Path> stream =
-        Files.newDirectoryStream(metadataPath, "workspace_*.json")) {
-      for (Path file : stream) {
-        result.add(objectMapper.readValue(file.toFile(), WorkspaceMetadata.class));
-      }
-    } catch (IOException e) {
-      throw new RuntimeException("Failed to read workspace metadata for " + repoId, e);
-    }
-    return result;
-  }
-
-  public void deleteWorkspaceMetadata(String repoId, String workspaceId) {
-    try {
-      Path file = getMetadataDir(repoId).resolve("workspace_" + workspaceId + ".json");
-      Files.deleteIfExists(file);
-    } catch (IOException e) {
-      throw new RuntimeException(
-          "Failed to delete workspace metadata for " + repoId + "/" + workspaceId, e);
-    }
-  }
+  // SEAM (migration-plan.md §6, repository <-> workspace). The workspace metadata sidecars
+  // (write/read/readAll/deleteWorkspaceMetadata over workspace_<id>.json) are cut: WorkspaceMetadata
+  // is WS_REPO and the only production caller left in this context was ResolveConflictService, which
+  // is itself workspaces-shaped and is not carried here. The repository sidecar (repository.json),
+  // which repository discovery reads to restore url/archetype, is unaffected and stays.
 
   String getDataDir() {
     return dataDir;

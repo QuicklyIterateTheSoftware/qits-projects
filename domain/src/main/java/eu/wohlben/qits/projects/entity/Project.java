@@ -1,6 +1,5 @@
 package eu.wohlben.qits.projects.entity;
 
-import eu.wohlben.qits.domain.featureflow.entity.FeatureFlowConfiguration;
 import eu.wohlben.qits.projects.entity.Repository;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.CascadeType;
@@ -48,6 +47,8 @@ public class Project extends PanacheEntityBase {
   @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true)
   public List<Repository> repositories;
 
-  @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true)
-  public List<FeatureFlowConfiguration> featureFlowConfigurations;
+  // SEAM (migration-plan.md §6, project <-> featureflow): the `featureFlowConfigurations`
+  // @OneToMany is gone. domain.featureflow is monolith-only and deferred (§9 item 6) — it is
+  // coupled to project in both directions and has no target repo — so there is no entity here to
+  // point at and its tables are not in this context's database.
 }

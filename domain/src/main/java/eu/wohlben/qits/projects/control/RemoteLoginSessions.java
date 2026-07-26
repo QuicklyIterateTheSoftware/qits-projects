@@ -1,13 +1,11 @@
 package eu.wohlben.qits.projects.control;
 
 import com.pty4j.PtyProcessBuilder;
-import eu.wohlben.qits.domain.command.control.CommandOutputSink;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
-import eu.wohlben.qits.domain.process.control.RepoReservation;
-import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import java.io.IOException;
 import java.util.HashMap;
@@ -80,7 +78,14 @@ public class RemoteLoginSessions {
 
   @Inject GitRemoteAuth remoteAuth;
 
-  @Inject TechnicalProcessRegistry processes;
+  /**
+   * SEAM (migration-plan.md §6): the technical-process framework is a port here (see {@link
+   * TechnicalProcessRegistry}) and is optional. With no implementation the repository is never
+   * reserved, so a sign-in terminal can no longer refuse to start because a pull holds the repo —
+   * and a pull can no longer refuse because a sign-in does. Everything else about the session
+   * (spawn, attach, replay, linger, exit) is unchanged.
+   */
+  @Inject Instance<TechnicalProcessRegistry> processes;
 
   /** Live sessions with the reservation token they hold, keyed by repository id. */
   private final Map<String, Entry> entries = new HashMap<>();
@@ -144,16 +149,20 @@ public class RemoteLoginSessions {
         cancelLinger(repoId);
         session = existing.session();
       } else {
-        RepoReservation reservation = processes.reserveRepository(repoId, KIND_REMOTE_LOGIN);
-        if (reservation instanceof RepoReservation.Conflict conflict) {
-          return new OpenResult.Refused(conflict.runningKind());
+        String token = null;
+        if (!processes.isUnsatisfied()) {
+          RepoReservation reservation =
+              processes.get().reserveRepository(repoId, KIND_REMOTE_LOGIN);
+          if (reservation instanceof RepoReservation.Conflict conflict) {
+            return new OpenResult.Refused(conflict.runningKind());
+          }
+          token = ((RepoReservation.Acquired) reservation).token();
         }
-        String token = ((RepoReservation.Acquired) reservation).token();
         try {
           session = spawn(repoId, token);
         } catch (RuntimeException e) {
           // Never leak the reservation if the PTY failed to start / the repo vanished.
-          processes.releaseRepository(repoId, token);
+          releaseReservation(repoId, token);
           throw e;
         }
         entries.put(repoId, new Entry(session, token));
@@ -239,11 +248,21 @@ public class RemoteLoginSessions {
    */
   private synchronized void onSessionFinished(String repoId, String reservationToken) {
     Entry entry = entries.get(repoId);
-    if (entry != null && reservationToken.equals(entry.reservationToken())) {
+    if (entry != null
+        && (reservationToken == null
+            ? entry.reservationToken() == null
+            : reservationToken.equals(entry.reservationToken()))) {
       entries.remove(repoId);
       cancelLinger(repoId);
     }
-    processes.releaseRepository(repoId, reservationToken); // idempotent: only if still current
+    releaseReservation(repoId, reservationToken); // idempotent: only if still current
+  }
+
+  /** Release a reservation, if one was ever taken (see the {@code processes} field). */
+  private void releaseReservation(String repoId, String reservationToken) {
+    if (reservationToken != null && !processes.isUnsatisfied()) {
+      processes.get().releaseRepository(repoId, reservationToken);
+    }
   }
 
   /** Arm (or re-arm) the linger backstop for a now-unattended session. Caller holds the monitor. */
@@ -275,7 +294,7 @@ public class RemoteLoginSessions {
       if (entry != null && !entry.session().hasClients() && entry.session().isAlive()) {
         entries.remove(repoId);
         cancelLinger(repoId);
-        processes.releaseRepository(repoId, entry.reservationToken());
+        releaseReservation(repoId, entry.reservationToken());
         toKill = entry.session();
       }
     }

@@ -3,13 +3,10 @@ package eu.wohlben.qits.projects.mcp;
 import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.control.CommitService;
 import eu.wohlben.qits.projects.control.RepositoryService;
-import eu.wohlben.qits.projects.control.WorkspaceService;
-import eu.wohlben.qits.projects.control.WorkspaceService.MergeResult;
 import eu.wohlben.qits.projects.dto.BranchDto;
 import eu.wohlben.qits.projects.dto.CommitChangesDto;
 import eu.wohlben.qits.projects.dto.CommitFileDiffDto;
 import eu.wohlben.qits.projects.dto.CommitLogDto;
-import eu.wohlben.qits.projects.dto.WorkspaceDto;
 import eu.wohlben.qits.projects.entity.Repository;
 import io.quarkiverse.mcp.server.McpServer;
 import io.quarkiverse.mcp.server.Tool;
@@ -60,8 +57,6 @@ public class RepositoryMcpTools {
 
   @Inject CommitService commitService;
 
-  @Inject WorkspaceService workspaceService;
-
   // --- Context (read) -------------------------------------------------------
 
   /** A repository visible to this session, trimmed to what the model needs to pick one. */
@@ -97,18 +92,8 @@ public class RepositoryMcpTools {
     return repositoryService.listBranchesWithCleanup(repoId);
   }
 
-  @McpServer("repository")
-  @Tool(
-      description =
-          "List the workspaces of a repository (a workspace owns a feature branch forked from a"
-              + " parent), with ahead/behind counts and whether merging its parent in would"
-              + " conflict. Needed to integrate or to merge the parent into a workspace.")
-  @Transactional
-  public List<WorkspaceDto> listWorkspaces(
-      @ToolArg(description = "id of a repository in this project") String repoId) {
-    requireRepoInProject(repoId);
-    return workspaceService.listWorkspaces(repoId);
-  }
+  // SEAM (migration-plan.md §6): the listWorkspaces tool is cut — WorkspaceService/WorkspaceDto
+  // are qits-workspaces'. See the note above the scoping helpers.
 
   @McpServer("repository")
   @Tool(
@@ -158,75 +143,16 @@ public class RepositoryMcpTools {
   // --- Actions (write) ------------------------------------------------------
 
   /** Result of creating a workspace. */
-  public record CreatedWorkspace(String workspaceId, String parent) {}
 
-  @McpServer("repository")
-  @Tool(
-      description =
-          "Branch off a new workspace: create a workspace that owns a fresh branch forked from"
-              + " 'parent'. The workspaceId must match [A-Za-z0-9_-]{1,64}. Omit 'parent' to fork"
-              + " from master, and 'branch' to name the new branch after the workspace.")
-  public CreatedWorkspace createWorkspace(
-      @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "slug for the new workspace, [A-Za-z0-9_-]{1,64}") String workspaceId,
-      @ToolArg(required = false, description = "branch to fork from (default: master)")
-          String parent,
-      @ToolArg(required = false, description = "name for the new branch (default: the workspaceId)")
-          String branch) {
-    requireRepoInProject(repoId);
-    var wt = workspaceService.createWorkspace(repoId, workspaceId, parent, branch);
-    return new CreatedWorkspace(wt.workspaceId, wt.parent);
-  }
-
-  /** Result of a cleanup. */
-  public record CleanupResult(String branch, boolean cleanedUp) {}
-
-  @McpServer("repository")
-  @Tool(
-      description =
-          "Clean up a branch: remove it (and its workspace, if any) once it is fully merged with no"
-              + " dependent workspaces and a clean working tree. Refuses (error) when the branch"
-              + " still has unmerged commits or dependents, so it never loses work.")
-  public CleanupResult cleanupBranch(
-      @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "branch to clean up") String branch) {
-    requireRepoInProject(repoId);
-    workspaceService.cleanupBranch(repoId, branch);
-    return new CleanupResult(branch, true);
-  }
-
-  @McpServer("repository")
-  @Tool(
-      description =
-          "Integrate a branch into a target branch (default: the repository's main branch) by"
-              + " merging it. When the integration is clean and the source is then fully merged"
-              + " with no dependents, the source branch/workspace is cleaned up automatically"
-              + " (reported via cleanedUp). hasConflicts=true means the merge hit conflicts.")
-  public MergeResult integrateBranch(
-      @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "branch to integrate") String source,
-      @ToolArg(required = false, description = "branch to integrate into (default: main branch)")
-          String target) {
-    requireRepoInProject(repoId);
-    return workspaceService.mergeBranch(repoId, source, target);
-  }
-
-  /** Result of merging a workspace's parent into it. */
-  public record MergeParentResult(String workspaceId, String output) {}
-
-  @McpServer("repository")
-  @Tool(
-      description =
-          "Merge a workspace's parent branch (e.g. master) into the workspace, so a branch that has"
-              + " fallen behind catches up. Creates a merge commit. If it would conflict the merge"
-              + " is aborted and an error is returned, leaving the workspace untouched.")
-  public MergeParentResult mergeParentIntoWorkspace(
-      @ToolArg(description = "id of a repository in this project") String repoId,
-      @ToolArg(description = "id of the workspace to update") String workspaceId) {
-    requireRepoInProject(repoId);
-    String output = workspaceService.updateWorkspaceFromParent(repoId, workspaceId);
-    return new MergeParentResult(workspaceId, output);
-  }
+  // SEAM (migration-plan.md §6, repository <-> workspace). Five workspace-shaped MCP tools stood
+  // here — listWorkspaces, createWorkspace, cleanupBranch, integrateBranch and
+  // mergeParentIntoWorkspace — every one of them a thin wrapper over WorkspaceService, which is
+  // WS_REPO (qits-workspaces'). They are cut rather than ported: an MCP tool that only forwards to
+  // another bounded context belongs in that context's own tool surface, not behind a port here.
+  //
+  // NOTE FOR THE ORCHESTRATOR: qits-workspaces ships no MCP surface today, so these five tools are
+  // currently unowned. The repository-scoped tools that remain (listRepositories, listBranches,
+  // listCommits, submodules, pull/push/sync) are unchanged.
 
   // --- Scoping --------------------------------------------------------------
 

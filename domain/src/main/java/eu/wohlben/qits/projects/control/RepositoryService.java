@@ -3,10 +3,6 @@ package eu.wohlben.qits.projects.control;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
 import eu.wohlben.qits.projects.error.NotFoundException;
-import eu.wohlben.qits.domain.process.control.RepoProcessLease;
-import eu.wohlben.qits.domain.process.control.TechnicalProcess;
-import eu.wohlben.qits.domain.process.control.TechnicalProcessRegistry;
-import eu.wohlben.qits.domain.process.dto.TechnicalProcessFrame;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.dto.BranchDto;
 import eu.wohlben.qits.projects.dto.SyncStatusDto;
@@ -16,10 +12,10 @@ import eu.wohlben.qits.projects.entity.RepositorySubmodule;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import eu.wohlben.qits.projects.persistence.RepositorySubmoduleRepository;
-import eu.wohlben.qits.projects.persistence.WorkspaceRepository;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.io.IOException;
@@ -48,13 +44,17 @@ public class RepositoryService {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject WorkspaceRepository workspaceRepository;
-
   @Inject MetadataService metadataService;
 
-  @Inject WorkspaceService workspaceService;
+  /**
+   * SEAM (migration-plan.md §6, repository <-> workspace). Was {@code WorkspaceService} +
+   * {@code WorkspaceRepository} + {@code ContainerRuntime}, all three of which are qits-workspaces'
+   * (WS_REPO) and read tables in another database. Narrowed to the facts this context asks for and
+   * the two things it asks to be done. Both optional — see the interfaces for absent-behaviour.
+   */
+  @Inject Instance<WorkspaceLookup> workspaces;
 
-  @Inject ContainerRuntime containerRuntime;
+  @Inject Instance<WorkspaceLifecycle> workspaceLifecycle;
 
   @Inject GitExecutor git;
 
@@ -70,7 +70,13 @@ public class RepositoryService {
 
   @Inject ProjectTemplate projectTemplate;
 
-  @Inject TechnicalProcessRegistry processes;
+  /**
+   * SEAM (migration-plan.md §6): the technical-process framework is a port here (see {@link
+   * TechnicalProcessRegistry}) and is optional. With no implementation the pull/push/sync still run
+   * — on the same worker thread, against the same bare origins — but unnarrated, and the begin*
+   * methods return a null process id instead of one to subscribe to.
+   */
+  @Inject Instance<TechnicalProcessRegistry> processes;
 
   /**
    * Runs {@link #beginPullRepository}'s recursive pull off the request thread — the HTTP call
@@ -240,8 +246,8 @@ public class RepositoryService {
     // Every repository starts with a default workspace checked out on its main branch, so the main
     // branch is immediately workable and appears as a workspace-backed root in the branch tree.
     // Suppressed for imported children — they materialize inside their superproject's container.
-    if (createMainWorkspace) {
-      workspaceService.createMainWorkspace(repo.id, repo.mainBranch);
+    if (createMainWorkspace && !workspaceLifecycle.isUnsatisfied()) {
+      workspaceLifecycle.get().createMainWorkspace(repo.id, repo.mainBranch);
     }
 
     return repo;
@@ -520,7 +526,9 @@ public class RepositoryService {
 
     seedProjectTemplate(repo.id, originPath, WRAPPER_DEFAULT_BRANCH);
     metadataService.writeRepositoryMetadata(repo);
-    workspaceService.createMainWorkspace(repo.id, repo.mainBranch);
+    if (!workspaceLifecycle.isUnsatisfied()) {
+      workspaceLifecycle.get().createMainWorkspace(repo.id, repo.mainBranch);
+    }
     return repo;
   }
 
@@ -764,7 +772,7 @@ public class RepositoryService {
     // (and reposByName in tests) already use.
     String rootSegment =
         QuarkusTransaction.requiringNew().call(() -> "pull:" + repoLabel(get(repoId)));
-    return switch (processes.beginForRepository(repoId, "pull")) {
+    return switch (beginForRepository(repoId, "pull")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
       case RepoProcessLease.Fresh f -> {
@@ -879,7 +887,9 @@ public class RepositoryService {
                   Path originPath = requireOrigin(repoId);
                   String branch = resolveMainBranch(repo, originPath);
                   Optional<Path> mainWorkspace =
-                      workspaceService.workspacePathForBranch(repoId, branch);
+                      workspaces.isUnsatisfied()
+                          ? Optional.empty()
+                          : workspaces.get().workspacePathForBranch(repoId, branch);
                   return new PullContext(
                       repo.url,
                       branch,
@@ -1272,7 +1282,7 @@ public class RepositoryService {
     // shared
     // by the root pull segment and the final push segment.
     String basename = QuarkusTransaction.requiringNew().call(() -> repoLabel(get(repoId)));
-    return switch (processes.beginForRepository(repoId, "sync")) {
+    return switch (beginForRepository(repoId, "sync")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
       case RepoProcessLease.Fresh f -> {
@@ -1332,7 +1342,7 @@ public class RepositoryService {
     // repo's url basename, matching the sync's push segment shape.
     String rootSegment =
         QuarkusTransaction.requiringNew().call(() -> "push:" + repoLabel(get(repoId)));
-    return switch (processes.beginForRepository(repoId, "push")) {
+    return switch (beginForRepository(repoId, "push")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
       case RepoProcessLease.Fresh f -> {
@@ -1362,6 +1372,76 @@ public class RepositoryService {
       }
     };
   }
+
+  /**
+   * SEAM (migration-plan.md §6): {@link TechnicalProcessRegistry#beginForRepository} through the
+   * optional port. With no implementation wired in there is nothing to narrate to and nothing to
+   * single-flight against, so every call is {@link RepoProcessLease.Fresh} over an
+   * {@link #UNTRACKED} process — the walk runs exactly as before, on the same worker thread, and
+   * the begin* method returns a null process id. Every narration call site in this class is already
+   * null-guarded for the non-streamed {@code pullRepository(repoId)} overload, so the two paths are
+   * behaviourally identical apart from the (absent) stream.
+   */
+  private RepoProcessLease beginForRepository(String repoId, String kind) {
+    return processes.isUnsatisfied()
+        ? new RepoProcessLease.Fresh(UNTRACKED)
+        : processes.get().beginForRepository(repoId, kind);
+  }
+
+  /** A {@link TechnicalProcess} that narrates nowhere and has no id. */
+  private static final TechnicalProcess UNTRACKED =
+      new TechnicalProcess() {
+        @Override
+        public String id() {
+          return null;
+        }
+
+        @Override
+        public boolean isTerminal() {
+          return true;
+        }
+
+        @Override
+        public void attach(Listener listener) {}
+
+        @Override
+        public void detach(Listener listener) {}
+
+        @Override
+        public void openSegment(String name) {}
+
+        @Override
+        public void appendLine(String segmentName, String line) {}
+
+        @Override
+        public boolean isSegmentSettled(String segmentName) {
+          return false;
+        }
+
+        @Override
+        public void settleSegment(String segmentName, boolean ok) {}
+
+        @Override
+        public void settleSegment(String segmentName, boolean ok, String hint, String hintTarget) {}
+
+        @Override
+        public void completeNoOp(String segmentName, String note) {}
+
+        @Override
+        public void expectServices(java.util.Collection<String> serviceNames) {}
+
+        @Override
+        public void finishProvision(boolean ok) {}
+
+        @Override
+        public void failProvision(String message) {}
+
+        @Override
+        public void failProvision(String message, String hint, String hintTarget) {}
+
+        @Override
+        public void forceFinish() {}
+      };
 
   /** Sets the branch this repository syncs with the remote. The branch must exist locally. */
   @Transactional
@@ -1521,10 +1601,14 @@ public class RepositoryService {
     return listBranches(repoId).stream()
         .map(
             b -> {
-              var summary = workspaceService.summarize(repoId, originPath, b, repo.mainBranch);
+              WorkspaceLookup lookup = workspaces.isUnsatisfied() ? null : workspaces.get();
+              var summary =
+                  lookup == null
+                      ? new WorkspaceLookup.BranchSummary(null, null, null)
+                      : lookup.summarize(repoId, originPath, b, repo.mainBranch);
               return new BranchDto(
                   b,
-                  workspaceService.canCleanupBranch(repoId, originPath, b, repo.mainBranch),
+                  lookup != null && lookup.canCleanupBranch(repoId, originPath, b, repo.mainBranch),
                   summary.parent(),
                   summary.ahead(),
                   summary.behind());
@@ -1549,8 +1633,9 @@ public class RepositoryService {
     }
 
     boolean hasChildren =
-        workspaceRepository.findActiveByRepositoryId(repoId).stream()
-            .anyMatch(wt -> branch.equals(wt.parent));
+        !workspaces.isUnsatisfied()
+            && workspaces.get().findActiveByRepository(repoId).stream()
+                .anyMatch(wt -> branch.equals(wt.parent()));
     if (hasChildren) {
       throw new BadRequestException("Branch has child workspaces: " + branch);
     }
@@ -1592,29 +1677,15 @@ public class RepositoryService {
     // reset, which deletes then recreates) leaks the repo's workspace containers, their persistent
     // /workspace volumes, and its on-disk clone directory as orphans. DB rows for
     // workspaces/commands/events/services cascade off the repository row deletion below.
-    for (ContainerRuntime.ContainerInfo info : containerRuntime.listWorkspaceContainers(repoId)) {
+    // SEAM (migration-plan.md §6, repository <-> workspace). Was an inline docker teardown of this
+    // repository's workspace containers and their persistent /workspace volumes (containers first —
+    // docker refuses an in-use volume). ContainerRuntime/DockerExecutor are qits-workspaces'. The
+    // ordering is a precondition of the delete, so it stays a synchronous call, now through a port.
+    if (!workspaceLifecycle.isUnsatisfied()) {
       try {
-        containerRuntime.rm(info.name());
+        workspaceLifecycle.get().releaseRepository(repoId);
       } catch (RuntimeException e) {
-        LOG.warnf(
-            "Failed to remove container %s while deleting repository %s: %s",
-            info.name(), repoId, e.getMessage());
-      }
-    }
-    // Remove the per-workspace /workspace volumes AFTER their containers are gone (docker refuses
-    // an
-    // in-use volume). Sweep the managed-volume list so containerless/orphaned volumes are reaped
-    // too
-    // — a stopped-then-removed container leaves only its volume behind. Best-effort.
-    for (ContainerRuntime.VolumeInfo vol : containerRuntime.listWorkspaceVolumes()) {
-      if (repoId.equals(vol.repoId())) {
-        try {
-          containerRuntime.removeWorkspaceVolume(vol.workspaceId());
-        } catch (RuntimeException e) {
-          LOG.warnf(
-              "Failed to remove workspace volume for %s while deleting repository %s: %s",
-              vol.workspaceId(), repoId, e.getMessage());
-        }
+        LOG.warnf("Workspace teardown failed while deleting repository %s: %s", repoId, e.getMessage());
       }
     }
     deleteDataDir(repoId);

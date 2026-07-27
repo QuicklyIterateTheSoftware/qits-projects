@@ -75,10 +75,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <!-- SecurityIdentity only: the epics controllers stamp the audit log with the caller.
-                 NOT an auth variant — the monorepo's -Dqits.variant=oauth|forwardauth|local
-                 auth/* modules stay behind (migration-plan.md §4); this just makes the anonymous
-                 identity available so an app without them still deploys. -->
+            <!-- SecurityIdentity (the epics controllers stamp the audit log with the caller) plus
+                 the HttpAuthenticationMechanism SPI, for the single thing this service does about
+                 auth: read qits-gateway's X-Qits-User header into an identity (see
+                 security/ForwardAuthMechanism). NOT an auth variant and NOT an authorization
+                 policy — the monolith's -Dqits.variant auth/* modules do not come here at all;
+                 authentication terminates at the gateway (migration-auth-plan.md). -->
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-security</artifactId>
         </dependency>

@@ -19,9 +19,15 @@ import org.junit.jupiter.api.Test;
  * REST round-trips for the epics boundary hosted by {@code service}.
  *
  * <p>The monorepo ran this under the forwardauth auth variant, whose fallback identity is {@code
- * dev}, and asserted it through the audit "changed-by". Auth is unassigned (migration-plan.md §4)
- * and no {@code auth/*} module is carried here, so the caller is named with {@code @TestSecurity}
- * instead — same assertion, no dependency on a variant this repo does not ship.
+ * dev}, and asserted it through the audit "changed-by". This repo now resolves its principal from
+ * qits-gateway's {@code X-Qits-User} header instead (migration-auth-plan.md), but the caller here
+ * stays named with {@code @TestSecurity}: this test is about the epic/feature/task lifecycle, and
+ * naming the caller directly keeps it independent of how the identity arrives.
+ *
+ * <p>Which means it cannot vouch for that arrival — {@code @TestSecurity} bypasses the
+ * authentication mechanism entirely, and did so silently for the whole period this repo shipped no
+ * mechanism at all. {@link EpicsAuditIdentityTest} is the test that exercises the real header path;
+ * do not fold the two together.
  */
 @QuarkusTest
 class EpicApiTest {

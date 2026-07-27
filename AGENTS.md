@@ -46,6 +46,20 @@ call is a genuine ordering precondition — `createMainWorkspace` before a clone
 `releaseRepository` before a repository row goes — say so at the declaration, as
 `WorkspaceLifecycle` does.
 
+## Authentication
+
+Authentication happens at `qits-gateway`. This service resolves a principal from a trusted header
+(`X-Qits-User`, read by `projects/security/ForwardAuthMechanism`) and authenticates nothing.
+
+**`identity.isAnonymous()` is not a security state** — it means "no name for the audit row". A check
+of the form `if (identity.isAnonymous()) deny` would look like a security control and be worth
+nothing, because reaching this service at all already implies you are inside the trusted network.
+
+There is no auth variant to select and no authorization policy here, and roles are deliberately not
+resolved — the single role check the system has (`qits.auth.required-role`) is the gateway's. The
+identity exists to name `changed_by`; `EpicsAuditIdentityTest` is what pins that, and it uses the
+real header rather than `@TestSecurity` on purpose. See `migration-auth-plan.md`.
+
 ## Schema changes
 
 `domain/src/main/resources/db/projects/migration/`, hand-written, its own lineage on its own

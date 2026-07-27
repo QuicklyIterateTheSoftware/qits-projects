@@ -71,10 +71,12 @@ injection therefore needs `@PersistenceUnit("projects")`.
 
 ## Tests
 
-- `service/src/test/resources/application.properties` is **no longer the only copy** of
-  `quarkus.rest.path` and the MCP root-path — `src/main/resources/application.properties` carries
-  them for the packaged process. Change one and you must change both; a suite green because the
-  *test* copy is right proves nothing about what ships.
+- App-level config lives in `service/src/main/resources/application.properties` and **the tests
+  inherit it** — Quarkus reads main's copy during a test run and merges the test resources over it,
+  so `quarkus.rest.path`, the MCP root-path and the rest are already in effect. Never re-declare
+  them in `src/test/resources/application.properties`: a test copy is free to drift from the shipped
+  one, and then a green suite proves nothing about what actually starts. That file is for genuine
+  test-only overrides (in-memory H2, `clean-at-start`, `target/` paths, the test-jar index entry).
 - `OpenApiSchemaExportTest` writes `docs/openapi.yml`. Regenerate and commit whenever the REST
   surface changes: `./mvnw -pl service test -Dtest=OpenApiSchemaExportTest`. This is the largest
   published surface of the six services and the one a client is generated from, so the diff is the
@@ -99,9 +101,6 @@ injection therefore needs `@PersistenceUnit("projects")`.
 - Where a monorepo assertion queried another context's table, it is re-expressed against the seam —
   "did this context ask?" rather than "did the other context's row appear". `RecordingWorkspaceLifecycle`
   exists for exactly that.
-- `service/src/test/resources/application.properties` has to re-provide `quarkus.rest.path=/api`
-  and `quarkus.mcp.server.repository.http.root-path`: both are a consuming application's settings,
-  and without them every REST test 404s and the MCP server refuses to start.
 - Integration tests (`*IT`) that need real docker default to skipped (`skipITs` in the parent pom).
 
 ## What is deliberately absent

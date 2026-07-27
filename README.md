@@ -43,7 +43,19 @@ smart-HTTP host that serves these bare origins over the wire is
 `service/` is augmented by the `quarkus-maven-plugin` and produces a process:
 
     ./mvnw verify
-    java -jar service/target/quarkus-app/quarkus-run.jar   # :8080, REST under /api, MCP at /mcp/repository
+    java -jar service/target/quarkus-app/quarkus-run.jar   # :8080
+
+Everything it serves sits under its gateway segment, `/projects`:
+
+| | |
+|---|---|
+| `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
+| `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
+| `/projects/mcp` | the MCP server, still *named* `repository` |
+| `/projects/q/openapi`, `/projects/q/swagger-ui` | the API document and its UI (`quarkus.http.non-application-root-path`) |
+
+qits-gateway routes verbatim by prefix — `/projects/*` → this service, no rewriting — so the segment
+is served here or the service is not reachable through it. There is no unprefixed form.
 
 It was extracted as a library jar, on the reasoning that packaging it would need an auth variant, a
 webui and a main class. All three have lapsed: authentication terminates at `qits-gateway` and this

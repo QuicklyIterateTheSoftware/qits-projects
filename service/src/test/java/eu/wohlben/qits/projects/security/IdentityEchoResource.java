@@ -13,8 +13,8 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
  * Test-only: reports what the request resolved to, so the header contract can be asserted directly
  * rather than inferred from something that happens to write an audit row.
  *
- * <p>Served under {@code /api/test-identity} — the suite's {@code quarkus.rest.path=/api} mirrors a
- * consuming application's.
+ * <p>Served under {@code /projects/api/test-identity} — the suite inherits the shipped {@code
+ * quarkus.rest.path=/projects/api}, so this fixture is addressed exactly as a real route is.
  *
  * <p>Hidden from the OpenAPI document. {@code OpenApiSchemaExportTest} generates {@code
  * docs/openapi.yml} from a running {@code @QuarkusTest}, which indexes the test classpath too —

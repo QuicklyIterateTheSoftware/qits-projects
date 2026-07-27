@@ -26,7 +26,7 @@ import java.util.List;
  * closure for a repository added without the toggle. Edges cascade-delete with either repository,
  * so there is no delete surface here.
  */
-@Path("/repositories/{repositoryId}/submodules")
+@Path("/repositories/{repoId}/submodules")
 @Produces(MediaType.APPLICATION_JSON)
 public class RepositorySubmoduleController {
 
@@ -45,16 +45,16 @@ public class RepositorySubmoduleController {
 
   @GET
   public ListRepositorySubmodulesRequest.Response list(
-      @PathParam("repositoryId") String repositoryId) {
+      @PathParam("repoId") String repoId) {
     var entries =
-        repositoryService.listSubmodules(repositoryId).stream()
+        repositoryService.listSubmodules(repoId).stream()
             .map(
                 edge ->
                     new ListRepositorySubmodulesRequest.Response.Entry(
                         repositorySubmoduleMapper.toDto(edge)))
             .toList();
     var available =
-        repositoryService.listUnimportedSubmodules(repositoryId).stream()
+        repositoryService.listUnimportedSubmodules(repoId).stream()
             .map(
                 sub ->
                     new ListRepositorySubmodulesRequest.Response.Available(
@@ -75,9 +75,9 @@ public class RepositorySubmoduleController {
   @POST
   @Path("/import")
   public ImportRepositorySubmodulesRequest.Response importSubmodules(
-      @PathParam("repositoryId") String repositoryId) {
+      @PathParam("repoId") String repoId) {
     var entries =
-        repositoryService.importDirectSubmodules(repositoryId).stream()
+        repositoryService.importDirectSubmodules(repoId).stream()
             .map(
                 edge ->
                     new ListRepositorySubmodulesRequest.Response.Entry(
@@ -107,9 +107,9 @@ public class RepositorySubmoduleController {
   @Path("/prepare")
   @Consumes(MediaType.APPLICATION_JSON)
   public PrepareSubmoduleBackendRequest.Response prepare(
-      @PathParam("repositoryId") String repositoryId,
+      @PathParam("repoId") String repoId,
       @Valid PrepareSubmoduleBackendRequest request) {
-    var prepared = repositoryService.prepareSubmoduleBackend(repositoryId, request.backendUrl());
+    var prepared = repositoryService.prepareSubmoduleBackend(repoId, request.backendUrl());
     return new PrepareSubmoduleBackendRequest.Response(
         prepared.repositoryId(), prepared.name(), prepared.relativeUrl(), prepared.backendUrl());
   }

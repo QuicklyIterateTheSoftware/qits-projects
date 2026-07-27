@@ -30,6 +30,22 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
 `control/` is flat. The monorepo split this code across `domain.project.*`, `domain.repository.*`
 and `domain.seeding.*` to break cycles that do not exist here.
 
+## Paths
+
+Everything is served under this service's gateway segment — see the table in the README. Two things
+about that are easy to get wrong:
+
+- **`@WebSocket` does not follow `quarkus.rest.path`.** The remote-login socket spells
+  `/projects/api/...` out as a literal and has to be kept in step with the key by hand. Anything new
+  registered straight onto the Vert.x router is the same.
+- **The MCP server's name is not its path.** It is mounted at `/projects/mcp` and is still *named*
+  `repository` (`@McpServer("repository")`), because qits-workspace-daemon addresses it by name.
+  Renaming it breaks the daemon; an *undeclared* name stops the process booting outright.
+
+Path parameters naming a repository are `{repoId}` everywhere, including the submodule routes, which
+used `{repositoryId}` until the segment change. Parameter names are visible in the generated client,
+so keep them uniform.
+
 ## Adding a dependency on another context
 
 Don't. Declare a port in `domain/…/projects/control/`, inject it as `Instance<T>`, and make absent a

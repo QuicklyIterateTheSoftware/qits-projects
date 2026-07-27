@@ -37,7 +37,7 @@ class EpicsAuditIdentityTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRequest(name, null, null, null))
         .when()
-        .post("/api/projects")
+        .post("/projects/api/projects")
         .then()
         .statusCode(200)
         .extract()
@@ -53,7 +53,7 @@ class EpicsAuditIdentityTest {
     }
     return request
         .when()
-        .post("/api/projects/" + projectId + "/epics")
+        .post("/projects/api/projects/" + projectId + "/epics")
         .then()
         .statusCode(200)
         .extract()
@@ -66,7 +66,7 @@ class EpicsAuditIdentityTest {
 
     given()
         .when()
-        .get("/api/epics/" + epicId + "/audit")
+        .get("/projects/api/epics/" + epicId + "/audit")
         .then()
         .statusCode(200)
         .body("entries.changedBy", hasItem("alice"));
@@ -80,7 +80,7 @@ class EpicsAuditIdentityTest {
 
     given()
         .when()
-        .get("/api/epics/" + epicId + "/audit")
+        .get("/projects/api/epics/" + epicId + "/audit")
         .then()
         .statusCode(200)
         .body("entries.changedBy", everyItem(nullValue()));

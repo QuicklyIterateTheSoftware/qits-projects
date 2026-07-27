@@ -33,8 +33,15 @@ import org.jboss.logging.Logger;
  * the frontend's signal to refetch sync-status. Cross-origin handshakes are rejected globally by
  * {@code SameOriginUpgradeCheck}; the path is not in {@code PublicPaths}, so the upgrade requires
  * an authenticated identity.
+ *
+ * <p>The path is a <b>literal</b>: {@code @WebSocket} does not follow {@code quarkus.rest.path}, so
+ * the {@code /projects/api} prefix is spelled out here and has to be kept in step with that key by
+ * hand. It sits beside {@code /push}, {@code /pull} and {@code /sync} because that is what it is —
+ * a repository operation, not a terminal. The old {@code /api/terminal/...} grouping held three
+ * sockets; the other two moved into qits-workspace-daemon, and the websocket is the transport here,
+ * not the resource.
  */
-@WebSocket(path = "/api/terminal/repositories/{repoId}/remote-login")
+@WebSocket(path = "/projects/api/repositories/{repoId}/remote-login")
 public class RemoteLoginTerminalSocket {
 
   private static final Logger LOG = Logger.getLogger(RemoteLoginTerminalSocket.class);

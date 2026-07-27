@@ -42,7 +42,7 @@ public class RepositoryActiveProcessTest {
                 new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRequest(
                     "Repo Active Process Project", null, null, null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -54,7 +54,7 @@ public class RepositoryActiveProcessTest {
             new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRepositoryRequest(
                 fixtureUrl, null, null))
         .when()
-        .post("/api/projects/" + projectId + "/repositories")
+        .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -69,7 +69,7 @@ public class RepositoryActiveProcessTest {
         given()
             .contentType(ContentType.JSON)
             .when()
-            .post("/api/repositories/" + repoId + "/pull")
+            .post("/projects/api/repositories/" + repoId + "/pull")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("technicalProcessId", notNullValue())
@@ -86,7 +86,7 @@ public class RepositoryActiveProcessTest {
 
     given()
         .when()
-        .get("/api/repositories/" + repoId + "/active-process")
+        .get("/projects/api/repositories/" + repoId + "/active-process")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("technicalProcessId", nullValue());
@@ -101,7 +101,7 @@ public class RepositoryActiveProcessTest {
     try {
       given()
           .when()
-          .get("/api/repositories/" + repoId + "/active-process")
+          .get("/projects/api/repositories/" + repoId + "/active-process")
           .then()
           .statusCode(Response.Status.OK.getStatusCode())
           .body("technicalProcessId", equalTo(process.id()));
@@ -119,7 +119,7 @@ public class RepositoryActiveProcessTest {
       given()
           .contentType(ContentType.JSON)
           .when()
-          .post("/api/repositories/" + repoId + "/pull")
+          .post("/projects/api/repositories/" + repoId + "/pull")
           .then()
           .statusCode(Response.Status.OK.getStatusCode())
           .body("technicalProcessId", equalTo(active.id()));
@@ -139,7 +139,7 @@ public class RepositoryActiveProcessTest {
       given()
           .contentType(ContentType.JSON)
           .when()
-          .post("/api/repositories/" + repoId + "/sync")
+          .post("/projects/api/repositories/" + repoId + "/sync")
           .then()
           .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
     } finally {
@@ -151,7 +151,7 @@ public class RepositoryActiveProcessTest {
   public void activeProcessOnAnUnknownRepositoryIs404() {
     given()
         .when()
-        .get("/api/repositories/ghost/active-process")
+        .get("/projects/api/repositories/ghost/active-process")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }

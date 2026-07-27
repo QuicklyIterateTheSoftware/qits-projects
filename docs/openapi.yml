@@ -605,7 +605,7 @@ components:
         clearImplementedAt:
           type: boolean
 paths:
-  /api/epics/{epicId}/features:
+  /projects/api/epics/{epicId}/features:
     get:
       parameters:
       - name: epicId
@@ -648,7 +648,7 @@ paths:
       summary: Create Feature
       tags:
       - Epic Controller
-  /api/epics/{id}:
+  /projects/api/epics/{id}:
     put:
       parameters:
       - name: id
@@ -708,7 +708,7 @@ paths:
       summary: Delete
       tags:
       - Epic Controller
-  /api/epics/{id}/audit:
+  /projects/api/epics/{id}/audit:
     get:
       parameters:
       - name: id
@@ -726,7 +726,7 @@ paths:
       summary: Audit
       tags:
       - Epic Controller
-  /api/features/{featureId}/tasks:
+  /projects/api/features/{featureId}/tasks:
     get:
       parameters:
       - name: featureId
@@ -769,7 +769,7 @@ paths:
       summary: Create Task
       tags:
       - Feature Controller
-  /api/features/{id}:
+  /projects/api/features/{id}:
     put:
       parameters:
       - name: id
@@ -829,7 +829,7 @@ paths:
       summary: Delete
       tags:
       - Feature Controller
-  /api/projects:
+  /projects/api/projects:
     get:
       responses:
         "200":
@@ -860,7 +860,7 @@ paths:
       summary: Create
       tags:
       - Project Controller
-  /api/projects/{id}:
+  /projects/api/projects/{id}:
     put:
       parameters:
       - name: id
@@ -920,7 +920,7 @@ paths:
       summary: Delete
       tags:
       - Project Controller
-  /api/projects/{projectId}/epics:
+  /projects/api/projects/{projectId}/epics:
     get:
       parameters:
       - name: projectId
@@ -963,7 +963,7 @@ paths:
       summary: Create
       tags:
       - Project Epics Controller
-  /api/projects/{projectId}/repositories:
+  /projects/api/projects/{projectId}/repositories:
     get:
       parameters:
       - name: projectId
@@ -1006,7 +1006,7 @@ paths:
       summary: Create Repository
       tags:
       - Project Controller
-  /api/repositories/{repoId}:
+  /projects/api/repositories/{repoId}:
     get:
       parameters:
       - name: repoId
@@ -1041,7 +1041,7 @@ paths:
       summary: Delete
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/active-process:
+  /projects/api/repositories/{repoId}/active-process:
     get:
       parameters:
       - name: repoId
@@ -1059,7 +1059,7 @@ paths:
       summary: Active Process
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/branches:
+  /projects/api/repositories/{repoId}/branches:
     delete:
       parameters:
       - name: repoId
@@ -1100,7 +1100,7 @@ paths:
       summary: Branches
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/commits:
+  /projects/api/repositories/{repoId}/commits:
     get:
       parameters:
       - name: repoId
@@ -1124,7 +1124,7 @@ paths:
       summary: Commits
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/commits/{commitHash}/changes:
+  /projects/api/repositories/{repoId}/commits/{commitHash}/changes:
     get:
       parameters:
       - name: commitHash
@@ -1151,7 +1151,7 @@ paths:
       summary: Commit Changes
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/commits/{commitHash}/diff:
+  /projects/api/repositories/{repoId}/commits/{commitHash}/diff:
     get:
       parameters:
       - name: commitHash
@@ -1184,7 +1184,7 @@ paths:
       summary: Commit File Diff
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/main-branch:
+  /projects/api/repositories/{repoId}/main-branch:
     put:
       parameters:
       - name: repoId
@@ -1210,7 +1210,7 @@ paths:
       summary: Set Main Branch
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/pull:
+  /projects/api/repositories/{repoId}/pull:
     post:
       parameters:
       - name: repoId
@@ -1228,7 +1228,7 @@ paths:
       summary: Pull
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/push:
+  /projects/api/repositories/{repoId}/push:
     post:
       parameters:
       - name: repoId
@@ -1246,46 +1246,10 @@ paths:
       summary: Push
       tags:
       - Repository Controller
-  /api/repositories/{repoId}/sync:
-    post:
-      parameters:
-      - name: repoId
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Response23"
-      summary: Sync
-      tags:
-      - Repository Controller
-  /api/repositories/{repoId}/sync-status:
+  /projects/api/repositories/{repoId}/submodules:
     get:
       parameters:
       - name: repoId
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SyncStatusDto"
-      summary: Sync Status
-      tags:
-      - Repository Controller
-  /api/repositories/{repositoryId}/submodules:
-    get:
-      parameters:
-      - name: repositoryId
         in: path
         required: true
         schema:
@@ -1300,10 +1264,10 @@ paths:
       summary: List
       tags:
       - Repository Submodule Controller
-  /api/repositories/{repositoryId}/submodules/import:
+  /projects/api/repositories/{repoId}/submodules/import:
     post:
       parameters:
-      - name: repositoryId
+      - name: repoId
         in: path
         required: true
         schema:
@@ -1318,10 +1282,10 @@ paths:
       summary: Import Submodules
       tags:
       - Repository Submodule Controller
-  /api/repositories/{repositoryId}/submodules/prepare:
+  /projects/api/repositories/{repoId}/submodules/prepare:
     post:
       parameters:
-      - name: repositoryId
+      - name: repoId
         in: path
         required: true
         schema:
@@ -1344,7 +1308,43 @@ paths:
       summary: Prepare
       tags:
       - Repository Submodule Controller
-  /api/tasks/{id}:
+  /projects/api/repositories/{repoId}/sync:
+    post:
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response23"
+      summary: Sync
+      tags:
+      - Repository Controller
+  /projects/api/repositories/{repoId}/sync-status:
+    get:
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncStatusDto"
+      summary: Sync Status
+      tags:
+      - Repository Controller
+  /projects/api/tasks/{id}:
     put:
       parameters:
       - name: id

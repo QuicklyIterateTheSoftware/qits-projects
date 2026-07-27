@@ -32,7 +32,7 @@ public class RepositorySubmoduleControllerTest {
                 new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRequest(
                     "Submodule API", null, null, null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -43,7 +43,7 @@ public class RepositorySubmoduleControllerTest {
             new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRepositoryRequest(
                 url, null, importSubmodules))
         .when()
-        .post("/api/projects/" + projectId + "/repositories")
+        .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -57,7 +57,7 @@ public class RepositorySubmoduleControllerTest {
     String superId = importRepository("submodule-super.git");
     given()
         .when()
-        .get("/api/repositories/" + superId + "/submodules")
+        .get("/projects/api/repositories/" + superId + "/submodules")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", hasSize(2))
@@ -73,7 +73,7 @@ public class RepositorySubmoduleControllerTest {
     // Toggle off: nothing imported, both direct submodules advertised as available.
     given()
         .when()
-        .get("/api/repositories/" + superId + "/submodules")
+        .get("/projects/api/repositories/" + superId + "/submodules")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", empty())
@@ -83,7 +83,7 @@ public class RepositorySubmoduleControllerTest {
     // The detail view's action: import this level.
     given()
         .when()
-        .post("/api/repositories/" + superId + "/submodules/import")
+        .post("/projects/api/repositories/" + superId + "/submodules/import")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", hasSize(2))
@@ -92,13 +92,13 @@ public class RepositorySubmoduleControllerTest {
     // Idempotent: importing again changes nothing.
     given()
         .when()
-        .post("/api/repositories/" + superId + "/submodules/import")
+        .post("/projects/api/repositories/" + superId + "/submodules/import")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", hasSize(2));
     given()
         .when()
-        .get("/api/repositories/" + superId + "/submodules")
+        .get("/projects/api/repositories/" + superId + "/submodules")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", hasSize(2))
@@ -116,7 +116,7 @@ public class RepositorySubmoduleControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositorySubmoduleController.PrepareSubmoduleBackendRequest(backend))
         .when()
-        .post("/api/repositories/" + superId + "/submodules/prepare")
+        .post("/projects/api/repositories/" + superId + "/submodules/prepare")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("name", is("submodule-shared"))
@@ -127,7 +127,7 @@ public class RepositorySubmoduleControllerTest {
     // now dedups onto the pre-served sibling rather than creating a duplicate.
     given()
         .when()
-        .post("/api/repositories/" + superId + "/submodules/import")
+        .post("/projects/api/repositories/" + superId + "/submodules/import")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", hasSize(1))
@@ -143,7 +143,7 @@ public class RepositorySubmoduleControllerTest {
             new RepositorySubmoduleController.PrepareSubmoduleBackendRequest(
                 "http://qits:8080/git/proj/qits-gateway"))
         .when()
-        .post("/api/repositories/" + superId + "/submodules/prepare")
+        .post("/projects/api/repositories/" + superId + "/submodules/prepare")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -153,7 +153,7 @@ public class RepositorySubmoduleControllerTest {
     String repoId = importRepository("testing-repo.git");
     given()
         .when()
-        .get("/api/repositories/" + repoId + "/submodules")
+        .get("/projects/api/repositories/" + repoId + "/submodules")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries", empty())

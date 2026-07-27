@@ -20,8 +20,10 @@ import java.util.List;
 /**
  * The "repository" MCP server — the working surface for a project's git repositories, exposed to an
  * LLM. Every tool is bound to the named {@code repository} MCP server (mounted at {@code
- * /mcp/repository}); nothing from other domain areas (projects, feature flows) is exposed here, so
- * a client connected to this endpoint only ever sees repository tools and stays on task.
+ * /projects/mcp}); nothing from other domain areas (projects, feature flows) is exposed here, so a
+ * client connected to this endpoint only ever sees repository tools and stays on task. The server
+ * <em>name</em> stays {@code repository} even though the path carries this service's segment — the
+ * tools really are repository-scoped, and qits-workspace-daemon addresses the server by name.
  *
  * <p><strong>Use case: working inside a repository.</strong> Inspect its branches, commits and
  * diffs; manipulate workspaces (branch off, integrate, clean up, merge a parent in). Defining and

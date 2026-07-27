@@ -94,8 +94,8 @@ public class RepositoryController {
   // than ported, because a port whose whole body is "call the other context's service" is just a
   // dependency with extra steps.
   //
-  // NOTE FOR THE ORCHESTRATOR: qits-workspaces' own WorkspaceController does not currently expose
-  // them under /repositories, so these two routes are unowned as of this extraction.
+  // They are now owned: qits-workspaces serves both from its own BranchController, over the
+  // WorkspaceService methods they always called — under its own segment, not this one.
 
   public static record DeleteBranchRequest() {
     public record Response(boolean success) {}

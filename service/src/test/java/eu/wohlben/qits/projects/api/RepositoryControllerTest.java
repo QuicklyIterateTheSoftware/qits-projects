@@ -32,7 +32,7 @@ public class RepositoryControllerTest {
                 new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRequest(
                     "Repo Project", null, null, null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -44,7 +44,7 @@ public class RepositoryControllerTest {
             new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRepositoryRequest(
                 url, null, null))
         .when()
-        .post("/api/projects/" + projectId + "/repositories")
+        .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -58,7 +58,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId)
+        .get("/projects/api/repositories/" + repoId)
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repository.id", equalTo(repoId));
@@ -66,7 +66,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .delete("/api/repositories/" + repoId)
+        .delete("/projects/api/repositories/" + repoId)
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("success", equalTo(true));
@@ -79,7 +79,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/branches")
+        .get("/projects/api/repositories/" + repoId + "/branches")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branches.name", hasItems("master", "feature"));
@@ -94,7 +94,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("branch", "feature")
         .when()
-        .delete("/api/repositories/" + repoId + "/branches")
+        .delete("/projects/api/repositories/" + repoId + "/branches")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("success", equalTo(true));
@@ -102,7 +102,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/branches")
+        .get("/projects/api/repositories/" + repoId + "/branches")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branches.name", not(hasItem("feature")));
@@ -123,7 +123,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("branch", "-D")
         .when()
-        .delete("/api/repositories/" + repoId + "/branches")
+        .delete("/projects/api/repositories/" + repoId + "/branches")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -138,7 +138,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.PullRepositoryRequest())
         .when()
-        .post("/api/repositories/" + repoId + "/pull")
+        .post("/projects/api/repositories/" + repoId + "/pull")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("technicalProcessId", not(emptyOrNullString()));
@@ -152,7 +152,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.PullRepositoryRequest())
         .when()
-        .post("/api/repositories/does-not-exist/pull")
+        .post("/projects/api/repositories/does-not-exist/pull")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -168,7 +168,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.PushRepositoryRequest())
         .when()
-        .post("/api/repositories/" + repoId + "/push")
+        .post("/projects/api/repositories/" + repoId + "/push")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("technicalProcessId", not(emptyOrNullString()));
@@ -182,7 +182,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.PushRepositoryRequest())
         .when()
-        .post("/api/repositories/does-not-exist/push")
+        .post("/projects/api/repositories/does-not-exist/push")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -198,7 +198,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.SyncRepositoryRequest())
         .when()
-        .post("/api/repositories/" + repoId + "/sync")
+        .post("/projects/api/repositories/" + repoId + "/sync")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("technicalProcessId", not(emptyOrNullString()));
@@ -212,7 +212,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.SyncRepositoryRequest())
         .when()
-        .post("/api/repositories/does-not-exist/sync")
+        .post("/projects/api/repositories/does-not-exist/sync")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -224,7 +224,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId)
+        .get("/projects/api/repositories/" + repoId)
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repository.mainBranch", equalTo("master"));
@@ -238,7 +238,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/sync-status")
+        .get("/projects/api/repositories/" + repoId + "/sync-status")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branch", equalTo("master"))
@@ -256,7 +256,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.SetMainBranchRequest("feature"))
         .when()
-        .put("/api/repositories/" + repoId + "/main-branch")
+        .put("/projects/api/repositories/" + repoId + "/main-branch")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repository.mainBranch", equalTo("feature"));
@@ -265,7 +265,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/sync-status")
+        .get("/projects/api/repositories/" + repoId + "/sync-status")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branch", equalTo("feature"));
@@ -301,7 +301,7 @@ public class RepositoryControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/sync-status")
+        .get("/projects/api/repositories/" + repoId + "/sync-status")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("remoteReachable", equalTo(true))
@@ -332,7 +332,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(new RepositoryController.SetMainBranchRequest("does-not-exist"))
         .when()
-        .put("/api/repositories/" + repoId + "/main-branch")
+        .put("/projects/api/repositories/" + repoId + "/main-branch")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -349,5 +349,7 @@ public class RepositoryControllerTest {
   // testCleanupBranchRejectsBranchWithChildren, testCleanupBranchRejectsMainBranch and
   // testCleanupBranchRequiresBranch.
   //
-  // NOTE FOR THE ORCHESTRATOR: they are UNOWNED as of this extraction, with the routes they cover.
+  // All but one moved with the routes, to qits-workspaces' BranchControllerTest. The exception is
+  // testBranchesReportCanCleanup, which asserts the canCleanup flag of GET /branches — a route this
+  // controller still owns, computing the flag through the WorkspaceLookup SPI. It has no home yet.
 }

@@ -43,7 +43,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRequest("Epics Project", null, null, null))
         .when()
-        .post("/api/projects")
+        .post("/projects/api/projects")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -55,7 +55,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, false))
         .when()
-        .post("/api/projects/" + projectId + "/repositories")
+        .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -74,7 +74,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new ProjectEpicsController.CreateEpicRequest("Planning domain", "The spine"))
             .when()
-            .post("/api/projects/" + projectId + "/epics")
+            .post("/projects/api/projects/" + projectId + "/epics")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("epic.id", notNullValue())
@@ -86,13 +86,13 @@ class EpicApiTest {
     // Get + list.
     given()
         .when()
-        .get("/api/epics/" + epicId)
+        .get("/projects/api/epics/" + epicId)
         .then()
         .statusCode(200)
         .body("epic.id", equalTo(epicId));
     given()
         .when()
-        .get("/api/projects/" + projectId + "/epics")
+        .get("/projects/api/projects/" + projectId + "/epics")
         .then()
         .statusCode(200)
         .body("entries.epic.id", hasItem(epicId));
@@ -102,7 +102,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new EpicController.UpdateEpicRequest("Planning domain v2", "Longer"))
         .when()
-        .put("/api/epics/" + epicId)
+        .put("/projects/api/epics/" + epicId)
         .then()
         .statusCode(200)
         .body("epic.title", equalTo("Planning domain v2"));
@@ -113,7 +113,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new EpicController.CreateFeatureRequest("Feature A", null, null))
             .when()
-            .post("/api/epics/" + epicId + "/features")
+            .post("/projects/api/epics/" + epicId + "/features")
             .then()
             .statusCode(200)
             .body("feature.epicId", equalTo(epicId))
@@ -126,7 +126,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new FeatureController.CreateTaskRequest(repoId, "Task 1", null, null))
             .when()
-            .post("/api/features/" + featureId + "/tasks")
+            .post("/projects/api/features/" + featureId + "/tasks")
             .then()
             .statusCode(200)
             .body("task.repositoryId", equalTo(repoId))
@@ -134,13 +134,13 @@ class EpicApiTest {
             .extract()
             .path("task.id");
 
-    given().when().get("/api/features/" + featureId).then().statusCode(200);
-    given().when().get("/api/tasks/" + taskId).then().statusCode(200);
+    given().when().get("/projects/api/features/" + featureId).then().statusCode(200);
+    given().when().get("/projects/api/tasks/" + taskId).then().statusCode(200);
 
     // Audit subtree: every create landed with the forwardauth `dev` identity.
     given()
         .when()
-        .get("/api/epics/" + epicId + "/audit")
+        .get("/projects/api/epics/" + epicId + "/audit")
         .then()
         .statusCode(200)
         .body("entries.operation", hasItem("CREATE"))
@@ -151,30 +151,30 @@ class EpicApiTest {
     // Delete the epic cascades features + tasks.
     given()
         .when()
-        .delete("/api/epics/" + epicId)
+        .delete("/projects/api/epics/" + epicId)
         .then()
         .statusCode(200)
         .body("success", equalTo(true));
     given()
         .when()
-        .get("/api/epics/" + epicId)
+        .get("/projects/api/epics/" + epicId)
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     given()
         .when()
-        .get("/api/features/" + featureId)
+        .get("/projects/api/features/" + featureId)
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
     given()
         .when()
-        .get("/api/tasks/" + taskId)
+        .get("/projects/api/tasks/" + taskId)
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
 
     // The audit trail survives deletion (queried by epicId) and now carries the DELETE rows.
     given()
         .when()
-        .get("/api/epics/" + epicId + "/audit")
+        .get("/projects/api/epics/" + epicId + "/audit")
         .then()
         .statusCode(200)
         .body("entries.operation", hasItem("DELETE"))
@@ -192,7 +192,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new ProjectEpicsController.CreateEpicRequest("E", null))
             .when()
-            .post("/api/projects/" + projectA + "/epics")
+            .post("/projects/api/projects/" + projectA + "/epics")
             .then()
             .statusCode(200)
             .extract()
@@ -202,7 +202,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new EpicController.CreateFeatureRequest("F", null, null))
             .when()
-            .post("/api/epics/" + epicId + "/features")
+            .post("/projects/api/epics/" + epicId + "/features")
             .then()
             .statusCode(200)
             .extract()
@@ -213,7 +213,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new FeatureController.CreateTaskRequest(repoInB, "T", null, null))
         .when()
-        .post("/api/features/" + featureId + "/tasks")
+        .post("/projects/api/features/" + featureId + "/tasks")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -224,7 +224,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new ProjectEpicsController.CreateEpicRequest("X", null))
         .when()
-        .post("/api/projects/ghost/epics")
+        .post("/projects/api/projects/ghost/epics")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -236,7 +236,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new ProjectEpicsController.CreateEpicRequest("  ", null))
         .when()
-        .post("/api/projects/" + projectId + "/epics")
+        .post("/projects/api/projects/" + projectId + "/epics")
         .then()
         .statusCode(anyOf(equalTo(Response.Status.BAD_REQUEST.getStatusCode()), equalTo(422)));
   }
@@ -249,7 +249,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new ProjectEpicsController.CreateEpicRequest("E", null))
             .when()
-            .post("/api/projects/" + projectId + "/epics")
+            .post("/projects/api/projects/" + projectId + "/epics")
             .then()
             .statusCode(200)
             .extract()
@@ -259,7 +259,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new EpicController.CreateFeatureRequest("F", null, null))
             .when()
-            .post("/api/epics/" + epicId + "/features")
+            .post("/projects/api/epics/" + epicId + "/features")
             .then()
             .statusCode(200)
             .extract()
@@ -269,7 +269,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new FeatureController.CreateTaskRequest("no-such-repo", "T", null, null))
         .when()
-        .post("/api/features/" + featureId + "/tasks")
+        .post("/projects/api/features/" + featureId + "/tasks")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -282,7 +282,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new ProjectEpicsController.CreateEpicRequest("E", null))
             .when()
-            .post("/api/projects/" + projectId + "/epics")
+            .post("/projects/api/projects/" + projectId + "/epics")
             .then()
             .statusCode(200)
             .extract()
@@ -292,7 +292,7 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new EpicController.CreateFeatureRequest("F", null, "ghost-feature"))
         .when()
-        .post("/api/epics/" + epicId + "/features")
+        .post("/projects/api/epics/" + epicId + "/features")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -305,7 +305,7 @@ class EpicApiTest {
             .contentType(ContentType.JSON)
             .body(new ProjectEpicsController.CreateEpicRequest("E", null))
             .when()
-            .post("/api/projects/" + projectId + "/epics")
+            .post("/projects/api/projects/" + projectId + "/epics")
             .then()
             .statusCode(200)
             .extract()
@@ -314,14 +314,14 @@ class EpicApiTest {
         .contentType(ContentType.JSON)
         .body(new EpicController.UpdateEpicRequest("E2", null))
         .when()
-        .put("/api/epics/" + epicId)
+        .put("/projects/api/epics/" + epicId)
         .then()
         .statusCode(200);
 
     // Newest first: UPDATE then CREATE (delete would remove the epic and 404 the audit endpoint).
     given()
         .when()
-        .get("/api/epics/" + epicId + "/audit")
+        .get("/projects/api/epics/" + epicId + "/audit")
         .then()
         .statusCode(200)
         .body("entries.operation", contains("UPDATE", "CREATE"));

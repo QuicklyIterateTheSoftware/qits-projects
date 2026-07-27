@@ -38,7 +38,7 @@ public class RepositoryMcpToolsTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRequest(name, null, null, null))
         .when()
-        .post("/api/projects")
+        .post("/projects/api/projects")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -50,7 +50,7 @@ public class RepositoryMcpToolsTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, null))
         .when()
-        .post("/api/projects/" + projectId + "/repositories")
+        .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -75,7 +75,7 @@ public class RepositoryMcpToolsTest {
    */
   private McpStreamableTestClient client(String projectId, String repositoryId) {
     return McpAssured.newStreamableClient()
-        .setMcpPath("/mcp/repository")
+        .setMcpPath("/projects/mcp")
         .setAdditionalHeaders(
             msg -> {
               MultiMap headers = MultiMap.caseInsensitiveMultiMap();
@@ -192,7 +192,7 @@ public class RepositoryMcpToolsTest {
    */
   private McpStreamableTestClient readOnlyClient(String projectId) {
     return McpAssured.newStreamableClient()
-        .setMcpPath("/mcp/repository?" + ReadOnlyRepositoryToolFilter.READ_ONLY_PARAM + "=true")
+        .setMcpPath("/projects/mcp?" + ReadOnlyRepositoryToolFilter.READ_ONLY_PARAM + "=true")
         .setAdditionalHeaders(
             msg -> {
               MultiMap headers = MultiMap.caseInsensitiveMultiMap();

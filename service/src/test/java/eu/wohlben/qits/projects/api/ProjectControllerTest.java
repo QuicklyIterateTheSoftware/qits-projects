@@ -27,7 +27,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRequest("Ctrl Project", null, "Desc", null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("project.id", notNullValue())
@@ -40,7 +40,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/projects/" + id)
+        .get("/projects/api/projects/" + id)
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("project.id", equalTo(id))
@@ -50,7 +50,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/projects")
+        .get("/projects/api/projects")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries.project.id", hasItem(id));
@@ -60,7 +60,7 @@ public class ProjectControllerTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.UpdateProjectRequest("Updated Name", "Updated Desc"))
         .when()
-        .put("/api/projects/" + id)
+        .put("/projects/api/projects/" + id)
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("project.name", equalTo("Updated Name"))
@@ -70,7 +70,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .delete("/api/projects/" + id)
+        .delete("/projects/api/projects/" + id)
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("success", equalTo(true));
@@ -79,7 +79,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/projects/" + id)
+        .get("/projects/api/projects/" + id)
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -90,7 +90,7 @@ public class ProjectControllerTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRequest("", null, null, null))
         .when()
-        .post("/api/projects")
+        .post("/projects/api/projects")
         .then()
         .statusCode(anyOf(equalTo(Response.Status.BAD_REQUEST.getStatusCode()), equalTo(422)));
   }
@@ -101,7 +101,7 @@ public class ProjectControllerTest {
         .contentType(ContentType.JSON)
         .body(new ProjectController.UpdateProjectRequest("Name", null))
         .when()
-        .put("/api/projects/non-existent")
+        .put("/projects/api/projects/non-existent")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -111,7 +111,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .delete("/api/projects/non-existent")
+        .delete("/projects/api/projects/non-existent")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -124,7 +124,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRequest("Delete Project", null, null, null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -136,7 +136,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, null))
             .when()
-            .post("/api/projects/" + projectId + "/repositories")
+            .post("/projects/api/projects/" + projectId + "/repositories")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -146,7 +146,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .delete("/api/projects/" + projectId)
+        .delete("/projects/api/projects/" + projectId)
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("success", equalTo(true));
@@ -155,7 +155,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/projects/" + projectId)
+        .get("/projects/api/projects/" + projectId)
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
 
@@ -163,7 +163,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId)
+        .get("/projects/api/repositories/" + repoId)
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
@@ -176,7 +176,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRequest("Shortcut Project", null, null, null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -188,7 +188,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, null))
             .when()
-            .post("/api/projects/" + projectId + "/repositories")
+            .post("/projects/api/projects/" + projectId + "/repositories")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .body("repository.id", notNullValue())
@@ -200,7 +200,7 @@ public class ProjectControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/projects/" + projectId + "/repositories")
+        .get("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("entries.repository.id", hasItem(repoId));
@@ -216,7 +216,7 @@ public class ProjectControllerTest {
           .contentType(ContentType.JSON)
           .body(new ProjectController.CreateProjectRequest("Slug Check", bad, null, null))
           .when()
-          .post("/api/projects")
+          .post("/projects/api/projects")
           .then()
           .statusCode(anyOf(equalTo(Response.Status.BAD_REQUEST.getStatusCode()), equalTo(422)));
     }
@@ -230,7 +230,7 @@ public class ProjectControllerTest {
         .body(
             new ProjectController.CreateProjectRequest("Wrapper Resp", "wrapper-resp", null, null))
         .when()
-        .post("/api/projects")
+        .post("/projects/api/projects")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("project.slug", equalTo("wrapper-resp"))
@@ -246,7 +246,7 @@ public class ProjectControllerTest {
             new ProjectController.CreateProjectRequest(
                 "Mismatch", "mismatch", null, "https://example.com/something-else.git"))
         .when()
-        .post("/api/projects")
+        .post("/projects/api/projects")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -259,7 +259,7 @@ public class ProjectControllerTest {
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRequest("No Second", null, null, null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -271,7 +271,7 @@ public class ProjectControllerTest {
             new ProjectController.CreateProjectRepositoryRequest(
                 fixtureUrl, RepositoryArchetype.PROJECT, false))
         .when()
-        .post("/api/projects/" + projectId + "/repositories")
+        .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }

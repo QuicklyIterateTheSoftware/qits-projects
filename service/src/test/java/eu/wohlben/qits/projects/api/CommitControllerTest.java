@@ -26,7 +26,7 @@ public class CommitControllerTest {
                 new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRequest(
                     "Repo Project", null, null, null))
             .when()
-            .post("/api/projects")
+            .post("/projects/api/projects")
             .then()
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
@@ -38,7 +38,7 @@ public class CommitControllerTest {
             new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRepositoryRequest(
                 fixtureUrl, null, null))
         .when()
-        .post("/api/projects/" + projectId + "/repositories")
+        .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .extract()
@@ -55,7 +55,7 @@ public class CommitControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("branch", "feature")
         .when()
-        .get("/api/repositories/" + repoId + "/commits")
+        .get("/projects/api/repositories/" + repoId + "/commits")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branch", equalTo("feature"))
@@ -79,7 +79,7 @@ public class CommitControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("branch", "master")
         .when()
-        .get("/api/repositories/" + repoId + "/commits")
+        .get("/projects/api/repositories/" + repoId + "/commits")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("branch", equalTo("master"))
@@ -99,7 +99,7 @@ public class CommitControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("branch", "-D")
         .when()
-        .get("/api/repositories/" + repoId + "/commits")
+        .get("/projects/api/repositories/" + repoId + "/commits")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -111,7 +111,7 @@ public class CommitControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/commits")
+        .get("/projects/api/repositories/" + repoId + "/commits")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -126,7 +126,7 @@ public class CommitControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/commits/feature/changes")
+        .get("/projects/api/repositories/" + repoId + "/commits/feature/changes")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("commit", equalTo("feature"))
@@ -147,7 +147,7 @@ public class CommitControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("parent", "master")
         .when()
-        .get("/api/repositories/" + repoId + "/commits/feature/changes")
+        .get("/projects/api/repositories/" + repoId + "/commits/feature/changes")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("parent", equalTo("master"))
@@ -163,7 +163,7 @@ public class CommitControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("path", "feature.txt")
         .when()
-        .get("/api/repositories/" + repoId + "/commits/feature/diff")
+        .get("/projects/api/repositories/" + repoId + "/commits/feature/diff")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("path", equalTo("feature.txt"))
@@ -179,7 +179,7 @@ public class CommitControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/commits/-D/changes")
+        .get("/projects/api/repositories/" + repoId + "/commits/-D/changes")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -192,7 +192,7 @@ public class CommitControllerTest {
         .contentType(ContentType.JSON)
         .queryParam("path", "-rf")
         .when()
-        .get("/api/repositories/" + repoId + "/commits/feature/diff")
+        .get("/projects/api/repositories/" + repoId + "/commits/feature/diff")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -204,7 +204,7 @@ public class CommitControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/" + repoId + "/commits/feature/diff")
+        .get("/projects/api/repositories/" + repoId + "/commits/feature/diff")
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
@@ -214,7 +214,7 @@ public class CommitControllerTest {
     given()
         .contentType(ContentType.JSON)
         .when()
-        .get("/api/repositories/does-not-exist/commits/feature/changes")
+        .get("/projects/api/repositories/does-not-exist/commits/feature/changes")
         .then()
         .statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }

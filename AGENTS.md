@@ -71,6 +71,22 @@ injection therefore needs `@PersistenceUnit("projects")`.
 
 ## Tests
 
+- `service/src/test/resources/application.properties` is **no longer the only copy** of
+  `quarkus.rest.path` and the MCP root-path — `src/main/resources/application.properties` carries
+  them for the packaged process. Change one and you must change both; a suite green because the
+  *test* copy is right proves nothing about what ships.
+- `OpenApiSchemaExportTest` writes `docs/openapi.yml`. Regenerate and commit whenever the REST
+  surface changes: `./mvnw -pl service test -Dtest=OpenApiSchemaExportTest`. This is the largest
+  published surface of the six services and the one a client is generated from, so the diff is the
+  review. It runs as a `@QuarkusTest` and indexes the test classpath, so any `@Path` resource under
+  `src/test` lands in the document unless it is `@Operation(hidden = true)` — hence the annotation
+  on `IdentityEchoResource`.
+- **`mvn verify` passing does not mean the app starts.** Augmentation runs per `@QuarkusTest`
+  regardless of packaging, so a missing `quarkus-maven-plugin` execution is invisible to the suite —
+  it was in fact missed here once and only a boot caught it. After touching `service/pom.xml`, run
+  `java -jar service/target/quarkus-app/quarkus-run.jar` and hit a route.
+- A `Failed to start quarkus` / `Port already bound: 8081` failure is the known flake
+  (`migration-plan.md` §9 item 14) — `@QuarkusTest` restarts racing for the test port. Re-run first.
 - `GitFixtures.path("<name>.git")` is how a test gets a git origin to clone. It returns the
   committed bare fixtures (`submodule-*.git`) as they are and builds the derived ones
   (`testing-repo.git`, `demo-demo.git`, `qits-qits.git`) on first use. Never reintroduce the

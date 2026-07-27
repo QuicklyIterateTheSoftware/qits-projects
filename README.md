@@ -38,7 +38,16 @@ smart-HTTP host that serves these bare origins over the wire is
 
     domain/   the aggregate, persistence, control, and the ports out (a library jar, no JAX-RS)
     epics/    the planning module, own datasource + own Flyway lineage, no dependency on domain
-    service/  the REST + MCP + websocket boundary over both (a library jar, not a deployable)
+    service/  the REST + MCP + websocket boundary over both — THE APPLICATION
+
+`service/` is augmented by the `quarkus-maven-plugin` and produces a process:
+
+    ./mvnw verify
+    java -jar service/target/quarkus-app/quarkus-run.jar   # :8080, REST under /api, MCP at /mcp/repository
+
+It was extracted as a library jar, on the reasoning that packaging it would need an auth variant, a
+webui and a main class. All three have lapsed: authentication terminates at `qits-gateway` and this
+service reads a header, the webui stays in the monorepo, and Quarkus supplies the main class.
 
 Coordinates are namespaced (`eu.wohlben.qits:qits-projects-*`) because the directories are the
 generic `domain`/`service`/`epics` and installing `eu.wohlben:domain` would clobber the monorepo jar

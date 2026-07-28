@@ -50,7 +50,9 @@ allure-results/
 # as a reminder/template; turn it into a hand-written db/migration/V#__name.sql, then delete it.
 PENDING_MIGRATION.sql
 
-# Local per-machine Quarkus config overrides (e.g. WSL2 git-host); never committed.
+# Local per-machine Quarkus config overrides (e.g. WSL2 git-host, or a port that does not collide
+# with a sibling service running beside it); never committed. Read at config ordinal 295, above the
+# packaged application.properties. The tracked .env.example beside it is the template.
 .env
 
 # IDE (m2e/jdtls) build output — kept separate from Maven's target/ so the language server

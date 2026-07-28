@@ -107,8 +107,23 @@ nothing, because reaching this service at all already implies you are inside the
 
 There is no auth variant to select and no authorization policy here, and roles are deliberately not
 resolved — the single role check the system has (`qits.auth.required-role`) is the gateway's. The
-identity exists to name `changed_by`; `EpicsAuditIdentityTest` is what pins that, and it uses the
-real header rather than `@TestSecurity` on purpose. See `migration-auth-plan.md`.
+gateway is the only place a login happens, and it fixes its variant at **build** time
+(`-Dqits.variant`), so no env var and no properties file can put an open mechanism back under a
+gateway built as `oauth`. `X-Qits-*` is that gateway's reserved namespace: the whole prefix is
+stripped from every inbound request unconditionally, which is the entire reason a header can be
+trusted as an identity here.
+
+The identity exists to name `changed_by`; `EpicsAuditIdentityTest` is what pins that, and it uses
+the real header rather than `@TestSecurity` on purpose. The header **is** the contract under test —
+nothing else ever produces a principal in a deployed service — so `@TestSecurity` would install an
+identity without going through the mechanism and prove a path the deployment never takes. That is
+also how the bug ran unseen: this repo shipped `SecurityIdentity` with no mechanism behind it,
+`changed_by` was null on every row, and an annotation that fabricates an identity would have gone on
+passing the whole time.
+
+Do not lift `projects/security` into a shared `libs/qits-auth`. Every repo builds from a clone of
+itself alone, so ~115 lines duplicated per service is cheaper than a jar that has to travel to all of
+them; the duplication is the decision, not an oversight.
 
 ## Schema changes
 

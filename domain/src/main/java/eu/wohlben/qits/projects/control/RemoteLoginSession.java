@@ -1,7 +1,5 @@
 package eu.wohlben.qits.projects.control;
 
-import com.pty4j.PtyProcess;
-import com.pty4j.WinSize;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -20,11 +18,18 @@ import org.jboss.logging.Logger;
 /**
  * One live <em>host-side</em> PTY running the interactive sign-in push — {@code CommandSession}
  * minus the container coupling (no {@code docker exec} prefix, no pid-file group kill, no audit
- * log): pty4j starts the child as the session leader on its own controlling terminal, so {@code
- * destroy()}/{@code destroyForcibly()} is complete termination. Same replay contract as the
- * registry sessions: a single reader thread drains the PTY into a bounded ring and fans chunks out
- * to attached {@link CommandOutputSink}s under the session monitor, so a freshly attached sink
- * never interleaves replayed and live output.
+ * log): the child is launched under {@code setsid --ctty} on the terminal's slave device, so it is
+ * the session leader owning that controlling terminal and {@code destroy()}/{@code
+ * destroyForcibly()} is complete termination. Same replay contract as the registry sessions: a
+ * single reader thread drains the PTY into a bounded ring and fans chunks out to attached {@link
+ * CommandOutputSink}s under the session monitor, so a freshly attached sink never interleaves
+ * replayed and live output.
+ *
+ * <p>The terminal and the process are two objects rather than pty4j's single {@code PtyProcess}
+ * because {@link ForeignPty} is only the pseudo-terminal — the child is a plain {@link
+ * ProcessBuilder} one whose stdio happens to be the slave device ({@link ForeignPty}'s javadoc has
+ * why pty4j had to go). Streams and resize therefore come from the PTY, and liveness, exit code and
+ * killing from the {@link Process}; nothing else about the session changed.
  *
  * <p>Each attach registers an end-listener alongside its sink; when the process exits, every
  * listener receives the exit code (the socket sends a closing note and shuts the connection).
@@ -41,7 +46,8 @@ final class RemoteLoginSession {
   private static final long TERMINATE_GRACE_MILLIS = 2000;
 
   private final String repoId;
-  private final PtyProcess process;
+  private final Process process;
+  private final ForeignPty pty;
 
   /**
    * Registry-level completion (release the single-flight, drop the session), given the exit code.
@@ -64,9 +70,10 @@ final class RemoteLoginSession {
   private boolean terminal;
   private int exitCode = -1;
 
-  RemoteLoginSession(String repoId, PtyProcess process, IntConsumer onFinished) {
+  RemoteLoginSession(String repoId, Process process, ForeignPty pty, IntConsumer onFinished) {
     this.repoId = repoId;
     this.process = process;
+    this.pty = pty;
     this.onFinished = onFinished;
   }
 
@@ -96,7 +103,7 @@ final class RemoteLoginSession {
 
   private void readLoop() {
     byte[] buffer = new byte[4096];
-    try (InputStream in = process.getInputStream()) {
+    try (InputStream in = pty.in()) {
       int read;
       while ((read = in.read(buffer)) != -1) {
         String text = new String(buffer, 0, read, StandardCharsets.UTF_8);
@@ -148,7 +155,7 @@ final class RemoteLoginSession {
   void input(byte[] data) {
     synchronized (stdinLock) {
       try {
-        OutputStream out = process.getOutputStream();
+        OutputStream out = pty.out();
         out.write(data);
         out.flush();
       } catch (IOException e) {
@@ -158,11 +165,7 @@ final class RemoteLoginSession {
   }
 
   void resize(int cols, int rows) {
-    try {
-      process.setWinSize(new WinSize(cols, rows));
-    } catch (RuntimeException e) {
-      LOG.debugf(e, "resize failed for remote login of repository %s", repoId);
-    }
+    pty.resize(cols, rows);
   }
 
   boolean isAlive() {
@@ -170,19 +173,19 @@ final class RemoteLoginSession {
   }
 
   /**
-   * Kill the host process: SIGHUP first (the terminal-close signal — git exits cleanly on it), then
-   * SIGKILL after a short grace, and close the streams to unblock the reader's native read.
+   * Kill the host process: hang the terminal up first (closing the master makes the kernel deliver
+   * SIGHUP to the terminal's foreground process group — the terminal-close signal git exits cleanly
+   * on, and what pty4j's {@code destroy()} used to send), SIGTERM the child alongside in case
+   * nothing ever claimed the terminal, then SIGKILL after a short grace.
+   *
+   * <p>Closing the PTY is also what unblocks the reader thread: its {@code read} on the master fd
+   * is a blocking native call, and the master is the only handle that ends it.
    */
   void terminate() {
+    pty.close();
     process.destroy();
     if (!waitQuietly(TERMINATE_GRACE_MILLIS)) {
       process.destroyForcibly();
-    }
-    try {
-      process.getInputStream().close();
-      process.getOutputStream().close();
-    } catch (IOException ignored) {
-      // Best-effort: the process is already being killed.
     }
   }
 

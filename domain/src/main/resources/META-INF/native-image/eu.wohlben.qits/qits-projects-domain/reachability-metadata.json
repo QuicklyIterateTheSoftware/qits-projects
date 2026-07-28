@@ -1,0 +1,52 @@
+{
+  "comment": [
+    "The libc entry points ForeignPty calls through java.lang.foreign, declared for the native image",
+    "builder. GraalVM 25 does NOT infer these: it registers zero downcall stubs on its own, however",
+    "constant the FunctionDescriptors are at the call site (both a hoisted `static final` descriptor",
+    "and one built inline were measured, and both give '0 downcalls registered'). Without this file",
+    "the image build fails outright while parsing ForeignPty.open with 'unexpected input could not",
+    "be handled: linkToNative', and a build that got past that would throw",
+    "MissingForeignRegistrationError on the first sign-in.",
+    "",
+    "One entry per DISTINCT descriptor, not per function, in the order they appear below:",
+    "  int(void*, int)          open(\"/dev/ptmx\", O_RDWR | O_NOCTTY)",
+    "  int(int)                 grantpt(fd), unlockpt(fd), close(fd)",
+    "  int(int, void*, long)    ptsname_r(fd, buffer, length)",
+    "  int(int, long, void*)    ioctl(fd, TIOCSWINSZ, &winsize) — variadic from argument 2",
+    "  long(int, void*, long)   read(fd, buffer, length), write(fd, buffer, length)",
+    "",
+    "The types are the canonical layout names from Linker.canonicalLayouts() ('void*' for ADDRESS,",
+    "'long' for JAVA_LONG on this LP64 target), and ioctl carries firstVariadicArg because it is",
+    "declared variadic and the ABI's register assignment depends on it. A per-entry 'reason' is in",
+    "the published schema but the 25.0.2 parser rejects it ('Unknown attribute(s) [reason] in",
+    "foreign call'), which is why the mapping lives up here. Change a signature in ForeignPty and",
+    "this file changes with it — nothing in the JVM suite will tell you."
+  ],
+  "foreign": {
+    "downcalls": [
+      {
+        "returnType": "int",
+        "parameterTypes": ["void*", "int"]
+      },
+      {
+        "returnType": "int",
+        "parameterTypes": ["int"]
+      },
+      {
+        "returnType": "int",
+        "parameterTypes": ["int", "void*", "long"]
+      },
+      {
+        "returnType": "int",
+        "parameterTypes": ["int", "long", "void*"],
+        "options": {
+          "firstVariadicArg": 2
+        }
+      },
+      {
+        "returnType": "long",
+        "parameterTypes": ["int", "void*", "long"]
+      }
+    ]
+  }
+}

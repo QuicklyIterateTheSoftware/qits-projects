@@ -3,15 +3,49 @@
 Read `README.md` first: it defines the boundary and lists the ports. This file is the working
 conventions on top of it.
 
-## The one rule that shapes everything
+## The two rules that shape everything
 
-This repo must build and test green from a **clone of itself alone** — no monorepo, no docker, no
-prior `mvn install` elsewhere, no credentials. `./mvnw verify` is the gate. Anything that would
-break that is not a tradeoff to weigh; it is the thing this repo exists to avoid.
+**A clone of this repo alone builds and tests green** — no monorepo, no docker, no prior
+`mvn install` elsewhere, no credentials. `./mvnw verify` is the gate. Anything that would break that
+is not a tradeoff to weigh; it is the thing this repo exists to avoid.
 
 That is why the poms duplicate versions instead of inheriting them, why the git fixtures are built
 at test time instead of checked out as submodules, and why every reach into another context is an
 optional port rather than a dependency.
+
+**`service/` compiles to a GraalVM native image**, the same rule qits-workspace-daemon and
+qits-gateway carry, and it extends the clone-alone rule rather than qualifying it: `.sdkmanrc` names
+`25.0.2-graalce`, so `sdk env` gives you a `native-image` and `./mvnw package -Dnative` produces
+`service/target/qits-projects` with no container involved.
+
+Two consequences worth stating before you reach for a dependency:
+
+- **A missing GraalVM does not fail the build.** Quarkus logs `Cannot find the native-image …
+  Attempting to fall back to container build` and shells docker with a 1.8 GB Mandrel image. Green
+  either way, so the fallback is easy to be in without noticing — recognise it by the image pull.
+- **Every dependency is a decision about what the builder has to be told.** Reflection, dynamic
+  proxies, `ServiceLoader`, resource loading by computed name and JNI/JNA all need registering, and
+  the failure lands at *runtime* in the binary while the JVM suite stays green. Prefer what is
+  already in the image — `ProcessBuilder` over a process library, `java.lang.foreign` over JNA.
+
+That second point is not hypothetical here: it is why the sign-in terminal no longer uses pty4j.
+pty4j is JNA plus per-platform `.so`s unpacked from its own jar at runtime, none of which the image
+builder can see; `ForeignPty` is six libc calls through `java.lang.foreign`, with git put on the
+slave device by `setsid --ctty` — so `setsid` (util-linux) is now a host requirement alongside git.
+
+**FFM is not free of registration either, whatever you may have read.** GraalVM 25 registers zero
+downcall stubs on its own — hoisting the `FunctionDescriptor`s into `static final` constants does
+not help, and neither does building them inline; both were measured and both report `0 downcalls …
+registered for foreign access`. The build then *fails*, parsing `ForeignPty.open` with `unexpected
+input could not be handled: linkToNative`. What makes it work is two things that must both be
+there and that nothing else substitutes for:
+
+- `domain/src/main/resources/META-INF/native-image/eu.wohlben.qits/qits-projects-domain/reachability-metadata.json`
+  — one entry per **distinct** descriptor, in canonical layout names, `firstVariadicArg` included
+  for `ioctl`. Change a signature in `ForeignPty` and this file changes with it.
+- `quarkus.native.additional-build-args=--enable-native-access=ALL-UNNAMED` in the service's
+  `application.properties`, which permits the restricted calls. Without it the binary still works
+  but warns on every sign-in, and the warning says it will become a refusal.
 
 ## Package and module conventions
 
@@ -100,9 +134,36 @@ injection therefore needs `@PersistenceUnit("projects")`.
   `src/test` lands in the document unless it is `@Operation(hidden = true)` — hence the annotation
   on `IdentityEchoResource`.
 - **`mvn verify` passing does not mean the app starts.** Augmentation runs per `@QuarkusTest`
-  regardless of packaging, so a missing `quarkus-maven-plugin` execution is invisible to the suite —
-  it was in fact missed here once and only a boot caught it. After touching `service/pom.xml`, run
-  `java -jar service/target/quarkus-app/quarkus-run.jar` and hit a route.
+  regardless of packaging, so a missing `quarkus-maven-plugin` goal is invisible to the suite — it
+  was in fact missed here once, an `<executions>` block under a `<build>` whose `<testResources>`
+  came first, and only a boot caught it. `<packaging>quarkus</packaging>` is what closed that hole:
+  it binds the goals to the lifecycle, and removing `<extensions>true</extensions>` now fails with
+  "Unknown packaging: quarkus" rather than quietly building nothing. After touching
+  `service/pom.xml`, still boot it and hit a route — and boot the **binary**, since a native-only
+  failure is invisible to every JVM run:
+
+      java --enable-native-access=ALL-UNNAMED -jar service/target/quarkus-app/quarkus-run.jar
+      ./mvnw package -Dnative && ./service/target/qits-projects
+- **`PackagedSurfaceIT` is the only test that runs against the artifact.** Every `@QuarkusTest`
+  augments in the build JVM, with the whole classpath present, reflection unrestricted and the test
+  profile's in-memory H2 — a native image has none of those, and three real defects here were
+  invisible to all 168 of them and fatal to the binary (H2's `AUTO_SERVER`, the missing
+  `project-template/` resources, `RepositoryMetadata` unregistered for reflection). It runs under
+  `-Dnative`, and `-DskipITs=false` runs it against the fast-jar. It launches a real process, so it
+  reads main's `application.properties` and none of the test overrides: config reaches it through
+  `quarkus.test.arg-line`, which is why the test resources carry that key.
+- **Anything read off the classpath by walking is a native-image question.** `ProjectTemplate` is
+  the one such reader, and it handles three URI schemes: `file:` (tests), `jar:` (fast-jar) and
+  `resource:` (native). Quarkus' own `ClassPathUtils.consumeAsPaths` handles the first two and
+  rejects the third, which is how the binary came to fail every project creation while the suite was
+  green. Anything new that enumerates a resource directory needs the same three, plus an entry in
+  `quarkus.native.resources.includes` — a native image carries no resource it was not told about.
+- **The sign-in terminal is the one thing a native build can break silently.** `ForeignPty`'s
+  downcalls are the only native access in the process. `ForeignPtyTest` and `RemoteLoginSessionTest`
+  drive real pseudo-terminals — including a prompt on `/dev/tty`, which is what git actually reads
+  credentials from — and both are `@EnabledOnOs(OS.LINUX)`. `domain`'s surefire block passes
+  `--enable-native-access=ALL-UNNAMED` for them; a JVM-mode `quarkus-run.jar` needs it on the
+  command line, and the binary needs nothing.
 - A `Failed to start quarkus` / `Port already bound: 8081` failure is the known flake
   (`migration-plan.md` §9 item 14) — `@QuarkusTest` restarts racing for the test port. Re-run first.
 - `GitFixtures.path("<name>.git")` is how a test gets a git origin to clone. It returns the

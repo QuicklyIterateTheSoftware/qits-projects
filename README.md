@@ -21,7 +21,7 @@ Concretely:
 | `repository_submodule` | the submodule graph between repositories of one project, deduped per project |
 | the wrapper | every project owns exactly one `PROJECT`-archetype repository named `<slug>-<slug>`, seeded from `project-template/` |
 | `.qits-config.yml` | ingestion of the repository's own committed configuration, degrading loudly and never blocking |
-| remote-login | an interactive PTY sign-in against a repository's backup remote, so a push can prompt for credentials |
+| remote-login | an interactive PTY sign-in against a repository's backup remote, so a push can prompt for credentials — a `java.lang.foreign` pseudo-terminal (`ForeignPty`) with git launched onto it by `setsid --ctty`, which is the one thing this service needs from the host besides git itself |
 | `epics/` | the planning module — epics → features → tasks + an audit log, on its own datasource, depending on nothing else here |
 
 ## What it deliberately does NOT own
@@ -40,10 +40,25 @@ smart-HTTP host that serves these bare origins over the wire is
     epics/    the planning module, own datasource + own Flyway lineage, no dependency on domain
     service/  the REST + MCP + websocket boundary over both — THE APPLICATION
 
-`service/` is augmented by the `quarkus-maven-plugin` and produces a process:
+`service/` carries `<packaging>quarkus</packaging>` and produces a process, as a JVM fast-jar or as
+a native binary:
 
     ./mvnw verify
-    java -jar service/target/quarkus-app/quarkus-run.jar   # :8080
+    java --enable-native-access=ALL-UNNAMED -jar service/target/quarkus-app/quarkus-run.jar   # :8080
+
+    ./mvnw package -Dnative
+    ./service/target/qits-projects                        # same routes, ~60ms to listening
+
+**Native is the shipping form.** `.sdkmanrc` names a GraalVM (`25.0.2-graalce`) so `sdk env` alone
+is enough toolchain — the build wants a `native-image` on `GRAALVM_HOME`, `JAVA_HOME` or `PATH`, and
+if it finds none it does not fail, it quietly falls back to pulling a 1.8 GB Mandrel image and
+running the compile under docker. That fallback still works and is what CI without a GraalVM gets;
+it is just not the intended path, and it is worth recognising by name when a compile that normally
+takes about a minute starts downloading a container image.
+
+The `--enable-native-access` flag on the JVM line is for the sign-in terminal: it allocates a real
+PTY through `java.lang.foreign`, and a runner jar cannot add its own JVM flags. The native binary
+needs nothing — it resolved native access at build time.
 
 Everything it serves sits under its gateway segment, `/projects`:
 
@@ -103,9 +118,16 @@ from the monorepo verbatim.
 
 ## Build
 
-    ./mvnw verify
+    ./mvnw verify              # JVM: tests + the fast-jar
+    ./mvnw verify -Dnative     # the binary, and the ITs against it
 
 Green from a clone of this repo alone — no monorepo, no docker, no credentials, no prior
 `mvn install`. Integration tests that need real docker default to skipped (`-DskipITs=false` to
-opt in). The git fixtures the suite clones from are built at test time by `GitFixtures`, not
-committed as submodules.
+opt in); the `native` profile flips that, so a `-Dnative` build exercises the binary rather than
+skipping past it. The git fixtures the suite clones from are built at test time by `GitFixtures`,
+not committed as submodules.
+
+The native build needs a `native-image`, which `sdk env` provides from `.sdkmanrc`. Do **not** set
+`GRAALVM_HOME` to something else: Quarkus does not fail when it cannot find one, it logs `Cannot
+find the native-image … Attempting to fall back to container build` and shells docker. Green either
+way, which is why it is worth grepping the log rather than trusting the exit code.

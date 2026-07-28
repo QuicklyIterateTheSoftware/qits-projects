@@ -68,14 +68,13 @@
             <groupId>org.yaml</groupId>
             <artifactId>snakeyaml</artifactId>
         </dependency>
-        <dependency>
-            <!-- Server-side pseudo-terminal for the interactive remote-login session (a real TTY so
-                 `git push` can prompt for credentials). RemoteLoginSession owns the PTY process;
-                 the service module's websocket only attaches to it. Not in the Quarkus BOM. -->
-            <groupId>org.jetbrains.pty4j</groupId>
-            <artifactId>pty4j</artifactId>
-            <version>0.13.4</version>
-        </dependency>
+        <!-- NO pty4j. The interactive remote-login session still needs a real TTY so `git push` can
+             prompt for credentials; it gets one from ForeignPty, six libc calls through
+             java.lang.foreign, with the child put on the slave device by setsid. pty4j was
+             JNA plus per-platform native libraries unpacked from its own jar at runtime — none of
+             which a GraalVM native image can resolve at build time, and the failure would have
+             landed on the first sign-in in the binary while this suite stayed green. See
+             ForeignPty's javadoc; qits-workspace-daemon made the same call for the same reason. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
@@ -90,6 +89,16 @@
             </plugin>
             <plugin>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- ForeignPtyTest and RemoteLoginSessionTest open real pseudo-terminals, which
+                         means java.lang.foreign downcalls — restricted methods that warn on every
+                         call without this and are documented to become an error in a later release.
+                         The native image resolves native access at build time and needs nothing;
+                         this is only the JVM path. Same flag qits-workspace-daemon's PTY modules
+                         set; see service/src/main/resources/application.properties for why a runner
+                         jar cannot set it for itself. -->
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
             </plugin>
             <plugin>
                 <!-- Index the jar so a consuming app discovers its CDI beans and entities without

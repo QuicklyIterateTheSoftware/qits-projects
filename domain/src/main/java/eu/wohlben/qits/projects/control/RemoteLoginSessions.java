@@ -1,12 +1,12 @@
 package eu.wohlben.qits.projects.control;
 
-import com.pty4j.PtyProcessBuilder;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
+import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
@@ -56,6 +56,11 @@ public class RemoteLoginSessions {
 
   /** The reservation kind — see {@code TechnicalProcessRegistry.reserveRepository}. */
   public static final String KIND_REMOTE_LOGIN = "remote-login";
+
+  /** The terminal's size until the browser's first resize frame reports the real one. */
+  private static final int INITIAL_COLUMNS = 80;
+
+  private static final int INITIAL_ROWS = 24;
 
   /** The outcome of an attach attempt. */
   public sealed interface OpenResult {
@@ -202,32 +207,51 @@ public class RemoteLoginSessions {
       throw new BadRequestException(
           "Repository has no backup remote configured; configure one before signing in.");
     }
+    ForeignPty pty;
     try {
-      Map<String, String> env = new HashMap<>(System.getenv());
-      env.put("TERM", "xterm-256color");
+      pty = ForeignPty.open(INITIAL_COLUMNS, INITIAL_ROWS);
+    } catch (IOException e) {
+      throw new InternalServerErrorException("Failed to start sign-in terminal: " + e.getMessage());
+    }
+    try {
+      String[] git =
+          remoteAuth.gitWithCredentials(
+              "push", spec.url(), "refs/heads/" + spec.branch() + ":refs/heads/" + spec.branch());
+      // `setsid --ctty` is what pty4j did for us in C: put the child in its own session and make
+      // the slave device its CONTROLLING terminal. Without it git opens /dev/tty, finds nothing,
+      // and fails non-interactively instead of prompting — which is the entire point of this
+      // session. It is also what makes the terminal's SIGHUP and SIGWINCH reach the right process
+      // group. (util-linux; /usr/bin/setsid on every distribution this host runs on.)
+      String[] argv = new String[git.length + 2];
+      argv[0] = "setsid";
+      argv[1] = "--ctty";
+      System.arraycopy(git, 0, argv, 2, git.length);
+      ProcessBuilder builder = new ProcessBuilder(argv).directory(spec.originPath().toFile());
       // Strip inherited prompt-diverting vars: an ambient GIT_ASKPASS (VS Code's integrated
       // terminal — the documented quarkus:dev launch — sets it), SSH_ASKPASS, or
       // GIT_TERMINAL_PROMPT=0
       // would send git to a headless askpass or suppress the prompt entirely, defeating the very
       // interactive sign-in this PTY exists to show.
+      Map<String, String> env = builder.environment();
+      env.put("TERM", "xterm-256color");
       env.remove("GIT_ASKPASS");
       env.remove("SSH_ASKPASS");
       env.remove("GIT_TERMINAL_PROMPT");
-      var pty =
-          new PtyProcessBuilder()
-              .setCommand(
-                  remoteAuth.gitWithCredentials(
-                      "push",
-                      spec.url(),
-                      "refs/heads/" + spec.branch() + ":refs/heads/" + spec.branch()))
-              .setDirectory(spec.originPath().toString())
-              .setEnvironment(env)
-              .setInitialColumns(80)
-              .setInitialRows(24)
+      // The child's stdio IS the terminal's slave device; opening it by path is what makes git see
+      // a TTY on all three descriptors. stderr goes to the same device rather than being merged in
+      // Java, so git's progress and its prompts stay in one interleaved stream, as on a real
+      // terminal.
+      File slave = new File(pty.slavePath());
+      Process process =
+          builder
+              .redirectInput(slave)
+              .redirectOutput(slave)
+              .redirectError(slave)
               .start();
+
       RemoteLoginSession session =
           new RemoteLoginSession(
-              repoId, pty, exitCode -> onSessionFinished(repoId, reservationToken));
+              repoId, process, pty, exitCode -> onSessionFinished(repoId, reservationToken));
       session.seedBanner(
           "Signing in to "
               + spec.url()
@@ -236,6 +260,8 @@ public class RemoteLoginSessions {
               + " for every later push/pull against this host.\r\n\r\n");
       return session;
     } catch (IOException e) {
+      // The terminal was allocated before the child; a failed spawn must not leak its master fd.
+      pty.close();
       throw new InternalServerErrorException("Failed to start sign-in terminal: " + e.getMessage());
     }
   }

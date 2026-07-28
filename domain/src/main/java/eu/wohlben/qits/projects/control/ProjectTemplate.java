@@ -1,16 +1,23 @@
 package eu.wohlben.qits.projects.control;
 
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
-import io.quarkus.runtime.util.ClassPathUtils;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystemNotFoundException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 /**
@@ -89,12 +96,13 @@ public class ProjectTemplate {
   private List<TemplateEntry> read() {
     List<TemplateEntry> entries = new ArrayList<>();
     try {
-      // consumeAsPaths, not Path.of(getResource(...).toURI()): in a packaged fast-jar the template
-      // lives inside a jar, whose `jar:` URI has no default FileSystem — the direct form works in
-      // tests (exploded target/classes) and throws FileSystemNotFoundException in production.
-      ClassPathUtils.consumeAsPaths(RESOURCE_ROOT, root -> entries.addAll(readFrom(root)));
-    } catch (IOException e) {
-      throw new UncheckedIOException("Failed to read the project template from the classpath", e);
+      ClassLoader loader = Thread.currentThread().getContextClassLoader();
+      for (URL url : Collections.list(loader.getResources(RESOURCE_ROOT))) {
+        entries.addAll(readFromRootOf(url.toURI()));
+      }
+    } catch (IOException | URISyntaxException e) {
+      throw new InternalServerErrorException(
+          "Failed to read the project template from the classpath: " + e.getMessage());
     }
     if (entries.isEmpty()) {
       throw new InternalServerErrorException(
@@ -102,6 +110,47 @@ public class ProjectTemplate {
     }
     entries.sort(Comparator.comparing(TemplateEntry::path));
     return List.copyOf(entries);
+  }
+
+  /**
+   * Walk one classpath root, whatever kind of thing it turns out to be.
+   *
+   * <p>The template is a directory tree, so it has to be enumerated rather than opened by name, and
+   * every packaging puts that tree behind a different URI scheme:
+   *
+   * <ul>
+   *   <li>{@code file:} — the exploded {@code target/classes} a test or dev-mode run sees.
+   *   <li>{@code jar:} — the fast-jar. Its FileSystem does not exist until something opens it,
+   *       which is why {@code Path.of(getResource(…).toURI())} works in tests and throws {@code
+   *       FileSystemNotFoundException} in production.
+   *   <li>{@code resource:} — GraalVM's in-image resource store. This is the one that is easy to
+   *       miss: it is not a filesystem the JDK knows, and Quarkus' own {@code
+   *       ClassPathUtils.consumeAsPaths} — which this method replaced, and which handles the first
+   *       two — rejects it outright with "Unexpected protocol resource". The native binary built
+   *       fine and then failed every single project creation.
+   * </ul>
+   *
+   * <p>Only a FileSystem opened here is closed here: a {@code jar:} one may be shared with the rest
+   * of the application, and closing someone else's would break the next reader of that jar.
+   */
+  private static List<TemplateEntry> readFromRootOf(URI uri) throws IOException {
+    if ("file".equals(uri.getScheme())) {
+      return readFrom(Path.of(uri));
+    }
+    FileSystem opened = null;
+    try {
+      FileSystem fileSystem;
+      try {
+        fileSystem = FileSystems.getFileSystem(uri);
+      } catch (FileSystemNotFoundException | IllegalArgumentException notOpenYet) {
+        fileSystem = opened = FileSystems.newFileSystem(uri, Map.of());
+      }
+      return readFrom(fileSystem.provider().getPath(uri));
+    } finally {
+      if (opened != null) {
+        opened.close();
+      }
+    }
   }
 
   private static List<TemplateEntry> readFrom(Path root) {

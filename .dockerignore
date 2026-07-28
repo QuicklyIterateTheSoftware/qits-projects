@@ -1,0 +1,38 @@
+# Build context trim for `docker build -f docker/Dockerfile .` (root context, whole reactor).
+#
+# docker/Dockerfile deliberately does `COPY . .` rather than listing modules: the reactor builds
+# service's dependencies from source (domain and epics are never published), and a module list would
+# have to be edited every time a module is added. This file is what makes that cheap — it drops
+# everything the build does not need, so adding a module stays free and no stale output leaks in.
+
+.git
+.gitignore
+
+# Maven / Quarkus build output — regenerated inside the build stage, and ~240 MB of it here
+# (service/target alone holds the fast-jar, the native build dir and the copied git fixtures).
+# Copying it in would also risk a stale target/ shadowing what the stage compiles.
+**/target
+**/target-ide
+
+# Local env / IDE cruft. `.env` is per-machine Quarkus overrides read at ordinal 295 — above the
+# packaged application.properties — so shipping one into the build context would let a developer's
+# local port or git-host quietly outrank what the image is supposed to run with.
+.env
+.idea
+.vscode
+.settings
+.sdkmanrc
+
+# Docs and the docker/ dir itself: nothing in the build reads them, and keeping them out means
+# editing this Dockerfile or regenerating docs/openapi.yml does not bust the `COPY . .` layer.
+# (docs/openapi.yml is written by OpenApiSchemaExportTest and read by a client generator elsewhere,
+# never by this build.) `epics/` is a MODULE, not prose — it stays.
+*.md
+docs
+docker
+
+# What is deliberately NOT excluded: domain/src/test/resources/fixtures. Those bare
+# `submodule-*.git` origins look like build junk and are not — they are committed directories the
+# `service` module's testResources copy, and `-DskipTests` skips test *execution* while still
+# compiling and resourcing the test tree. Drop them and the build stops before it ever gets to
+# native-image.

@@ -38,10 +38,16 @@
 #   quarkus.datasource.projects.*  /  quarkus.datasource.epics.*
 #                       two separate lineages on two separate datasources; see AGENTS.md.
 #
-#   qits.repositories.data-dir     (and qits.repositories.credentials-file beside it)
-#                       the bare origins. qits-artifacts serves the same trees over git smart-HTTP
-#                       and qits-workspaces branches from them, so it is a VOLUME three containers
-#                       mount at the same path, not a scratch dir.
+#
+# What a deployment does NOT supply, because the image names it: `qits.repositories.data-dir` and
+# `qits.repositories.credentials-file`. Those are the bare origins — settled, and stored on disk
+# rather than in SQL — so they resolve correctly out of the box, at `/data/repositories`, the same
+# literal qits-artifacts and qits-workspaces ship. qits-artifacts serves those trees over git
+# smart-HTTP and qits-workspaces branches from them, so it is a VOLUME three containers mount at the
+# same path, not a scratch dir; naming it once per image is what stops the three drifting apart.
+#
+# That split is deliberate: the H2 arrangement is a prototype and must not look decided, so it
+# refuses to start unconfigured — while the git tree is not the prototype and simply works.
 #
 # With those four set the binary starts in ~65ms, migrates both schemas, self-seeds the `qits`
 # project — which forks `git init --bare`, writes a tree and clones from a remote — and serves
@@ -101,6 +107,25 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 git-core util-linu
 # an application; `domain` and `epics` are library jars with nothing to native-compile.
 COPY --from=build --chown=1001:root /src/service/target/qits-projects /work/qits-projects
 RUN chmod +x /work/qits-projects
+
+# The mount point for the git tree, created here so it is OWNED. Docker seeds a fresh named volume
+# from whatever the image has at the mount path, ownership included; with no such directory it makes
+# one root-owned 0755 and the boot dies on an AccessDeniedException rather than on the config error,
+# which reads like a bug in this image and is not one. Group-writable and group-root because a ubi
+# image is meant to survive being assigned an arbitrary uid with gid 0. (A bind mount still takes its
+# ownership from the host — nothing in an image can change that.)
+RUN mkdir -p /data/repositories && chown -R 1001:root /data && chmod -R 775 /data
+
+# The git tree and the credentials beside it, named here rather than left to a deployment: they are
+# not the prototype, and nothing in them is stored in SQL — they are bare origins on disk.
+# `/data/repositories` is a literal qits-artifacts and qits-workspaces also ship, because the
+# three-way contract in the header only holds if all three resolve it to the same volume, and three
+# services each told the same string separately is three chances to get it wrong.
+#
+# Note what is NOT set beside them: no QUARKUS_DATASOURCE_*. That asymmetry is the point — the git
+# side works out of the box, the prototype database refuses to.
+ENV QITS_REPOSITORIES_DATA_DIR=/data/repositories \
+    QITS_REPOSITORIES_CREDENTIALS_FILE=/data/git-credentials
 
 EXPOSE 8080
 USER 1001

@@ -24,7 +24,7 @@ public class CommitControllerTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRequest(
-                    "Repo Project", null, null, null))
+                    "Repo Project", null, null, null, ProjectRequests.DNS))
             .when()
             .post("/projects/api/projects")
             .then()

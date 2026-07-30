@@ -3,23 +3,32 @@ package eu.wohlben.qits.projects.control;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.entity.Project;
+import eu.wohlben.qits.projects.entity.ProjectDnsRecord;
 import eu.wohlben.qits.projects.persistence.ProjectRepository;
 import eu.wohlben.qits.projects.control.RepositoryService;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
+import eu.wohlben.qits.projects.validation.DnsFqdn;
+import eu.wohlben.qits.projects.validation.DnsFqdnValidator;
+import eu.wohlben.qits.projects.validation.DnsRecordValueValidator;
 import eu.wohlben.qits.projects.validation.ProjectSlugValidator;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import org.jboss.logging.Logger;
 
 @ApplicationScoped
 public class ProjectService {
+
+  private static final Logger LOG = Logger.getLogger(ProjectService.class);
 
   /** Slug length cap — see {@code ProjectSlug.PATTERN}, which allows 1-40 characters. */
   private static final int MAX_SLUG_LENGTH = 40;
@@ -32,6 +41,12 @@ public class ProjectService {
 
   @Inject RepositoryService repositoryService;
 
+  // Fired by #announce after a creation commits. Optional, like every port here — see each
+  // interface's javadoc for what absent means and why it is a supported configuration.
+  @Inject Instance<ProjectEnvironmentNotifier> environmentNotifiers;
+
+  @Inject Instance<ProjectDomainRegistrar> domainRegistrars;
+
   /**
    * Creates a project with its slug <b>derived</b> from {@code name} (see {@link #slugify}) — the
    * convenience form for callers that have no slug of their own to give (the cli seeds, tests).
@@ -39,21 +54,27 @@ public class ProjectService {
    * <p>Prefer {@link #create(String, String, String)} wherever the slug is load-bearing: a derived
    * slug is only as stable as the display name it came from.
    */
-  @Transactional
   public Project create(String name, String description) {
     return create(name, null, description);
   }
 
   /** Creates a project with no wrapper upstream — the wrapper is initialized locally. */
-  @Transactional
   public Project create(String name, String slug, String description) {
     return create(name, slug, description, null);
   }
 
   /**
+   * Creates a project that registers no domain — see {@link #create(String, String, String, String,
+   * ProjectDnsRecord)} for the full form.
+   */
+  public Project create(String name, String slug, String description, String wrapperUrl) {
+    return create(name, slug, description, wrapperUrl, null);
+  }
+
+  /**
    * Creates a project and, as the <b>last step</b>, its {@linkplain
-   * eu.wohlben.qits.projects.entity.RepositoryArchetype#PROJECT wrapper repository} — so
-   * project creation always ends with one repository, no matter what.
+   * eu.wohlben.qits.projects.entity.RepositoryArchetype#PROJECT wrapper repository} — so project
+   * creation always ends with one repository, no matter what.
    *
    * <p>The wrapper is named {@code <slug>-<slug>}: a repository's name is a project-scoped alias
    * served at {@code /git/<projectId>/<name>}, and a committed relative submodule url ({@code
@@ -63,27 +84,132 @@ public class ProjectService {
    * is the project itself. The name is <b>derived, never supplied</b> — derivation is the
    * enforcement.
    *
+   * <p><b>Every overload lands here, and so every creation announces itself</b> ({@link #announce})
+   * — the REST controller, the self-seed and anything added later get the project's environment and
+   * its domain registration without knowing either port exists. That is the whole reason the hooks
+   * hang off the service rather than off the controller.
+   *
+   * <p><b>Not {@code @Transactional}.</b> The row and its wrapper are committed by an explicit
+   * {@link QuarkusTransaction#requiringNew()} block and the ports are called <em>after</em> it, so
+   * an implementation that reads the project back finds it — the arrangement {@code
+   * CiRunService.notifyCd} uses for the same reason. An interceptor on this method would put the
+   * announcement inside the transaction it is meant to follow, and a self-invoked
+   * {@code @Transactional} helper would not be intercepted at all.
+   *
    * @param slug the git-safe project identity, or {@code null} to derive it from {@code name}
    * @param wrapperUrl an existing upstream to adopt as the wrapper (brownfield), or {@code null} to
    *     initialize a remote-less one locally (greenfield). An adopted upstream may be completely
    *     empty — it is seeded with the project template skeleton — but its basename must equal
    *     {@code <slug>-<slug>}.
+   * @param dns the domain this project resolves through, or {@code null} to register none. Required
+   *     at the API; nullable here because the self-seed is also a caller and may run with no domain
+   *     configured.
    */
-  @Transactional
-  public Project create(String name, String slug, String description, String wrapperUrl) {
+  public Project create(
+      String name, String slug, String description, String wrapperUrl, ProjectDnsRecord dns) {
     if (name == null || name.isBlank()) {
       throw new BadRequestException("name is required");
     }
+    // Ahead of the transaction: a rejected record must leave nothing behind, and nothing below this
+    // line needs a database to decide it.
+    validateDns(dns);
 
+    Project project =
+        QuarkusTransaction.requiringNew()
+            .call(() -> persistProject(name, slug, description, wrapperUrl, dns));
+
+    announce(project);
+    return project;
+  }
+
+  /** The transactional half of {@link #create}: the row, then the wrapper repository. */
+  private Project persistProject(
+      String name, String slug, String description, String wrapperUrl, ProjectDnsRecord dns) {
     Project project = new Project();
     project.id = UUID.randomUUID().toString();
     project.name = name;
     project.slug = resolveSlug(name, slug, project.id);
     project.description = description;
+    project.dns = dns;
     projectRepository.persist(project);
 
     createWrapperRepository(project, wrapperUrl);
     return project;
+  }
+
+  /**
+   * Tells the two creation ports the project exists — its standing deployment target and its domain
+   * (main-environment-plan.md §1).
+   *
+   * <p>Called after the creating transaction commits, so an implementation that reads the project
+   * back sees it. <b>Every failure is swallowed</b>: a project must never fail to exist because a
+   * sibling service was down, and a caller who gets a 500 from a creation that in fact succeeded is
+   * worse off than one whose environment appears a boot later. Absent implementations are a
+   * supported configuration on both ports.
+   *
+   * <p>The registrar is skipped, silently, for a project with no record — that is the documented
+   * "no domain" state, not a failure to configure one.
+   */
+  private void announce(Project project) {
+    for (ProjectEnvironmentNotifier notifier : environmentNotifiers) {
+      try {
+        notifier.onProjectCreated(project.id, project.name, project.slug);
+      } catch (RuntimeException e) {
+        LOG.warnf(e, "Environment announcement for project %s failed", project.id);
+      }
+    }
+    if (project.dns == null) {
+      return;
+    }
+    for (ProjectDomainRegistrar registrar : domainRegistrars) {
+      try {
+        registrar.register(
+            project.id, project.slug, project.dns.domain, project.dns.type, project.dns.value);
+      } catch (RuntimeException e) {
+        LOG.warnf(e, "Domain registration for project %s failed", project.id);
+      }
+    }
+  }
+
+  /**
+   * Re-asserts the dns record's format in the domain layer.
+   *
+   * <p>The Bean Validation constraints on the request DTO only guard HTTP; the self-seed reads
+   * three config keys and reaches {@code create} without passing through them, so this is the
+   * enforcement that actually holds — the same reasoning, and the same shape, as {@link
+   * #resolveSlug}.
+   *
+   * <p>A {@code null} record is valid (no domain). A record with any field missing is not: a
+   * half-filled embeddable would be indistinguishable from "no domain" in some columns and not
+   * others, and the null-embeddable read this model depends on would stop meaning one thing.
+   */
+  private static void validateDns(ProjectDnsRecord dns) {
+    if (dns == null) {
+      return;
+    }
+    if (!DnsFqdnValidator.matches(dns.domain)) {
+      throw new BadRequestException(
+          "Invalid dns domain '"
+              + dns.domain
+              + "': must be a lowercase fully-qualified name of at least two dot-separated dns"
+              + " labels (letters, digits and inner hyphens, no leading or trailing hyphen), at"
+              + " most "
+              + DnsFqdn.MAX_LENGTH
+              + " characters. It becomes what an authoritative nameserver answers, so a second"
+              + " spelling of one hostname is not accepted.");
+    }
+    if (dns.type == null) {
+      throw new BadRequestException("dns type is required (one of A, AAAA, CNAME)");
+    }
+    if (!DnsRecordValueValidator.matches(dns.value)) {
+      throw new BadRequestException(
+          "Invalid dns value for "
+              + dns.type
+              + " record '"
+              + dns.domain
+              + "': a value is required for every type — a CNAME with no target is not a record —"
+              + " and must carry no whitespace or control characters.");
+    }
   }
 
   /**
@@ -202,8 +328,8 @@ public class ProjectService {
     // promote one. Allowing it here would let a second wrapper in past the guard.
     if (archetype == RepositoryArchetype.PROJECT) {
       throw new BadRequestException(
-          "A repository cannot be created with archetype PROJECT: that archetype is reserved for the"
-              + " project's wrapper repository, which is created with the project.");
+          "A repository cannot be created with archetype PROJECT: that archetype is reserved for"
+              + " the project's wrapper repository, which is created with the project.");
     }
 
     return repositoryService.cloneRepository(url, archetype, project, importSubmodules);

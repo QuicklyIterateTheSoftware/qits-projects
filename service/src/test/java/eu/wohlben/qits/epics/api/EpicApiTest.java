@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.notNullValue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
+import eu.wohlben.qits.projects.api.ProjectRequests;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
@@ -41,7 +42,9 @@ class EpicApiTest {
   private String createProject() {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRequest("Epics Project", null, null, null))
+        .body(
+            new ProjectController.CreateProjectRequest(
+                "Epics Project", null, null, null, ProjectRequests.DNS))
         .when()
         .post("/projects/api/projects")
         .then()

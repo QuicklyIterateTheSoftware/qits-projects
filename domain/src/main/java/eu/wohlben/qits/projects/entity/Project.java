@@ -4,6 +4,7 @@ import eu.wohlben.qits.projects.entity.Repository;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
@@ -43,6 +44,17 @@ public class Project extends PanacheEntityBase {
   public String slug;
 
   public String description;
+
+  /**
+   * The domain this project resolves through, or {@code null} when it registers none — see {@link
+   * ProjectDnsRecord}, which also carries why this field is a <b>declared placeholder</b> and what
+   * deletes it.
+   *
+   * <p>Null for two ordinary reasons and not only one: rows predating the feature, and a self-seed
+   * run with no domain configured. Hibernate reads an embeddable whose every column is null as a
+   * null field, which is what makes both of those the same thing to every reader.
+   */
+  @Embedded public ProjectDnsRecord dns;
 
   @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true)
   public List<Repository> repositories;

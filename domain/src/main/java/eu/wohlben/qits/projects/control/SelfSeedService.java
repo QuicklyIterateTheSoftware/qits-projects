@@ -2,6 +2,8 @@ package eu.wohlben.qits.projects.control;
 
 import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.entity.Project;
+import eu.wohlben.qits.projects.entity.ProjectDnsRecord;
+import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
 import eu.wohlben.qits.projects.control.RepositoryService;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
@@ -10,6 +12,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.control.ActivateRequestContext;
 import jakarta.inject.Inject;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
@@ -106,6 +109,27 @@ public class SelfSeedService {
   Optional<String> wrapperUrlOverride;
 
   /**
+   * The fqdn the seeded project resolves through, e.g. {@code qits.eu}.
+   *
+   * <p><b>All three of {@code dns-domain} / {@code dns-type} / {@code dns-value} together or none
+   * of them.</b> Absent — the shipped default — means the seeded project is created with no domain
+   * and registers nothing, which is exactly what the nullable columns exist for; a deployment that
+   * owns a name sets three env vars and the reconcile does the rest. Set partially, they are
+   * treated as absent and said so once in the log, because a half-configured record is a typo
+   * rather than an intent and the seed is not a place to fail a boot over one.
+   */
+  @ConfigProperty(name = "qits.startup-seed.dns-domain")
+  Optional<String> dnsDomain;
+
+  /** The record type: {@code A}, {@code AAAA} or {@code CNAME}. See {@link #dnsDomain}. */
+  @ConfigProperty(name = "qits.startup-seed.dns-type")
+  Optional<String> dnsType;
+
+  /** The address or CNAME target. See {@link #dnsDomain}. */
+  @ConfigProperty(name = "qits.startup-seed.dns-value")
+  Optional<String> dnsValue;
+
+  /**
    * A desired repository under the seeded project: its clone {@code url}, {@code archetype},
    * whether to import its direct submodules at creation, and whether to {@code deepImport} one
    * further level over those children (the automated equivalent of the registration guide's manual
@@ -167,7 +191,15 @@ public class SelfSeedService {
     }
   }
 
-  /** The seeded project, created if absent and matched by name otherwise. */
+  /**
+   * The seeded project, created if absent and matched by name otherwise.
+   *
+   * <p>Note the asymmetry this leaves, accepted deliberately (main-environment-plan.md §3): on an
+   * already-seeded deployment the project is found rather than created, so the creation hooks do
+   * not fire for it and its environment and domain are not reconciled. One curl closes that per
+   * project; teaching the reconcile to re-fire them would mean making the hooks themselves
+   * reconciliation-aware, which is more machinery than a placeholder model deserves.
+   */
   private Project ensureProject() {
     return projectService.list().stream()
         .filter(p -> PROJECT_NAME.equals(p.name))
@@ -175,8 +207,54 @@ public class SelfSeedService {
         .orElseGet(
             () -> {
               LOG.infof("Self-seed: creating project '%s'.", PROJECT_NAME);
-              return projectService.create(PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION);
+              return projectService.create(
+                  PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION, null, seededDnsRecord());
             });
+  }
+
+  /**
+   * The configured dns record, or {@code null} when the three keys are not all set — see {@link
+   * #dnsDomain}.
+   *
+   * <p>An unparseable {@code dns-type} is warned about and read as "no domain" rather than thrown:
+   * {@code ensureProject} is outside {@code reconcile}'s per-item try/catch, so a typo in one env
+   * var would otherwise take the whole seed — and with it every repository registration — down with
+   * it. The format of the other two is {@code ProjectService.create}'s to reject, and it does so
+   * loudly on the same path.
+   */
+  ProjectDnsRecord seededDnsRecord() {
+    String domain = trimmedOrNull(dnsDomain);
+    String type = trimmedOrNull(dnsType);
+    String value = trimmedOrNull(dnsValue);
+    if (domain == null && type == null && value == null) {
+      return null; // the shipped default: the seeded project registers no domain.
+    }
+    if (domain == null || type == null || value == null) {
+      LOG.warnf(
+          "Self-seed: qits.startup-seed.dns-domain/-type/-value must all be set or all be unset"
+              + " (domain=%s, type=%s, value=%s) — the seeded project registers no domain.",
+          domain, type, value);
+      return null;
+    }
+    ProjectDnsRecordType parsed;
+    try {
+      parsed = ProjectDnsRecordType.valueOf(type.toUpperCase(Locale.ROOT));
+    } catch (IllegalArgumentException e) {
+      LOG.warnf(
+          "Self-seed: qits.startup-seed.dns-type '%s' is not one of A, AAAA, CNAME — the seeded"
+              + " project registers no domain.",
+          type);
+      return null;
+    }
+    return new ProjectDnsRecord(domain, parsed, value);
+  }
+
+  /**
+   * An override's value with surrounding whitespace gone, or null when it carries none — see {@link
+   * #resolveUrl} for why a trailing newline is the case worth handling.
+   */
+  private static String trimmedOrNull(Optional<String> configured) {
+    return configured.map(String::trim).filter(s -> !s.isEmpty()).orElse(null);
   }
 
   private void reconcileRepository(Project project, SeedRepository entry) {

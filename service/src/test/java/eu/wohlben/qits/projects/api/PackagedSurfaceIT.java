@@ -93,7 +93,15 @@ public class PackagedSurfaceIT {
     var response =
         given()
             .contentType("application/json")
-            .body("{\"name\":\"Packaged Surface\",\"slug\":\"" + slug + "\"}")
+            // The dns object is required, and posting it here is the point of doing so against the
+            // BINARY: the new column, the @Embedded read back and the enum's STRING mapping all
+            // have
+            // to survive an image that carries no reflection it was not told about.
+            .body(
+                "{\"name\":\"Packaged Surface\",\"slug\":\""
+                    + slug
+                    + "\",\"dns\":{\"domain\":\"packaged.test.eu\",\"type\":\"A\","
+                    + "\"value\":\"203.0.113.9\"}}")
             .when()
             .post("/projects/api/projects")
             .then()
@@ -104,6 +112,12 @@ public class PackagedSurfaceIT {
     // been read.
     assertEquals(slug, response.path("project.slug"));
     assertNotNull(response.path("wrapper.id"), "creation returned no wrapper repository");
+    // Written to a real (file-H2) database by V2's columns and read back through the embeddable —
+    // the
+    // one assertion here that the migration and the @Embedded mapping work outside a test JVM.
+    assertEquals("packaged.test.eu", response.path("project.dns.domain"));
+    assertEquals("A", response.path("project.dns.type"));
+    assertEquals("203.0.113.9", response.path("project.dns.value"));
   }
 
   /**
@@ -111,11 +125,11 @@ public class PackagedSurfaceIT {
    * and its first bytes.
    *
    * <p>This is the test the PTY rewrite exists for. {@code ForeignPty} reaches libc through {@code
-   * java.lang.foreign}, whose downcall stubs a native image only has because
-   * {@code reachability-metadata.json} declares them and {@code ForeignPty} is initialised at run
-   * time — two pieces of configuration that nothing in a JVM run consults. Receiving the banner
-   * proves the socket upgraded, the registry spawned a session, the terminal was allocated, git was
-   * launched onto its slave device and the reader thread is streaming it back.
+   * java.lang.foreign}, whose downcall stubs a native image only has because {@code
+   * reachability-metadata.json} declares them and {@code ForeignPty} is initialised at run time —
+   * two pieces of configuration that nothing in a JVM run consults. Receiving the banner proves the
+   * socket upgraded, the registry spawned a session, the terminal was allocated, git was launched
+   * onto its slave device and the reader thread is streaming it back.
    *
    * <p>Linux-only, like {@code ForeignPty}.
    */
@@ -127,7 +141,11 @@ public class PackagedSurfaceIT {
     String projectId =
         given()
             .contentType("application/json")
-            .body("{\"name\":\"Sign In Surface\",\"slug\":\"" + slug + "\"}")
+            .body(
+                "{\"name\":\"Sign In Surface\",\"slug\":\""
+                    + slug
+                    + "\",\"dns\":{\"domain\":\"signin.test.eu\",\"type\":\"A\","
+                    + "\"value\":\"203.0.113.9\"}}")
             .when()
             .post("/projects/api/projects")
             .then()

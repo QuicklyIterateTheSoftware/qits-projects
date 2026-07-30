@@ -156,6 +156,7 @@ components:
       type: object
       required:
       - name
+      - dns
       properties:
         name:
           type: string
@@ -166,6 +167,8 @@ components:
           type: string
         url:
           type: string
+        dns:
+          $ref: "#/components/schemas/DnsSpec"
     CreateTaskRequest:
       type: object
       required:
@@ -181,6 +184,19 @@ components:
         description:
           type: string
         dependsOnTaskId:
+          type: string
+    DnsSpec:
+      type: object
+      required:
+      - domain
+      - type
+      - value
+      properties:
+        domain:
+          type: string
+        type:
+          $ref: "#/components/schemas/ProjectDnsRecordType"
+        value:
           type: string
     Entry:
       type: object
@@ -259,6 +275,21 @@ components:
         backendUrl:
           type: string
           pattern: \S
+    ProjectDnsRecordDto:
+      type: object
+      properties:
+        domain:
+          type: string
+        type:
+          $ref: "#/components/schemas/ProjectDnsRecordType"
+        value:
+          type: string
+    ProjectDnsRecordType:
+      type: string
+      enum:
+      - A
+      - AAAA
+      - CNAME
     ProjectDto:
       type: object
       properties:
@@ -270,6 +301,8 @@ components:
           type: string
         description:
           type: string
+        dns:
+          $ref: "#/components/schemas/ProjectDnsRecordDto"
     RepositoryArchetype:
       type: string
       enum:

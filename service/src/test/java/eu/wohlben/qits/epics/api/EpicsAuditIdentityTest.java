@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.nullValue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
+import eu.wohlben.qits.projects.api.ProjectRequests;
 import eu.wohlben.qits.projects.security.NoDevUserProfile;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
@@ -35,7 +36,9 @@ class EpicsAuditIdentityTest {
   private String createProject(String name) {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRequest(name, null, null, null))
+        .body(
+            new ProjectController.CreateProjectRequest(
+                name, null, null, null, ProjectRequests.DNS))
         .when()
         .post("/projects/api/projects")
         .then()

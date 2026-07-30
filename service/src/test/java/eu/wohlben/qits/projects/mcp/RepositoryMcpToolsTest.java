@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
+import eu.wohlben.qits.projects.api.ProjectRequests;
 import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
 import io.quarkiverse.mcp.server.test.McpAssured.McpStreamableTestClient;
@@ -36,7 +37,9 @@ public class RepositoryMcpToolsTest {
   private String createProject(String name) {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRequest(name, null, null, null))
+        .body(
+            new ProjectController.CreateProjectRequest(
+                name, null, null, null, ProjectRequests.DNS))
         .when()
         .post("/projects/api/projects")
         .then()

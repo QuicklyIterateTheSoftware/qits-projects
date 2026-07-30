@@ -56,7 +56,8 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   Framework-free in the sense that matters: no JAX-RS, no websockets. Entities are Panache
   active-record with public fields; mappers are MapStruct `@Mapper(componentModel = "jakarta")`.
 - `service/` — `api` (JAX-RS + the remote-login websocket), `mcp` (the `repository` MCP server),
-  `startup`.
+  `startup`, `notify` (the outbound fire-and-forget notifiers — the sole implementations of the
+  creation ports; the same package name and the same idiom as qits-ci's `ci.notify`).
 - `epics/` — untouched by the extraction beyond its `<parent>`: its own package, its own error
   types, its own datasource and its own Flyway lineage. It depends on neither `domain` nor any
   auth module, and it should stay that way — it is the module most likely to be lifted out next.
@@ -143,7 +144,17 @@ injection therefore needs `@PersistenceUnit("projects")`.
   one, and then a green suite proves nothing about what actually starts. That file is for genuine
   test-only overrides (in-memory H2, `clean-at-start`, `target/` paths, the test-jar index entry).
 - `OpenApiSchemaExportTest` writes `docs/openapi.yml`. Regenerate and commit whenever the REST
-  surface changes: `./mvnw -pl service test -Dtest=OpenApiSchemaExportTest`. This is the largest
+  surface changes:
+
+      ./mvnw -pl service -am test -Dtest=OpenApiSchemaExportTest -Dsurefire.failIfNoSpecifiedTests=false
+
+  Both extra flags are load-bearing on a fresh clone, which is the only state this repo promises:
+  `-am` because `domain` and `epics` are 1.0.0-SNAPSHOTs published nowhere, so `-pl service` alone
+  cannot resolve them, and `failIfNoSpecifiedTests=false` because `-am` then walks those two modules,
+  which have no test by that name. (A plain `./mvnw verify` regenerates it too — the export is a test.)
+  Note also that renaming a class the document names needs a `clean`: a stale nested-record `.class`
+  in `target/` fails augmentation with `disagree on InnerClasses attribute`, which reads like a
+  dependency conflict and is not one. This is the largest
   published surface of the six services and the one a client is generated from, so the diff is the
   review. It runs as a `@QuarkusTest` and indexes the test classpath, so any `@Path` resource under
   `src/test` lands in the document unless it is `@Operation(hidden = true)` — hence the annotation

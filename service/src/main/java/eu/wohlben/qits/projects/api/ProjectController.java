@@ -4,12 +4,17 @@ import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.dto.ProjectDto;
 import eu.wohlben.qits.projects.mapper.ProjectMapper;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
+import eu.wohlben.qits.projects.entity.ProjectDnsRecord;
+import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
 import eu.wohlben.qits.projects.mapper.RepositoryMapper;
+import eu.wohlben.qits.projects.validation.DnsFqdn;
+import eu.wohlben.qits.projects.validation.DnsRecordValue;
 import eu.wohlben.qits.projects.validation.NotBlankIfPresent;
 import eu.wohlben.qits.projects.validation.ProjectSlug;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -42,9 +47,36 @@ public class ProjectController {
    *     wrapper is initialized locally with no backup remote. An adopted upstream may be completely
    *     empty (it is seeded with the project template skeleton) but its basename must be exactly
    *     {@code <slug>-<slug>}.
+   * @param dns the domain the project resolves through — <b>required</b>. A project is a deployable
+   *     application and a deployable application has an address; asking for it here is what stops
+   *     "which hostname is this?" from being a question answered later, by hand, per project. The
+   *     columns behind it are nullable and {@code ProjectDto} carries null back out, because rows
+   *     created before this field existed and self-seeded projects without a configured domain both
+   *     exist — but there is no way to create a new one that way. See {@code ProjectDnsRecord} for
+   *     why the whole field is a declared placeholder.
    */
   public static record CreateProjectRequest(
-      @NotBlank String name, @ProjectSlug String slug, String description, String url) {
+      @NotBlank String name,
+      @ProjectSlug String slug,
+      String description,
+      String url,
+      @NotNull @Valid DnsSpec dns) {
+    /**
+     * The record handed to qits-dns verbatim.
+     *
+     * <p>Its own type rather than {@code ProjectDnsRecordDto}: the response DTO is nullable in all
+     * three fields (a legacy row has none) while every field here is required, and one shared type
+     * would have to describe the looser of the two — which would put the requiredness of a
+     * <em>request</em> field out of the document a client is generated from.
+     *
+     * @param domain the whole fully-qualified name, lowercase, never zone-relative
+     * @param value the address or CNAME target — required for every type, a CNAME included
+     */
+    public record DnsSpec(
+        @NotNull @DnsFqdn String domain,
+        @NotNull ProjectDnsRecordType type,
+        @NotNull @DnsRecordValue String value) {}
+
     /**
      * @param wrapper the wrapper repository project creation always ends with.
      */
@@ -54,10 +86,24 @@ public class ProjectController {
   @POST
   public CreateProjectRequest.Response create(@Valid CreateProjectRequest request) {
     var project =
-        projectService.create(request.name(), request.slug(), request.description(), request.url());
+        projectService.create(
+            request.name(),
+            request.slug(),
+            request.description(),
+            request.url(),
+            toEntity(request.dns()));
     var wrapper = projectService.findWrapper(project.id).orElseThrow();
     return new CreateProjectRequest.Response(
         projectMapper.toDto(project), repositoryMapper.toDto(wrapper));
+  }
+
+  /**
+   * The request's dns object as the embeddable the service stores. Null-tolerant even though the
+   * field is {@code @NotNull}: Bean Validation is the guard, not this method, and a null here would
+   * be a validation hole rather than something to throw a second, worse error about.
+   */
+  private static ProjectDnsRecord toEntity(CreateProjectRequest.DnsSpec dns) {
+    return dns == null ? null : new ProjectDnsRecord(dns.domain(), dns.type(), dns.value());
   }
 
   public static record GetProjectRequest() {

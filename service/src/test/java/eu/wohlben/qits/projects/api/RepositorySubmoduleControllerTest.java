@@ -30,7 +30,7 @@ public class RepositorySubmoduleControllerTest {
             .contentType(ContentType.JSON)
             .body(
                 new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRequest(
-                    "Submodule API", null, null, null))
+                    "Submodule API", null, null, null, ProjectRequests.DNS))
             .when()
             .post("/projects/api/projects")
             .then()

@@ -65,6 +65,7 @@ Everything it serves sits under its gateway segment, `/projects`:
 
 | | |
 |---|---|
+| `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
@@ -75,7 +76,10 @@ is served here or the service is not reachable through it. There is no unprefixe
 
 It was extracted as a library jar, on the reasoning that packaging it would need an auth variant, a
 webui and a main class. All three have lapsed: authentication terminates at `qits-gateway` and this
-service reads a header, the webui stays in the monorepo, and Quarkus supplies the main class.
+service reads a header, Quarkus supplies the main class, and the webui is now
+[qits-spa-projects](https://github.com/QuicklyIterateTheSoftware/qits-spa-projects) — a repository of
+its own, checked out as a submodule at `service/src/main/webui` and built into this process by
+Quinoa.
 
 Coordinates are namespaced (`eu.wohlben.qits:qits-projects-*`) because the directories are the
 generic `domain`/`service`/`epics` and installing `eu.wohlben:domain` would clobber the monorepo jar
@@ -141,6 +145,18 @@ Green from a clone of this repo alone — no monorepo, no docker, no credentials
 opt in); the `native` profile flips that, so a `-Dnative` build exercises the binary rather than
 skipping past it. The git fixtures the suite clones from are built at test time by `GitFixtures`,
 not committed as submodules.
+
+The **webui is the one submodule**, and it is what a `package` needs beyond a clone:
+
+    git submodule update --init                        # service/src/main/webui
+    git -C service/src/main/webui switch main          # --init leaves it detached
+
+Quinoa runs `npm install && npm run build` in that directory during augmentation, so a **node and an
+npm have to be on `PATH`** — the Angular CLI at 21 wants node `^20.19 || ^22.12 || >=24`. Neither the
+submodule nor node reaches `./mvnw verify`: Quinoa is disabled in test mode by default, so the suite
+stays green from a bare clone on a machine with no node at all. Only building the artifact builds the
+UI. Note `docker/Dockerfile`'s Mandrel builder stage ships no node, so the image build needs one
+installed there.
 
 The native build needs a `native-image`, which `sdk env` provides from `.sdkmanrc`. Do **not** set
 `GRAALVM_HOME` to something else: Quarkus does not fail when it cannot find one, it logs `Cannot

@@ -14,6 +14,14 @@
 **/target
 **/target-ide
 
+# The webui submodule's npm output, for the same reason: Quinoa runs `npm install` and `npm run
+# build` inside the build stage, so a developer's local node_modules/ (~250 MB, and full of
+# platform-native binaries compiled for the host, not for ubi9) and dist/ are both dead weight and
+# a chance for a stale bundle to be what the image serves. The SOURCE of the submodule is not
+# excluded — without src/main/webui the build has no UI to compile.
+service/src/main/webui/node_modules
+service/src/main/webui/dist
+
 # Local env / IDE cruft. `.env` is per-machine Quarkus overrides read at ordinal 295 — above the
 # packaged application.properties — so shipping one into the build context would let a developer's
 # local port or git-host quietly outrank what the image is supposed to run with.

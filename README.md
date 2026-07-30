@@ -65,7 +65,7 @@ Everything it serves sits under its gateway segment, `/projects`:
 
 | | |
 |---|---|
-| `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links |
+| `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links — except under the prefixes below |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
@@ -73,6 +73,16 @@ Everything it serves sits under its gateway segment, `/projects`:
 
 qits-gateway routes verbatim by prefix — `/projects/*` → this service, no rewriting — so the segment
 is served here or the service is not reachable through it. There is no unprefixed form.
+
+The SPA takes the *whole* segment, so it is the one that can swallow the rest: the deep-link
+fallback answers anything under `/projects` that matched no route, with `200 text/html`. That is
+right for a person and wrong for a machine, which parses `index.html` as garbage data — so
+`quarkus.quinoa.ignored-path-prefixes=/api,/q,/mcp` is spelled out rather than left to Quinoa's
+derivation, which reads `quarkus.rest.path` and `quarkus.http.non-application-root-path` and so
+knows nothing of `/projects/mcp`. Without `/mcp` in that list, `/projects/mcp/typo` answered `200`
+HTML while `/projects/mcp` itself answered `405`. Setting the key **replaces** the derivation rather
+than extending it, which is why `/api` and `/q` are repeated by hand, and the values are relative to
+`ui-root-path` — `/projects/api` there would silently match nothing.
 
 It was extracted as a library jar, on the reasoning that packaging it would need an auth variant, a
 webui and a main class. All three have lapsed: authentication terminates at `qits-gateway` and this

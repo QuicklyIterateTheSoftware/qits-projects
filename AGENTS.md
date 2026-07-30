@@ -67,8 +67,8 @@ and `domain.seeding.*` to break cycles that do not exist here.
 
 ## Paths
 
-Everything is served under this service's gateway segment — see the table in the README. Two things
-about that are easy to get wrong:
+Everything is served under this service's gateway segment — see the table in the README. Three
+things about that are easy to get wrong:
 
 - **`@WebSocket` does not follow `quarkus.rest.path`.** The remote-login socket spells
   `/projects/api/...` out as a literal and has to be kept in step with the key by hand. Anything new
@@ -76,6 +76,16 @@ about that are easy to get wrong:
 - **The MCP server's name is not its path.** It is mounted at `/projects/mcp` and is still *named*
   `repository` (`@McpServer("repository")`), because qits-workspace-daemon addresses it by name.
   Renaming it breaks the daemon; an *undeclared* name stops the process booting outright.
+- **A new machine surface outside `/projects/api` needs a line in
+  `quarkus.quinoa.ignored-path-prefixes`.** Quinoa's SPA fallback is a catch-all at `/projects/*`
+  registered near-last, so a real route still wins — but a path matching *no* route is rerouted to
+  `index.html` and answers `200 text/html`, which a machine client parses as data. The key is set
+  explicitly (`/api,/q,/mcp`) rather than derived, because the derivation reads only
+  `quarkus.rest.path` and `quarkus.http.non-application-root-path` and nothing names the MCP
+  root-path. Setting it **replaces** the derivation, so `/api` and `/q` are repeated by hand, and
+  the values are matched **after** `ui-root-path` is stripped — `/projects/mcp` written there
+  matches nothing at all and is indistinguishable from leaving the key unset. The remote-login
+  websocket needs no entry only because its literal sits under `/projects/api`.
 
 Path parameters naming a repository are `{repoId}` everywhere, including the submodule routes, which
 used `{repositoryId}` until the segment change. Parameter names are visible in the generated client,

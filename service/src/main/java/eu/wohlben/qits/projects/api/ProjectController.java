@@ -1,11 +1,13 @@
 package eu.wohlben.qits.projects.api;
 
+import eu.wohlben.qits.projects.control.ProjectReconcileService;
+import eu.wohlben.qits.projects.control.ProjectReconciliation;
 import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.dto.ProjectDto;
-import eu.wohlben.qits.projects.mapper.ProjectMapper;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecord;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
+import eu.wohlben.qits.projects.mapper.ProjectMapper;
 import eu.wohlben.qits.projects.mapper.RepositoryMapper;
 import eu.wohlben.qits.projects.validation.DnsFqdn;
 import eu.wohlben.qits.projects.validation.DnsRecordValue;
@@ -25,6 +27,8 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 
 @Path("/projects")
 @Produces(MediaType.APPLICATION_JSON)
@@ -32,6 +36,9 @@ import java.util.List;
 public class ProjectController {
 
   @Inject ProjectService projectService;
+
+  /** The manual drift remedy's orchestration — see {@link #reconcile}. */
+  @Inject ProjectReconcileService projectReconcileService;
 
   @Inject ProjectMapper projectMapper;
 
@@ -143,6 +150,65 @@ public class ProjectController {
       @PathParam("id") String id, @Valid UpdateProjectRequest request) {
     var project = projectService.update(id, request.name(), request.description());
     return new UpdateProjectRequest.Response(projectMapper.toDto(project));
+  }
+
+  /**
+   * The manual drift remedy (main-environment-plan.md §5): re-assert this project's stored
+   * deployment facts against qits-cd and qits-dns, synchronously, and answer with what each of them
+   * came to.
+   *
+   * <p><b>Partial failure is still a 200.</b> The outcomes <em>are</em> the result — a reconcile
+   * whose environment failed and whose domain registered did half its job and has to say so — so
+   * the only error is the one thing that makes the request itself wrong: an unknown project, a 404
+   * like every other project route. Turning a failed target into a 5xx would throw away the half
+   * that worked.
+   */
+  public static record ReconcileProjectRequest() {
+    /**
+     * @param environment what re-asserting the {@code main} environment came to
+     * @param environmentDetail why, when the outcome does not say it: a status code, an unreachable
+     *     receiver, or that no notifier is wired at all. Null when there is nothing to add.
+     * @param domain what re-asserting the dns record came to — {@code NOT_CONFIGURED} when the
+     *     project stores none, which is not a failure
+     * @param domainDetail the same, for the domain: the name no zone contained, the receiver's
+     *     refusal, or null
+     */
+    public record Response(
+        ProjectReconciliation.EnvironmentOutcome environment,
+        String environmentDetail,
+        ProjectReconciliation.DomainOutcome domain,
+        String domainDetail) {}
+  }
+
+  /**
+   * Deliberately <b>not</b> {@code @Operation(hidden = true)}: this is the one operation in this
+   * controller a person invokes on purpose — the qits-ci {@code cancelRun} precedent — so it
+   * belongs in the document a client is generated from.
+   */
+  @POST
+  @Path("/{projectId}/reconcile")
+  @Operation(
+      summary = "Re-assert a project's environment and domain against qits-cd and qits-dns",
+      description =
+          "Project creation announces both facts fire-and-forget, so a receiver that was down when"
+              + " a project was created leaves the environment or the dns record missing with"
+              + " nothing to carry it forward. This re-asserts both synchronously and reports the"
+              + " outcome of each; both receivers are idempotent, so it is safe to repeat, and it"
+              + " is also how a project created before either hook existed gets its environment and"
+              + " record.")
+  @APIResponse(
+      responseCode = "200",
+      description =
+          "The reconcile ran. Each target reports its own outcome, and a failed one is still a 200"
+              + " — the outcomes are the result.")
+  @APIResponse(responseCode = "404", description = "No such project")
+  public ReconcileProjectRequest.Response reconcile(@PathParam("projectId") String projectId) {
+    var reconciliation = projectReconcileService.reconcile(projectId);
+    return new ReconcileProjectRequest.Response(
+        reconciliation.environment().outcome(),
+        reconciliation.environment().detail(),
+        reconciliation.domain().outcome(),
+        reconciliation.domain().detail());
   }
 
   public static record DeleteProjectRequest() {

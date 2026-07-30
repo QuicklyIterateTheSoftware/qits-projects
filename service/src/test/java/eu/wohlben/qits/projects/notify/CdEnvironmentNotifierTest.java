@@ -1,11 +1,13 @@
 package eu.wohlben.qits.projects.notify;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import eu.wohlben.qits.projects.control.ProjectReconciliation;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
@@ -29,7 +31,9 @@ import org.junit.jupiter.api.Test;
  * nothing anywhere and environments simply stop appearing.
  *
  * <p>Delivery is fire-and-forget, so assertions wait on a queue the fixture fills rather than on
- * the call returning.
+ * the call returning. The synchronous half at the bottom is the same server and the same fixture,
+ * and that is the point: one request builder serves both paths, so both are asserted against one
+ * wire.
  */
 class CdEnvironmentNotifierTest {
 
@@ -125,5 +129,72 @@ class CdEnvironmentNotifierTest {
     assertTrue(
         elapsedMillis < 1_000,
         "fire-and-forget must not park the creating request (" + elapsedMillis + "ms)");
+  }
+
+  // --- the synchronous half, for the reconcile (main-environment-plan.md §5) ---
+
+  /**
+   * The same request, waited on: the reconcile must send what the creation path sends, which is
+   * what makes the remedy a remedy rather than a second, differently-wrong announcement.
+   */
+  @Test
+  void ensureEnvironmentSendsTheSameRequestAndReportsCreatedOn201() throws Exception {
+    status.set(201);
+
+    var assertion = notifier().ensureEnvironment("project-4", "Sync Create", "sync-create");
+
+    assertEquals(ProjectReconciliation.EnvironmentOutcome.CREATED, assertion.outcome());
+    assertNull(assertion.detail(), "a created environment needs no explanation");
+    Received request = await();
+    assertEquals("POST", request.method());
+    assertEquals("/cd/api/environments", request.path());
+    assertEquals(
+        Map.of("name", "sync-create", "branch", "main", "applications", List.of()), request.body());
+  }
+
+  /** 409 is the environment already being there — the steady state a reconcile expects to find. */
+  @Test
+  void ensureEnvironmentReportsAlreadyExistsOn409() throws Exception {
+    status.set(409);
+
+    var assertion = notifier().ensureEnvironment("project-5", "Sync Steady", "sync-steady");
+
+    assertEquals(ProjectReconciliation.EnvironmentOutcome.ALREADY_EXISTS, assertion.outcome());
+    assertNull(assertion.detail());
+    assertEquals("/cd/api/environments", await().path(), "the request was still made");
+  }
+
+  /** Anything else is a failure that names the status code, because the caller can act on it. */
+  @Test
+  void ensureEnvironmentReportsFailedWithTheStatusCode() throws Exception {
+    status.set(500);
+
+    var assertion = notifier().ensureEnvironment("project-6", "Sync Broken", "sync-broken");
+
+    assertEquals(ProjectReconciliation.EnvironmentOutcome.FAILED, assertion.outcome());
+    assertTrue(assertion.detail().contains("500"), "got: " + assertion.detail());
+    assertTrue(assertion.detail().contains("sync-broken"));
+    await();
+  }
+
+  /**
+   * Unreachable is an outcome and never an exception — and it is <b>bounded</b>, because this one
+   * runs on a request thread with a person on the other end of it.
+   */
+  @Test
+  void ensureEnvironmentReportsFailedWhenCdIsUnreachable() {
+    CdEnvironmentNotifier notifier = new CdEnvironmentNotifier();
+    notifier.cdUrl = "http://192.0.2.1:9";
+    notifier.objectMapper = new ObjectMapper();
+
+    long before = System.nanoTime();
+    var assertion = notifier.ensureEnvironment("project-7", "Nowhere", "nowhere");
+    long elapsedMillis = (System.nanoTime() - before) / 1_000_000;
+
+    assertEquals(ProjectReconciliation.EnvironmentOutcome.FAILED, assertion.outcome());
+    assertTrue(assertion.detail().contains("unreachable"), "got: " + assertion.detail());
+    assertTrue(
+        elapsedMillis < 10_000,
+        "the connect timeout is the deadline a caller waits on (" + elapsedMillis + "ms)");
   }
 }

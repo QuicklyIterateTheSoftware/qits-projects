@@ -198,6 +198,13 @@ components:
           $ref: "#/components/schemas/ProjectDnsRecordType"
         value:
           type: string
+    DomainOutcome:
+      type: string
+      enum:
+      - REGISTERED
+      - NO_MATCHING_ZONE
+      - NOT_CONFIGURED
+      - FAILED
     Entry:
       type: object
       properties:
@@ -228,6 +235,12 @@ components:
       properties:
         submodule:
           $ref: "#/components/schemas/RepositorySubmoduleDto"
+    EnvironmentOutcome:
+      type: string
+      enum:
+      - CREATED
+      - ALREADY_EXISTS
+      - FAILED
     EpicDto:
       type: object
       properties:
@@ -391,22 +404,28 @@ components:
     Response17:
       type: object
       properties:
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/Entry3"
+        environment:
+          $ref: "#/components/schemas/EnvironmentOutcome"
+        environmentDetail:
+          type: string
+        domain:
+          $ref: "#/components/schemas/DomainOutcome"
+        domainDetail:
+          type: string
     Response18:
       type: object
       properties:
         entries:
           type: array
           items:
-            $ref: "#/components/schemas/Entry4"
+            $ref: "#/components/schemas/Entry3"
     Response19:
       type: object
       properties:
-        project:
-          $ref: "#/components/schemas/ProjectDto"
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry4"
     Response2:
       type: object
       properties:
@@ -415,37 +434,37 @@ components:
     Response20:
       type: object
       properties:
+        project:
+          $ref: "#/components/schemas/ProjectDto"
+    Response21:
+      type: object
+      properties:
         success:
           type: boolean
-    Response21:
+    Response22:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
         projectId:
           type: string
-    Response22:
+    Response23:
       type: object
       properties:
         project:
           $ref: "#/components/schemas/ProjectDto"
         wrapper:
           $ref: "#/components/schemas/RepositoryDto"
-    Response23:
+    Response24:
       type: object
       properties:
         technicalProcessId:
           type: string
-    Response24:
+    Response25:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response25:
-      type: object
-      properties:
-        technicalProcessId:
-          type: string
     Response26:
       type: object
       properties:
@@ -454,13 +473,13 @@ components:
     Response27:
       type: object
       properties:
-        repository:
-          $ref: "#/components/schemas/RepositoryDto"
+        technicalProcessId:
+          type: string
     Response28:
       type: object
       properties:
-        success:
-          type: boolean
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
     Response29:
       type: object
       properties:
@@ -474,16 +493,21 @@ components:
     Response30:
       type: object
       properties:
+        success:
+          type: boolean
+    Response31:
+      type: object
+      properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response31:
+    Response32:
       type: object
       properties:
         technicalProcessId:
           type: string
-    Response32:
+    Response33:
       type: object
       properties:
         repositoryId:
@@ -494,7 +518,7 @@ components:
           type: string
         backendUrl:
           type: string
-    Response33:
+    Response34:
       type: object
       properties:
         entries:
@@ -505,7 +529,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Available"
-    Response34:
+    Response35:
       type: object
       properties:
         entries:
@@ -870,7 +894,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response18"
+                $ref: "#/components/schemas/Response19"
       summary: List
       tags:
       - Project Controller
@@ -887,7 +911,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response22"
+                $ref: "#/components/schemas/Response23"
         "400":
           description: Bad Request
       summary: Create
@@ -932,7 +956,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response19"
+                $ref: "#/components/schemas/Response20"
       summary: Get
       tags:
       - Project Controller
@@ -949,7 +973,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response20"
+                $ref: "#/components/schemas/Response21"
       summary: Delete
       tags:
       - Project Controller
@@ -996,6 +1020,33 @@ paths:
       summary: Create
       tags:
       - Project Epics Controller
+  /projects/api/projects/{projectId}/reconcile:
+    post:
+      summary: Re-assert a project's environment and domain against qits-cd and qits-dns
+      description: "Project creation announces both facts fire-and-forget, so a receiver\
+        \ that was down when a project was created leaves the environment or the dns\
+        \ record missing with nothing to carry it forward. This re-asserts both synchronously\
+        \ and reports the outcome of each; both receivers are idempotent, so it is\
+        \ safe to repeat, and it is also how a project created before either hook\
+        \ existed gets its environment and record."
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: "The reconcile ran. Each target reports its own outcome, and\
+            \ a failed one is still a 200 — the outcomes are the result."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response17"
+        "404":
+          description: No such project
+      tags:
+      - Project Controller
   /projects/api/projects/{projectId}/repositories:
     get:
       parameters:
@@ -1010,7 +1061,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response17"
+                $ref: "#/components/schemas/Response18"
       summary: List Repositories
       tags:
       - Project Controller
@@ -1033,7 +1084,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response21"
+                $ref: "#/components/schemas/Response22"
         "400":
           description: Bad Request
       summary: Create Repository
@@ -1053,7 +1104,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response27"
+                $ref: "#/components/schemas/Response28"
       summary: Get
       tags:
       - Repository Controller
@@ -1070,7 +1121,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response29"
+                $ref: "#/components/schemas/Response30"
       summary: Delete
       tags:
       - Repository Controller
@@ -1088,7 +1139,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response31"
+                $ref: "#/components/schemas/Response32"
       summary: Active Process
       tags:
       - Repository Controller
@@ -1112,7 +1163,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response28"
+                $ref: "#/components/schemas/Response29"
       summary: Delete Branch
       tags:
       - Repository Controller
@@ -1129,7 +1180,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response30"
+                $ref: "#/components/schemas/Response31"
       summary: Branches
       tags:
       - Repository Controller
@@ -1237,7 +1288,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response24"
+                $ref: "#/components/schemas/Response25"
         "400":
           description: Bad Request
       summary: Set Main Branch
@@ -1257,7 +1308,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response26"
+                $ref: "#/components/schemas/Response27"
       summary: Pull
       tags:
       - Repository Controller
@@ -1275,7 +1326,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response25"
+                $ref: "#/components/schemas/Response26"
       summary: Push
       tags:
       - Repository Controller
@@ -1293,7 +1344,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response33"
+                $ref: "#/components/schemas/Response34"
       summary: List
       tags:
       - Repository Submodule Controller
@@ -1311,7 +1362,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response34"
+                $ref: "#/components/schemas/Response35"
       summary: Import Submodules
       tags:
       - Repository Submodule Controller
@@ -1335,7 +1386,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response32"
+                $ref: "#/components/schemas/Response33"
         "400":
           description: Bad Request
       summary: Prepare
@@ -1355,7 +1406,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response23"
+                $ref: "#/components/schemas/Response24"
       summary: Sync
       tags:
       - Repository Controller

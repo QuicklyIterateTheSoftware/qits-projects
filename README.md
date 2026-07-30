@@ -103,7 +103,12 @@ the rest in one way worth stating: they are **fire-and-forget**. `ProjectService
 after its transaction commits and swallows every failure, because a project must never fail to exist
 because a sibling service was down. So a wrong `qits.cd.url` or `qits.dns.url` produces no error
 anywhere — environments and dns records simply stop appearing. Both keys carry that hazard in their
-comment in `service/src/main/resources/application.properties`.
+comment in `service/src/main/resources/application.properties`. The remedy is a manual step whose
+result you can see: `POST /projects/api/projects/{projectId}/reconcile` re-asserts both facts
+**synchronously** through the same two ports and answers with a per-target outcome
+(`CREATED`/`ALREADY_EXISTS`/`FAILED`, `REGISTERED`/`NO_MATCHING_ZONE`/`NOT_CONFIGURED`/`FAILED`) —
+also the retro-fire for every project created before the hooks existed, the seeded `qits` project
+included (`ProjectReconcileService`, `main-environment-plan.md` §5).
 
 Reached the other way: qits-workspaces' `RepositoryLookup` and `RepositoryAddressResolver`, and
 qits-artifacts' `githost.RepositoryNameResolver`, are ports **those** repos declare and this one

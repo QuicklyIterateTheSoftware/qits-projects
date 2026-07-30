@@ -19,6 +19,12 @@ package eu.wohlben.qits.projects.control;
  *
  * <p>Ids and values only, never entities: what crosses this seam is what the receiver needs to name
  * the thing, and an entity would make the receiver a reader of this context's schema.
+ *
+ * <p><b>Two methods, one announcement.</b> {@link #onProjectCreated} is the creation path and stays
+ * fire-and-forget; {@link #ensureEnvironment} is the same assertion made <em>synchronously</em>,
+ * for the manual reconcile that exists because fire-and-forget has no second attempt
+ * (main-environment-plan.md §5). An implementation must serve both from one piece of logic — the
+ * remedy is worth nothing if it can drift from the thing it repairs.
  */
 public interface ProjectEnvironmentNotifier {
 
@@ -28,4 +34,25 @@ public interface ProjectEnvironmentNotifier {
    * name}, being free-form and editable, is neither.
    */
   void onProjectCreated(String projectId, String name, String slug);
+
+  /**
+   * Assert the same environment <b>now</b>, and answer with what happened — the synchronous half of
+   * this port, driven by {@code ProjectReconcileService} on a request thread.
+   *
+   * <p>Three obligations follow from that thread:
+   *
+   * <ul>
+   *   <li><b>Bounded.</b> An implementation must carry its own connect and request timeouts; a
+   *       person waiting on an answer is the deadline.
+   *   <li><b>Total.</b> Every failure is an {@link ProjectReconciliation.EnvironmentOutcome#FAILED}
+   *       with a reason, not a thrown exception — a receiver being down is the answer, not an error
+   *       in answering. A thrown exception is still caught by the caller, but as a defect rather
+   *       than as the contract.
+   *   <li><b>Idempotent.</b> An environment that already exists is {@link
+   *       ProjectReconciliation.EnvironmentOutcome#ALREADY_EXISTS} and not a failure. Both
+   *       receivers in this platform being idempotent is what makes re-asserting legitimate at all.
+   * </ul>
+   */
+  ProjectReconciliation.EnvironmentAssertion ensureEnvironment(
+      String projectId, String name, String slug);
 }

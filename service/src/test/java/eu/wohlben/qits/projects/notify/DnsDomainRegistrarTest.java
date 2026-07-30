@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import eu.wohlben.qits.projects.control.ProjectReconciliation;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -18,6 +19,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +36,9 @@ import org.junit.jupiter.api.Test;
  * matching qits-dns raises nothing and hostnames simply stop resolving.
  *
  * <p>Delivery is fire-and-forget across two hops, so assertions wait on a queue the fixture fills.
+ * The synchronous half at the bottom runs against the same server and the same fixture on purpose:
+ * one zone request, one resolution and one payload serve both paths, and asserting them over one
+ * wire is what says so.
  */
 class DnsDomainRegistrarTest {
 
@@ -45,6 +50,13 @@ class DnsDomainRegistrarTest {
 
   /** What {@code GET /dns/api/zones} answers for the case under test. */
   private final AtomicReference<String> zonesBody = new AtomicReference<>("{\"zones\":[]}");
+
+  /**
+   * The two status codes the reconcile's outcomes are read off — 200 unless a test says otherwise.
+   */
+  private final AtomicInteger zonesStatus = new AtomicInteger(200);
+
+  private final AtomicInteger putStatus = new AtomicInteger(200);
 
   @BeforeEach
   void startServer() throws IOException {
@@ -63,13 +75,17 @@ class DnsDomainRegistrarTest {
           all.add(request);
           try {
             if ("GET".equals(request.method())) {
+              if (zonesStatus.get() != 200) {
+                exchange.sendResponseHeaders(zonesStatus.get(), -1);
+                return;
+              }
               byte[] zones = zonesBody.get().getBytes(StandardCharsets.UTF_8);
               exchange.getResponseHeaders().add("Content-Type", "application/json");
               exchange.sendResponseHeaders(200, zones.length);
               exchange.getResponseBody().write(zones);
             } else {
               puts.add(request);
-              exchange.sendResponseHeaders(200, -1);
+              exchange.sendResponseHeaders(putStatus.get(), -1);
             }
           } finally {
             exchange.close();
@@ -254,5 +270,132 @@ class DnsDomainRegistrarTest {
     assertEquals("@", DnsDomainRegistrar.recordName("qits.eu", "qits.eu"));
     assertEquals("app", DnsDomainRegistrar.recordName("app.qits.eu", "qits.eu"));
     assertEquals("a.b", DnsDomainRegistrar.recordName("a.b.qits.eu", "qits.eu"));
+  }
+
+  // --- the synchronous half, for the reconcile (main-environment-plan.md §5) ---
+
+  /**
+   * The same two hops over the same shared helpers, waited on: an exact zone match is still written
+   * at the apex, and a 200 is {@code REGISTERED}.
+   */
+  @Test
+  void registerNowWritesTheApexRecordAndReportsRegistered() throws Exception {
+    zonesBody.set(zones("zone-1", "qits.eu"));
+
+    var assertion =
+        registrar(null)
+            .registerNow("p-9", "qits", "qits.eu", ProjectDnsRecordType.A, "203.0.113.9");
+
+    assertEquals(ProjectReconciliation.DomainOutcome.REGISTERED, assertion.outcome());
+    assertNull(assertion.detail(), "a written record needs no explanation");
+    Received put = awaitPut();
+    assertEquals("PUT", put.method());
+    assertEquals("/dns/api/zones/zone-1/records", put.path());
+    Map<String, Object> body = parse(put.body());
+    assertEquals("@", body.get("name"));
+    assertEquals("A", body.get("type"));
+    assertEquals(List.of("203.0.113.9"), body.get("values"));
+  }
+
+  /** And the label spelling below the apex, from the one copy of the resolution. */
+  @Test
+  void registerNowUsesTheLeftoverLabelForASuffixMatch() throws Exception {
+    zonesBody.set(zones("parent", "qits.eu", "child", "dev.qits.eu"));
+
+    var assertion =
+        registrar(null)
+            .registerNow(
+                "p-10", "app", "app.dev.qits.eu", ProjectDnsRecordType.CNAME, "ingress.qits.eu");
+
+    assertEquals(ProjectReconciliation.DomainOutcome.REGISTERED, assertion.outcome());
+    Received put = awaitPut();
+    assertEquals(
+        "/dns/api/zones/child/records", put.path(), "the longest matching zone wins here too");
+    assertEquals("app", parse(put.body()).get("name"));
+  }
+
+  /**
+   * The documented stop, promoted to a reportable outcome: <b>no write is attempted</b>, and the
+   * operator is told the thing they can act on rather than left reading a log.
+   */
+  @Test
+  void registerNowReportsNoMatchingZoneWithoutWritingAnything() throws Exception {
+    zonesBody.set(zones("zone-1", "qits.eu"));
+
+    var assertion =
+        registrar(null)
+            .registerNow("p-11", "other", "notqits.eu", ProjectDnsRecordType.A, "203.0.113.9");
+
+    assertEquals(ProjectReconciliation.DomainOutcome.NO_MATCHING_ZONE, assertion.outcome());
+    assertTrue(assertion.detail().contains("notqits.eu"), "got: " + assertion.detail());
+    assertNull(puts.poll(2, TimeUnit.SECONDS), "a zone is delegated at a registrar, not invented");
+    assertTrue(
+        all.stream().allMatch(r -> "GET".equals(r.method())),
+        "only the zone lookup reached the server");
+  }
+
+  /** The token rides along on the reconcile's write exactly as on the creation hook's. */
+  @Test
+  void registerNowSendsTheTokenWhenConfigured() throws Exception {
+    zonesBody.set(zones("zone-1", "qits.eu"));
+
+    registrar("s3cret")
+        .registerNow("p-12", "qits", "qits.eu", ProjectDnsRecordType.A, "203.0.113.9");
+
+    assertEquals("s3cret", awaitPut().token());
+  }
+
+  /** A refused write is a failure that names what was refused, in which zone. */
+  @Test
+  void registerNowReportsFailedWhenTheWriteIsRejected() throws Exception {
+    zonesBody.set(zones("zone-1", "qits.eu"));
+    putStatus.set(500);
+
+    var assertion =
+        registrar(null)
+            .registerNow("p-13", "app", "app.qits.eu", ProjectDnsRecordType.A, "203.0.113.9");
+
+    assertEquals(ProjectReconciliation.DomainOutcome.FAILED, assertion.outcome());
+    assertTrue(assertion.detail().contains("500"), "got: " + assertion.detail());
+    assertTrue(assertion.detail().contains("qits.eu"));
+    awaitPut();
+  }
+
+  /** A zone list that cannot be had is a failure at the first hop, with no write attempted. */
+  @Test
+  void registerNowReportsFailedWhenTheZoneListIsRefused() throws Exception {
+    zonesStatus.set(503);
+
+    var assertion =
+        registrar(null)
+            .registerNow("p-14", "app", "app.qits.eu", ProjectDnsRecordType.A, "203.0.113.9");
+
+    assertEquals(ProjectReconciliation.DomainOutcome.FAILED, assertion.outcome());
+    assertTrue(assertion.detail().contains("503"), "got: " + assertion.detail());
+    assertNull(puts.poll(1, TimeUnit.SECONDS), "nothing is written without a resolved zone");
+  }
+
+  /**
+   * Unreachable is an outcome and never an exception — bounded by the connect timeout, because a
+   * person is waiting on this one.
+   */
+  @Test
+  void registerNowReportsFailedWhenDnsIsUnreachable() {
+    DnsDomainRegistrar registrar = new DnsDomainRegistrar();
+    registrar.dnsUrl = "http://192.0.2.1:9";
+    registrar.configuredToken = Optional.empty();
+    registrar.objectMapper = new ObjectMapper();
+
+    long before = System.nanoTime();
+    var assertion =
+        registrar.registerNow(
+            "p-15", "nowhere", "nowhere.qits.eu", ProjectDnsRecordType.A, "203.0.113.9");
+    long elapsedMillis = (System.nanoTime() - before) / 1_000_000;
+
+    assertEquals(ProjectReconciliation.DomainOutcome.FAILED, assertion.outcome());
+    assertTrue(assertion.detail().contains("unreachable"), "got: " + assertion.detail());
+    assertTrue(
+        elapsedMillis < 10_000,
+        "the connect timeout is the deadline a caller waits on (" + elapsedMillis + "ms)");
   }
 }

@@ -131,6 +131,32 @@ satisfies. This jar does not implement them — the assembling application does,
 name collision: artifacts' `githost.RepositoryNameResolver` (a port) and this context's
 `control.RepositoryNameResolver` (the alias resolver) are unrelated types.
 
+## The startup self-seed
+
+A packaged run reconciles a `qits` project (slug `qits`, the name qits-cd's standing environment
+also carries) on every boot — `StartupSelfSeed` gates it to `LaunchMode.NORMAL`, `SelfSeedService`
+is the reconcile. It is additive and per-item idempotent: nothing is deleted, nothing already there
+is modified, and one failing item never denies the rest.
+
+It reconciles **two manifests**, because there are two ways a qits repository comes to exist.
+
+| Manifest | What it does | Id |
+|---|---|---|
+| `manifest()` | clones an upstream this service does not otherwise hold — the wrapper through the adopt seam, the rest through `createRepositoryUnderProject` | a fresh UUID, and the clone lands at `<data-dir>/<id>/origin` |
+| `platformManifest()` | **adopts** an origin already on the shared volume, one entry per superproject submodule, archetype from the directory it is mounted under | **the directory name** (`qits-ci`, `qits-spa-ui-components`, …) |
+
+The second exists because the platform's own repositories reach the git host without passing
+through this service: the bootstrap runs `git init --bare -b main /repos/qits-<name>/origin`
+directly, and qits-artifacts serves `<data-dir>/<repoId>/origin` id-addressed. They then accumulate
+pushes, ci runs and deployments while no `Repository` row names them — and every one of those facts
+is keyed on that directory name (`CiRun.repoId` carries it; so do qits-cd's applications). So
+adoption takes the id rather than minting one: a UUID row would be attached to nothing.
+`RepositoryService.adoptExistingOrigin` is the seam, and its javadoc carries what it deliberately
+does not do — no clone, no `origin` remote (so pull and push are not wired for an adopted
+repository), no name alias, no workspace. An entry with no origin on this host is skipped on every
+boot until the day that origin appears, which is what lets the manifest be the superproject's module
+list rather than a snapshot of one deployment.
+
 ## Persistence
 
 Its own named datasource `projects`, its own persistence unit, its own Flyway lineage at

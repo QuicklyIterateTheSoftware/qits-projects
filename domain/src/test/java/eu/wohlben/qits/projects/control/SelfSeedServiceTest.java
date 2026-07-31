@@ -80,6 +80,8 @@ public class SelfSeedServiceTest {
   }
 
   @Inject SelfSeedService selfSeedService;
+  @Inject MetadataService metadataService;
+  @Inject GitExecutor git;
   @Inject ProjectService projectService;
   @Inject RepositoryRepository repositoryRepository;
   @Inject RepositoryNameRepository repositoryNameRepository;
@@ -270,6 +272,100 @@ public class SelfSeedServiceTest {
         before,
         repositoryRepository.find("project.id", qitsProject().id).list().size(),
         "the second reconcile adds nothing");
+  }
+
+  /**
+   * A bare origin on the shared volume that this service did not create — what the bootstrap's
+   * {@code git init --bare -b main /repos/qits-<name>/origin} leaves for the platform's own
+   * repositories, and the state the adopt half of the seed exists for.
+   */
+  private void seedGitHostOrigin(String repoId) throws Exception {
+    Path originPath = Path.of(metadataService.getDataDir(), repoId, "origin");
+    Files.createDirectories(originPath.getParent());
+    git.exec(null, "git", "init", "-q", "--bare", "-b", "main", originPath.toString());
+  }
+
+  private Map<String, Repository> reposById(String projectId) {
+    return repositoryRepository.find("project.id", projectId).list().stream()
+        .collect(Collectors.toMap(r -> r.id, r -> r));
+  }
+
+  /**
+   * The onboarding this feature exists for: a repository the platform's git host already serves
+   * gains a row whose id <b>is</b> the directory name, so {@code CiRun.repoId} joins against it.
+   */
+  @Test
+  public void platformRepositoriesOnTheGitHostAreAdoptedUnderTheSeededProject() throws Exception {
+    seedGitHostOrigin("qits-ci");
+    seedGitHostOrigin("qits-spa-ui-components");
+    // Not in the manifest at all: a user-provisioned repository, or a directory no longer claimed.
+    seedGitHostOrigin("legacy-build-box");
+
+    selfSeedService.reconcile();
+
+    Map<String, Repository> repos = reposById(qitsProject().id);
+    Repository ci = repos.get("qits-ci");
+    assertNotNull(ci, "the ci repository the run history references is claimed by the project");
+    assertEquals(
+        "https://github.com/QuicklyIterateTheSoftware/qits-ci.git",
+        ci.url,
+        "the forge repository .gitmodules records for that module");
+    assertEquals(RepositoryArchetype.SERVICE, ci.archetype, "services/ is SERVICE");
+    assertEquals("main", ci.mainBranch);
+
+    assertEquals(
+        RepositoryArchetype.LIBRARY,
+        repos.get("qits-spa-ui-components").archetype,
+        "libs/ is LIBRARY — the archetype follows the directory the superproject mounts it under");
+
+    assertNull(
+        repos.get("legacy-build-box"),
+        "a directory the manifest does not name is not adopted — the seed claims what it knows");
+    assertNull(
+        repos.get("qits-dns"),
+        "a manifest entry with no origin on this host is skipped, not conjured");
+  }
+
+  /** Reconciled on every boot, so converging rather than duplicating is the whole contract. */
+  @Test
+  public void adoptingThePlatformRepositoriesIsIdempotent() throws Exception {
+    seedGitHostOrigin("qits-ci");
+    selfSeedService.reconcile();
+    long after = repositoryRepository.count();
+    String firstId = reposById(qitsProject().id).get("qits-ci").id;
+
+    selfSeedService.reconcile();
+
+    assertEquals(after, repositoryRepository.count(), "the second reconcile adopts nothing new");
+    assertEquals("qits-ci", firstId);
+  }
+
+  /**
+   * Every manifest url is the forge namespace plus the id, and every archetype is one the skeleton
+   * can place or one the two unplaceable roles above map onto. Cheap to assert, and it is the check
+   * that keeps a hand-edited entry from registering a repository under a url nobody can fetch.
+   */
+  @Test
+  public void thePlatformManifestIsWellFormed() {
+    for (SelfSeedService.PlatformRepository entry : selfSeedService.platformManifest()) {
+      assertTrue(
+          entry.url().endsWith("/" + entry.id() + ".git"),
+          "the url of " + entry.id() + " is its id in the platform's forge namespace");
+      assertTrue(
+          entry.url().startsWith("https://github.com/QuicklyIterateTheSoftware/"),
+          entry.id() + " points at the platform's forge namespace");
+      assertNotNull(entry.archetype());
+      assertTrue(
+          entry.archetype() != RepositoryArchetype.PROJECT,
+          "the wrapper is the clone manifest's, never adopted: " + entry.id());
+    }
+    assertEquals(
+        selfSeedService.platformManifest().size(),
+        selfSeedService.platformManifest().stream()
+            .map(SelfSeedService.PlatformRepository::id)
+            .distinct()
+            .count(),
+        "no id appears twice");
   }
 
   /**

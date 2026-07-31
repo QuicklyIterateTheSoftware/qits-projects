@@ -14,6 +14,8 @@ import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -46,7 +48,18 @@ import org.jboss.logging.Logger;
  *   <li>For a {@code deepImport} entry, one further level of submodule import is applied over the
  *       freshly imported direct children — idempotent by the import's own semantics (dedup by url /
  *       {@code (parent, path)}), a no-op on childless siblings.
+ *   <li>Each {@linkplain #platformManifest() platform repository} the platform's own git host
+ *       already serves is <b>adopted</b> under the same project, matched by id, skipped when its
+ *       origin is not on the volume.
  * </ul>
+ *
+ * <p><b>There are two manifests because there are two ways a qits repository comes to exist.</b>
+ * The one above clones an upstream this service does not otherwise hold. The platform one registers
+ * origins that are already on the shared volume — the bootstrap initializes them there directly,
+ * and they are pushed to, built and deployed with no row here at all — so it adopts them under the
+ * directory name they are served under, which is the id everything downstream (a {@code
+ * CiRun.repoId}, a cd application) already carries. See {@link
+ * RepositoryService#adoptExistingOrigin}.
  *
  * <p>Per-item matching also makes partial failure self-healing: a boot that created the project but
  * lost a clone to a network blip completes the missing pieces on the next boot, with no wedged
@@ -175,6 +188,82 @@ public class SelfSeedService {
     return override.filter(s -> !s.isBlank()).orElse(def).trim();
   }
 
+  /**
+   * The forge namespace the platform's own repositories live in. Every {@link PlatformRepository}
+   * url is this plus the id plus {@code .git} — the same thing the superproject's {@code
+   * .gitmodules} records for that entry, which is what makes the mapping checkable rather than
+   * asserted.
+   */
+  private static final String PLATFORM_FORGE = "https://github.com/QuicklyIterateTheSoftware/";
+
+  /**
+   * One of the platform's own repositories, already served by the platform's own git host: the
+   * shared-volume directory name it is served under — <b>which becomes {@code Repository.id}</b> —
+   * and what kind of part of qits it is.
+   *
+   * <p>No url field: it is derived from the id against {@link #PLATFORM_FORGE}, because for these
+   * repositories the two are the same fact spelled twice.
+   */
+  public record PlatformRepository(String id, RepositoryArchetype archetype) {
+    public String url() {
+      return PLATFORM_FORGE + id + ".git";
+    }
+  }
+
+  /**
+   * The platform's own repositories — the superproject's submodule list, one entry per module,
+   * archetype taken from the directory it is mounted under (which is exactly what {@link
+   * RepositoryArchetype#directory()} declares in the other direction: {@code services} → {@link
+   * RepositoryArchetype#SERVICE SERVICE}, {@code libs} → {@link RepositoryArchetype#LIBRARY
+   * LIBRARY}, {@code integrations} → {@link RepositoryArchetype#INTEGRATION INTEGRATION}). The two
+   * roles the skeleton has no directory for map by their own semantics: a {@code frontends/} entry
+   * is a thing served to a user at a URL, so {@link RepositoryArchetype#APPLICATION APPLICATION},
+   * and a {@code daemons/} entry is a deployed component, so {@code SERVICE}.
+   *
+   * <p>Listing a repository the git host does not carry is <b>not</b> an error and not a
+   * prediction: an entry with no origin on the volume is skipped, silently, on every boot until the
+   * day that origin appears. That is what makes the manifest the superproject's module list rather
+   * than a snapshot of one deployment — the bootstrap seeds the nine deployables, this host has
+   * gained four more by hand since, and both onboard themselves with no edit here.
+   *
+   * <p>The wrapper ({@code qits-qits}) is deliberately absent: it is the project's {@link
+   * RepositoryArchetype#PROJECT} root, {@code adoptWrapperRepository} is the only seam that may
+   * mint one, and {@link #manifest()} above already owns it.
+   */
+  List<PlatformRepository> platformManifest() {
+    return List.of(
+        // services/ — deployable components.
+        new PlatformRepository("qits-gateway", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-artifacts", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-observability", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-workspaces", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-projects", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-repositories", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-events", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-ci", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-cd", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-dns", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-stt", RepositoryArchetype.SERVICE),
+        // daemons/ — long-running agents, deployed rather than served.
+        new PlatformRepository("qits-ci-daemon", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-workspace-daemon", RepositoryArchetype.SERVICE),
+        // libs/ — shared code consumed by the others.
+        new PlatformRepository("qits-userflows", RepositoryArchetype.LIBRARY),
+        new PlatformRepository("qits-spa-ui-components", RepositoryArchetype.LIBRARY),
+        // integrations/ — framework-specific glue.
+        new PlatformRepository("qits-integrations-angular", RepositoryArchetype.INTEGRATION),
+        new PlatformRepository("qits-integrations-quarkus", RepositoryArchetype.INTEGRATION),
+        // frontends/ — one entry per thing served at a URL.
+        new PlatformRepository("qits-spa-home", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-spa-projects", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-spa-workspaces", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-spa-artifacts", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-spa-observability", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-spa-events", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-spa-ci", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-spa-cd", RepositoryArchetype.APPLICATION));
+  }
+
   /** Reconciles the manifest against the DB. Safe to run on every boot; additive and idempotent. */
   @ActivateRequestContext
   public void reconcile() {
@@ -187,6 +276,50 @@ public class SelfSeedService {
         // single repo) never denies the rest — the next boot's reconcile retries exactly this item.
         LOG.errorf(
             e, "Self-seed: failed to reconcile repository %s — retried on next boot.", entry.url());
+      }
+    }
+    reconcilePlatformRepositories(project);
+  }
+
+  /**
+   * Registers the platform's own repositories — the ones the platform's git host already serves —
+   * under the seeded project, each keyed by the directory name it is served under.
+   *
+   * <p>This is the half of the seed that <b>adopts rather than clones</b>, and it exists because
+   * the platform's repositories reached the git host without ever passing through this service:
+   * the bootstrap initializes their bare origins on the shared volume directly, so they accumulate
+   * pushes, ci runs and deployments while no {@code Repository} row names them. Every one of those
+   * facts is keyed on the directory name, which is why {@link
+   * RepositoryService#adoptExistingOrigin} takes the id rather than minting one — a UUID row would
+   * be attached to nothing.
+   *
+   * <p>Additive and per-item, exactly like the clone manifest above: an entry with no origin on the
+   * volume is skipped, an id already carrying a row is left untouched, and one failing entry never
+   * denies the rest.
+   */
+  private void reconcilePlatformRepositories(Project project) {
+    Set<String> known =
+        projectService.getRepositories(project.id).stream()
+            .map(r -> r.id)
+            .collect(Collectors.toSet());
+    for (PlatformRepository entry : platformManifest()) {
+      try {
+        if (!repositoryService.hasExistingOrigin(entry.id())) {
+          LOG.debugf(
+              "Self-seed: no origin on the git host for %s — nothing to adopt yet.", entry.id());
+          continue;
+        }
+        repositoryService.adoptExistingOrigin(project, entry.id(), entry.url(), entry.archetype());
+        if (!known.contains(entry.id())) {
+          LOG.infof(
+              "Self-seed: adopted platform repository %s (%s) under '%s'.",
+              entry.id(), entry.archetype(), PROJECT_NAME);
+        }
+      } catch (RuntimeException e) {
+        LOG.errorf(
+            e,
+            "Self-seed: failed to adopt platform repository %s — retried on next boot.",
+            entry.id());
       }
     }
   }

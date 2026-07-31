@@ -31,6 +31,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -558,6 +559,108 @@ public class RepositoryService {
                       + "' exactly.");
             });
     repositoryNameRepository.registerSelfName(repo, name);
+  }
+
+  /**
+   * The id shape an adopted repository may carry. Identical to qits-artifacts' git-host route
+   * pattern, because the id <em>is</em> the segment that host serves and the directory name under
+   * the data dir — so a traversal-shaped id ({@code ..}, a slash, a leading dash) must not be
+   * registrable here either.
+   */
+  private static final Pattern ADOPTABLE_ID =
+      Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,63}");
+
+  /** Whether the shared repositories volume already carries a bare origin for {@code repoId}. */
+  public boolean hasExistingOrigin(String repoId) {
+    return repoId != null
+        && ADOPTABLE_ID.matcher(repoId).matches()
+        && Files.isDirectory(originPath(repoId));
+  }
+
+  /**
+   * Registers a bare origin that is <b>already on the shared repositories volume</b> as a
+   * repository of {@code project}, keyed by the directory name itself.
+   *
+   * <p>The third creation path, beside {@link #cloneOne} (mirror an upstream into a fresh
+   * directory) and {@link #initWrapperOrigin} (initialize one locally): here the directory exists
+   * and this context did not make it. That is the platform's own git host — the bootstrap runs
+   * {@code git init --bare -b main /repos/qits-<name>/origin} for every deployable and
+   * qits-artifacts serves {@code <data-dir>/<repoId>/origin} id-addressed, so those repositories
+   * are real, pushed to and building with no row here at all.
+   *
+   * <p><b>{@code repoId} is the directory name, and that is the whole point.</b> Everything
+   * downstream keys on it: the git host hands the directory name to qits-ci's intake, so {@code
+   * CiRun.repoId} carries it, and qits-cd's applications are seeded with it. A row minted with a
+   * fresh UUID would name a repository nothing in the platform's history refers to. Hence a
+   * client-supplied id here, uniquely among the creation paths, and hence {@link #ADOPTABLE_ID}.
+   *
+   * <p>Nothing on disk is written but the metadata sidecar — without it {@link
+   * RepositoryDiscoveryService} has nothing to restore {@code url}/{@code archetype} from. In
+   * particular <b>no {@code origin} remote is configured</b>, which {@link #attachBackupRemote} is
+   * the seam for and this is deliberately not: {@code url} declares which forge repository backs
+   * this one (what a reader wants and what {@code RepositoryDto} carries), while a mirror-fetch
+   * refspec pointed at that forge would let a pull rewind refs the ci host has already built from.
+   * Pull and push are therefore not wired for an adopted repository, and it gets no workspace.
+   *
+   * <p>No name alias either. An alias is what makes {@code /git/<projectId>/<name>} resolve, and
+   * every existing caller reaches these repositories id-addressed at {@code /artifacts/git/<id>}.
+   * Registering one eagerly would also have to disambiguate against a basename already taken in the
+   * same project, which would produce a name nobody asked for; {@link RepositoryNameResolver}
+   * registers one lazily and by the same rules if a workspace ever needs it.
+   *
+   * <p>Idempotent, and matched on the id rather than the url: a row already carrying {@code repoId}
+   * is returned untouched whatever its url, archetype or project. Re-running is the normal case —
+   * this is reconciled on every boot.
+   *
+   * @throws NotFoundException if no origin exists at {@code <data-dir>/<repoId>/origin}; adoption
+   *     registers what is there and never conjures a repository the git host cannot serve
+   */
+  @Transactional
+  public Repository adoptExistingOrigin(
+      Project project, String repoId, String url, RepositoryArchetype archetype) {
+    if (repoId == null || !ADOPTABLE_ID.matcher(repoId).matches()) {
+      throw new BadRequestException(
+          "Invalid repository id '"
+              + repoId
+              + "': an adopted repository is keyed by its directory name on the shared volume, so"
+              + " the id must be 1-64 characters of letters, digits and inner dashes.");
+    }
+    if (archetype == RepositoryArchetype.PROJECT) {
+      throw new BadRequestException(
+          "A repository cannot be adopted with archetype PROJECT: that archetype is reserved for"
+              + " the project's wrapper repository, which ProjectService.adoptWrapperRepository"
+              + " owns.");
+    }
+
+    Optional<Repository> existing = repositoryRepository.findByIdOptional(repoId);
+    if (existing.isPresent()) {
+      return existing.get();
+    }
+    Path originPath = originPath(repoId);
+    if (!Files.isDirectory(originPath)) {
+      throw new NotFoundException(
+          "No origin on the shared repositories volume for '" + repoId + "'; nothing to adopt.");
+    }
+    String trimmedUrl = url == null || url.isBlank() ? null : url.trim();
+    // Same argv-injection guard as every other path that stores a url, held here too so a later
+    // change that does hand this value to git inherits it rather than having to remember it.
+    if (trimmedUrl != null
+        && (trimmedUrl.startsWith("-") || trimmedUrl.regionMatches(true, 0, "ext::", 0, 5))) {
+      throw new BadRequestException("Invalid repository URL: " + trimmedUrl);
+    }
+
+    Repository repo = new Repository();
+    repo.id = repoId;
+    repo.url = trimmedUrl;
+    repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
+    repo.project = project;
+    // Read from the origin that is there rather than assumed: the bootstrap's `-b main` is a
+    // convention, and a repository whose HEAD says otherwise should say so too.
+    repo.mainBranch = detectDefaultBranch(originPath);
+    repositoryRepository.persist(repo);
+
+    metadataService.writeRepositoryMetadata(repo);
+    return repo;
   }
 
   /**

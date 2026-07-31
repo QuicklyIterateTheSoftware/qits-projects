@@ -35,18 +35,29 @@ import org.junit.jupiter.api.Test;
  * the module's global {@code FakeContainerRuntime} — no docker, no GitHub. The manifest urls are
  * redirected to committed fixtures: the qits-backend slot to {@code submodule-super.git} (direct
  * children child-a + shared, and child-a nests grandchild — the depth that exercises the one-level
- * deep import, standing in for the real quarkus-angular child's nested {@code webui} edge), the
- * qits-angular slot to the plain {@code testing-repo.git}. Asserts the additive,
- * per-item-idempotent reconcile: creates the project + both repos + siblings + the nested edge, a
- * re-run is a full no-op, a half-seeded state is completed, and rows the manifest does not own are
+ * deep import, standing in for the real quarkus-angular child's nested {@code webui} edge), and the
+ * wrapper slot to a ref-less {@code qits-qits.git}. Asserts the additive, per-item-idempotent
+ * reconcile: creates the project + the clone manifest's repos + siblings + the nested edge, a re-run
+ * is a full no-op, a half-seeded state is completed, and rows the manifest does not own are
  * untouched.
+ *
+ * <p>{@code testing-repo.git} used to stand in for a second clone entry, {@code
+ * wohlben/qits-angular-integration}. That entry is gone — the platform's git host serves the same
+ * repository as {@code qits-integrations-angular} and {@code platformManifest()} adopts it — so the
+ * fixture now plays the role it is better suited to anyway: a row the manifest does <b>not</b> own,
+ * which an additive reconcile must leave alone.
  */
 @QuarkusTest
 @TestProfile(SelfSeedServiceTest.TestProfile.class)
 public class SelfSeedServiceTest {
 
   static final String QITS_BACKEND_FIXTURE = "submodule-super.git";
-  static final String QITS_ANGULAR_FIXTURE = "testing-repo.git";
+
+  /**
+   * A submodule-free bare that the manifest does not name — the stand-in for any row the seed did
+   * not put there (a user's own repository, or a legacy clone entry since superseded by adoption).
+   */
+  static final String UNOWNED_FIXTURE = "testing-repo.git";
 
   /**
    * The wrapper slot points at a REF-LESS bare, the real {@code wohlben/qits-qits} starting state.
@@ -67,7 +78,6 @@ public class SelfSeedServiceTest {
             // so the whole suite exercises the manifest-side trim: without it the second reconcile
             // in reRunIsAFullNoOp would re-clone a duplicate qits-backend.
             "qits.startup-seed.repo-url", "  " + fixturePath(QITS_BACKEND_FIXTURE) + "\n",
-            "qits.startup-seed.angular-integration-url", fixturePath(QITS_ANGULAR_FIXTURE),
             "qits.startup-seed.wrapper-url", fixturePath(QITS_WRAPPER_FIXTURE));
       } catch (Exception e) {
         throw new RuntimeException(e);
@@ -145,10 +155,10 @@ public class SelfSeedServiceTest {
             "submodule-super.git", // the qits-backend slot
             "submodule-child-a.git", // its direct child
             "submodule-shared.git", // its direct child (diamond) + child-a's, deduped
-            "submodule-grandchild.git", // reached only by the one-level deep import into child-a
-            "testing-repo.git"), // the qits-angular slot, no submodules
+            "submodule-grandchild.git"), // reached only by the one-level deep import into child-a
         repos.keySet(),
-        "both manifest repos, the direct siblings, and the deep-imported grandchild");
+        "the clone manifest's repo, its direct siblings, and the deep-imported grandchild — and"
+            + " nothing for the retired qits-angular-integration entry");
 
     // The deep import descended one level into every direct child of the superproject: child-a's
     // own
@@ -157,11 +167,30 @@ public class SelfSeedServiceTest {
         repos.get("submodule-child-a.git").id,
         "grandchild",
         repos.get("submodule-grandchild.git").id);
+  }
 
-    // The qits-angular slot is submodule-free (importSubmodules=false in the manifest).
+  /**
+   * The retirement this commit performs, pinned so it cannot be undone by accident. Both spellings
+   * of one repository — a {@code wohlben/*} clone entry and an adopted platform id — seeded two rows
+   * indistinguishable in the ui, with only the adopted one carrying ci runs. The clone entry is gone
+   * and the adopted id is the survivor.
+   */
+  @Test
+  public void theSupersededAngularIntegrationEntryIsGoneFromTheCloneManifest() {
     assertTrue(
-        submoduleRepository.findByParentId(repos.get("testing-repo.git").id).isEmpty(),
-        "the @qits/angular slot has no submodule edges");
+        selfSeedService.manifest().stream()
+            .noneMatch(e -> e.url().contains("qits-angular-integration")),
+        "the legacy wohlben/qits-angular-integration clone entry was removed, not repointed —"
+            + " repointing matches on url and would clone a SECOND row beside the legacy one");
+    assertEquals(
+        2,
+        selfSeedService.manifest().size(),
+        "what is left to clone: the wrapper and the pre-split qits-backend monorepo");
+    assertTrue(
+        selfSeedService.platformManifest().stream()
+            .anyMatch(e -> "qits-integrations-angular".equals(e.id())),
+        "the repository itself did not go away — the platform's git host serves it, so the adopt"
+            + " half of the seed owns it now");
   }
 
   @Test
@@ -196,12 +225,12 @@ public class SelfSeedServiceTest {
 
   @Test
   public void halfSeededStateIsCompletedOnTheNextReconcile() throws Exception {
-    // Simulate a prior boot that created the project and only the angular repo (or a grown manifest
-    // whose new qits-backend entry hasn't landed yet): reconcile must add exactly the missing
-    // entry.
+    // Simulate a prior boot that created the project and one repository but never reached the
+    // qits-backend entry (equally: a grown manifest whose new entry hasn't landed yet). Reconcile
+    // must add exactly the missing entry and disturb nothing that is already there.
     Project project = projectService.create("qits", "pre-existing");
     projectService.createRepositoryUnderProject(
-        project.id, fixture(QITS_ANGULAR_FIXTURE), RepositoryArchetype.SERVICE, false);
+        project.id, fixture(UNOWNED_FIXTURE), RepositoryArchetype.SERVICE, false);
 
     selfSeedService.reconcile();
 
@@ -209,7 +238,7 @@ public class SelfSeedServiceTest {
     assertTrue(
         repos.containsKey("submodule-super.git"), "the missing qits-backend entry was added");
     assertTrue(repos.containsKey("submodule-grandchild.git"), "its deep import ran too");
-    assertTrue(repos.containsKey("testing-repo.git"), "the already-present entry survived");
+    assertTrue(repos.containsKey("testing-repo.git"), "the already-present row survived");
   }
 
   @Test
@@ -229,7 +258,7 @@ public class SelfSeedServiceTest {
     assertEquals(userRepo.id, stillThere.id, "same row, not recreated");
     assertTrue(
         repos.containsKey("submodule-super.git"), "manifest repos were still added alongside");
-    assertTrue(repos.containsKey("testing-repo.git"), "both manifest repos added");
+    assertTrue(repos.containsKey("submodule-grandchild.git"), "including the deep-imported ones");
   }
 
   /**

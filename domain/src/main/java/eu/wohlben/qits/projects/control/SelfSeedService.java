@@ -61,6 +61,13 @@ import org.jboss.logging.Logger;
  * CiRun.repoId}, a cd application) already carries. See {@link
  * RepositoryService#adoptExistingOrigin}.
  *
+ * <p><b>A repository belongs to exactly one of them.</b> When the platform's host begins serving an
+ * upstream the clone manifest used to fetch, the clone entry is removed and adoption takes over —
+ * leaving it in both would seed two rows for one repository, and only the adopted row is the one
+ * ci, cd and the git host key on. Because reconciliation never deletes, removing a clone entry
+ * stops the row being <i>created</i> but does not retire one already seeded; that is an operator's
+ * deletion to make, and the {@code wohlben/qits-angular-integration} row was retired that way.
+ *
  * <p>Per-item matching also makes partial failure self-healing: a boot that created the project but
  * lost a clone to a network blip completes the missing pieces on the next boot, with no wedged
  * "already seeded" state. Each item is reconciled in its own try/catch, so one failing repository
@@ -94,8 +101,14 @@ public class SelfSeedService {
 
   private static final String QITS_WRAPPER_URL = "https://github.com/wohlben/qits-qits.git";
   private static final String QITS_BACKEND_URL = "https://github.com/wohlben/qits-backend.git";
-  private static final String QITS_ANGULAR_URL =
-      "https://github.com/wohlben/qits-angular-integration.git";
+  // REMOVED: the wohlben/qits-angular-integration entry. That upstream is the same repository the
+  // platform's own git host now serves as `qits-integrations-angular` — provably so: the mirror's
+  // head is a strict ancestor of the adopted origin's main. Adoption supersedes the clone, so the
+  // entry is gone rather than repointed. Repointing is what P's note warns about: the clone manifest
+  // matches on url, so a flipped url does not update the legacy row, it clones a SECOND one beside
+  // it. Removing the entry is additive-safe in the other direction too — reconciliation never
+  // deletes, so a deployment that still holds the legacy row keeps it until an operator says
+  // otherwise. See platformManifest()'s `qits-integrations-angular`.
 
   @Inject ProjectService projectService;
 
@@ -108,10 +121,6 @@ public class SelfSeedService {
    */
   @ConfigProperty(name = "qits.startup-seed.repo-url")
   Optional<String> repoUrlOverride;
-
-  /** Redirects the {@code wohlben/qits-angular-integration} clone source (same caveat as above). */
-  @ConfigProperty(name = "qits.startup-seed.angular-integration-url")
-  Optional<String> angularIntegrationUrlOverride;
 
   /**
    * Redirects the {@code wohlben/qits-qits} wrapper clone source (same caveat as above, plus one
@@ -152,12 +161,20 @@ public class SelfSeedService {
       String url, RepositoryArchetype archetype, boolean importSubmodules, boolean deepImport) {}
 
   /**
-   * The in-code manifest: both halves of qits. qits-backend imports its submodules (registering the
-   * {@code testing-repo}/{@code qits-fixture-angular}/{@code testing-repo-quarkus-angular}
-   * siblings) and deep-imports once (linking the quarkus-angular child's nested {@code webui}
-   * gitlink back to the already-imported {@code qits-fixture-angular} sibling); the
-   * {@code @qits/angular} library has no submodules. Url overrides (for mirrors/forks/air-gap and
-   * tests) are applied here.
+   * The in-code manifest: the upstreams this service must <b>clone</b> because nothing else holds
+   * them. qits-backend imports its submodules (registering the {@code testing-repo}/{@code
+   * qits-fixture-angular}/{@code testing-repo-quarkus-angular} siblings) and deep-imports once
+   * (linking the quarkus-angular child's nested {@code webui} gitlink back to the already-imported
+   * {@code qits-fixture-angular} sibling). Url overrides (for mirrors/forks/air-gap and tests) are
+   * applied here.
+   *
+   * <p><b>This list shrinks as the platform onboards itself.</b> Every entry here is a {@code
+   * wohlben/*} upstream from before the platform served its own git; when the platform's host starts
+   * serving the same repository, {@link #platformManifest()} adopts it under its directory name and
+   * the clone entry is <b>deleted from here</b> — the two would otherwise seed two rows for one
+   * repository, indistinguishable in the ui and with only the adopted one carrying ci runs.
+   * {@code qits-angular-integration} went that way; {@code qits-backend} has not, because it is the
+   * pre-split monorepo and the parent of the fixture siblings, not a module the host serves.
    */
   List<SeedRepository> manifest() {
     return List.of(
@@ -170,12 +187,7 @@ public class SelfSeedService {
             true,
             false),
         new SeedRepository(
-            resolveUrl(repoUrlOverride, QITS_BACKEND_URL), RepositoryArchetype.SERVICE, true, true),
-        new SeedRepository(
-            resolveUrl(angularIntegrationUrlOverride, QITS_ANGULAR_URL),
-            RepositoryArchetype.SERVICE,
-            false,
-            false));
+            resolveUrl(repoUrlOverride, QITS_BACKEND_URL), RepositoryArchetype.SERVICE, true, true));
   }
 
   /**

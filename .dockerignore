@@ -14,13 +14,19 @@
 **/target
 **/target-ide
 
-# The webui submodule's npm output, for the same reason: Quinoa runs `npm install` and `npm run
-# build` inside the build stage, so a developer's local node_modules/ (~250 MB, and full of
-# platform-native binaries compiled for the host, not for ubi9) and dist/ are both dead weight and
-# a chance for a stale bundle to be what the image serves. The SOURCE of the submodule is not
-# excluded — without src/main/webui the build has no UI to compile.
+# The webui submodule's install output: ~250 MB of symlink farm full of platform-native binaries
+# compiled for the host rather than for ubi9, and nothing in the build stage reads it — the stage
+# runs no install and no client build (see docker/Dockerfile). `.angular` is the CLI's own cache,
+# the same shape of host-local junk.
+#
+# NOTE THE ASYMMETRY with what this file used to say, and with the platform's Quinoa recipe
+# (docs/project-setup-quinoa-angular.md), which excludes the client's dist/ as well: here dist/ is
+# the PAYLOAD. Since the webui took a dependency on @qits/ui-components — which exists only on the
+# platform's own npm registry, reachable from no address a docker build has — the bundle is built
+# BEFORE this image by .config/qits/ci-post-receive.yml, on qits-net where that registry answers.
+# Excluding dist/ would fail the build at the guard on the mvnw line.
 service/src/main/webui/node_modules
-service/src/main/webui/dist
+service/src/main/webui/.angular
 
 # Local env / IDE cruft. `.env` is per-machine Quarkus overrides read at ordinal 295 — above the
 # packaged application.properties — so shipping one into the build context would let a developer's

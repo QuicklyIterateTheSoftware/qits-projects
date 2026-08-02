@@ -254,6 +254,7 @@ public class SelfSeedService {
         new PlatformRepository("qits-events", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-ci", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-cd", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-idp", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-dns", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-stt", RepositoryArchetype.SERVICE),
         // daemons/ — long-running agents, deployed rather than served.
@@ -261,6 +262,7 @@ public class SelfSeedService {
         new PlatformRepository("qits-workspace-daemon", RepositoryArchetype.SERVICE),
         // libs/ — shared code consumed by the others.
         new PlatformRepository("qits-userflows", RepositoryArchetype.LIBRARY),
+        new PlatformRepository("qits-eventstream", RepositoryArchetype.LIBRARY),
         new PlatformRepository("qits-spa-ui-components", RepositoryArchetype.LIBRARY),
         // integrations/ — framework-specific glue.
         new PlatformRepository("qits-integrations-angular", RepositoryArchetype.INTEGRATION),

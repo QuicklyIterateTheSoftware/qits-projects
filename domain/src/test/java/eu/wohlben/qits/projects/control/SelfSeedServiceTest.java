@@ -397,6 +397,38 @@ public class SelfSeedServiceTest {
         "no id appears twice");
   }
 
+  @Test
+  public void thePlatformManifestCoversTheReleaseTrainInventory() {
+    Map<String, RepositoryArchetype> entries =
+        selfSeedService.platformManifest().stream()
+            .collect(
+                Collectors.toMap(
+                    SelfSeedService.PlatformRepository::id,
+                    SelfSeedService.PlatformRepository::archetype));
+
+    assertEquals(RepositoryArchetype.SERVICE, entries.get("qits-idp"));
+    for (String library :
+        List.of("qits-eventstream", "qits-spa-ui-components", "qits-userflows")) {
+      assertEquals(RepositoryArchetype.LIBRARY, entries.get(library), library);
+    }
+    for (String integration :
+        List.of("qits-integrations-angular", "qits-integrations-quarkus")) {
+      assertEquals(RepositoryArchetype.INTEGRATION, entries.get(integration), integration);
+    }
+    for (String frontend :
+        List.of(
+            "qits-spa-home",
+            "qits-spa-projects",
+            "qits-spa-workspaces",
+            "qits-spa-artifacts",
+            "qits-spa-observability",
+            "qits-spa-events",
+            "qits-spa-ci",
+            "qits-spa-cd")) {
+      assertEquals(RepositoryArchetype.APPLICATION, entries.get(frontend), frontend);
+    }
+  }
+
   /**
    * This profile sets none of {@code qits.startup-seed.dns-domain}/{@code -type}/{@code -value},
    * which is the SHIPPED default: the seeded project is created with no domain, registers nothing,

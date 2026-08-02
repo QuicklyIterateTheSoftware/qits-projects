@@ -275,7 +275,9 @@ public class SelfSeedService {
         new PlatformRepository("qits-spa-observability", RepositoryArchetype.APPLICATION),
         new PlatformRepository("qits-spa-events", RepositoryArchetype.APPLICATION),
         new PlatformRepository("qits-spa-ci", RepositoryArchetype.APPLICATION),
-        new PlatformRepository("qits-spa-cd", RepositoryArchetype.APPLICATION));
+        new PlatformRepository("qits-spa-cd", RepositoryArchetype.APPLICATION),
+        // images/ — build definitions consumed through their published OCI images.
+        new PlatformRepository("qits-oci", RepositoryArchetype.LIBRARY));
   }
 
   /** Reconciles the manifest against the DB. Safe to run on every boot; additive and idempotent. */

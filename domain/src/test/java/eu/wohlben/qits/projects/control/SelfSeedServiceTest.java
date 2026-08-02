@@ -408,7 +408,7 @@ public class SelfSeedServiceTest {
 
     assertEquals(RepositoryArchetype.SERVICE, entries.get("qits-idp"));
     for (String library :
-        List.of("qits-eventstream", "qits-spa-ui-components", "qits-userflows")) {
+        List.of("qits-eventstream", "qits-spa-ui-components", "qits-userflows", "qits-oci")) {
       assertEquals(RepositoryArchetype.LIBRARY, entries.get(library), library);
     }
     for (String integration :

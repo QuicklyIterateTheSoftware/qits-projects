@@ -42,7 +42,7 @@ steps:
       # asking the daemon to clone differently keeps the submodule this repo's business: it is a
       # public GitHub repo needing no credentials, and one shallow fetch.
       frontend_url="${QITS_CI_REPOSITORY_URL%/*}/qits-spa-projects"
-      git -c submodule.qits-spa-projects.url="$frontend_url" submodule update --init --depth 1 service/src/main/webui
+      git -c submodule.qits-spa-projects.url="$frontend_url" submodule update --init service/src/main/webui
 
       # THE LOCKFILE is the one file this step edits, and npm leaves no alternative.
       #

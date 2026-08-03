@@ -11,19 +11,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.control.GitExecutor;
-import eu.wohlben.qits.projects.control.RepositoryDiscoveryService;
 import eu.wohlben.qits.projects.control.RepositoryService;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
-import io.quarkus.narayana.jta.QuarkusTransaction;
 import eu.wohlben.qits.projects.testsupport.RecordingWorkspaceLifecycle;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.nio.file.Path;
 import java.util.List;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -55,13 +52,11 @@ public class ProjectWrapperTest {
   @Inject RepositoryNameRepository repositoryNameRepository;
   @Inject RecordingWorkspaceLifecycle workspaceLifecycle;
   @Inject GitExecutor git;
-  @Inject RepositoryDiscoveryService discoveryService;
-
-  @ConfigProperty(name = "qits.repositories.data-dir")
-  String dataDir;
+  @Inject GitMirrorRegistry gitMirrors;
+  @Inject FakeGitHostRepositories fakeGitHostRepositories;
 
   private Path originOf(String repoId) {
-    return Path.of(dataDir, repoId, "origin");
+    return gitMirrors.of(repoId).gitDir();
   }
 
   private String gitIn(String repoId, String... args) throws Exception {
@@ -276,11 +271,11 @@ public class ProjectWrapperTest {
     var adopted = projectService.adoptWrapperRepository(project.id, fixture("qits-qits.git"));
 
     assertEquals(wrapper.id, adopted.id, "the same repository, not a second one");
-    assertEquals(fixture("qits-qits.git"), adopted.url);
     assertEquals(
         fixture("qits-qits.git"),
-        gitIn(wrapper.id, "git", "remote", "get-url", "origin"),
-        "the bare gains a real origin, so pull/push/ls-remote behave as for a cloned mirror");
+        adopted.url,
+        "attaching a backup remote is a row write (§3.4) — every remote-touching operation takes"
+            + " the url explicitly rather than reading a configured remote out of the bare");
   }
 
   /** State 3: the steady state on every later boot. */
@@ -356,52 +351,22 @@ public class ProjectWrapperTest {
     assertTrue(error.getMessage().contains("backup remote"), error.getMessage());
   }
 
-  // ------------------------------------------------- metadata sidecar / discovery
+  // ------------------------------------------------- publish push options (⚖3)
 
   /**
-   * Repository discovery restores {@code url} and {@code archetype} from the on-disk metadata
-   * sidecar on <b>every boot</b>. Any path that mutates either outside the clone path must rewrite
-   * that sidecar in the same transaction, or the change silently undoes itself overnight with no
-   * error anywhere — the highest-consequence, lowest-visibility failure mode in this feature.
+   * projects-volume-decoupling-plan.md §2.4, §3.3, ⚖3: the skeleton carries no pipeline config
+   * (qits-ci discards the run it fires for want of one), so its publish push carries no {@code
+   * qits.no-ci} — unlike the import path's ({@link
+   * RepositoryServiceTest#cloneRepositoryPublishesTheImportWithNoCiSuppressed}), which can be
+   * publishing an upstream's real, possibly CI-configured history.
    */
   @Test
-  public void discoveryDoesNotRevertAnAdoptedWrapper() throws Exception {
-    var project = projectService.create("Sidecar", "qits", null);
-    var wrapper = wrapperOf(project);
-    assertNull(wrapper.url);
-
-    projectService.adoptWrapperRepository(project.id, fixture("qits-qits.git"));
-
-    discoveryService.discover();
-
-    // A fresh transaction: the earlier non-transactional read cached this row in the session, and a
-    // plain get() here would hand back that stale copy rather than what discovery committed.
-    QuarkusTransaction.requiringNew()
-        .run(
-            () -> {
-              var afterBoot = repositoryService.get(wrapper.id);
-              assertEquals(
-                  fixtureUrl("qits-qits.git"),
-                  afterBoot.url,
-                  "the attached backup remote survived a boot");
-              assertEquals(RepositoryArchetype.PROJECT, afterBoot.archetype);
-            });
-  }
-
-  /** A greenfield wrapper's null url must equally survive — discovery must not invent one. */
-  @Test
-  public void discoveryKeepsAGreenfieldWrapperUrlNull() {
-    var project = projectService.create("Sidecar Null", "sidecar-null", null);
+  public void theSkeletonPushCarriesNoCiSuppression() {
+    var project = projectService.create("No Suppression", "no-suppression", null);
     var wrapper = wrapperOf(project);
 
-    discoveryService.discover();
-
-    QuarkusTransaction.requiringNew()
-        .run(
-            () -> {
-              var afterBoot = repositoryService.get(wrapper.id);
-              assertNull(afterBoot.url, "discovery must not invent a remote");
-              assertEquals(RepositoryArchetype.PROJECT, afterBoot.archetype);
-            });
+    assertTrue(
+        fakeGitHostRepositories.lastPushOptions(wrapper.id).isEmpty(),
+        "the skeleton's publish push must carry no push options");
   }
 }

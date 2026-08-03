@@ -229,3 +229,13 @@ injection therefore needs `@PersistenceUnit("projects")`.
 Grep for `SEAM (migration-plan.md` to find every place this repo cut something rather than carrying
 it. Each one names what was removed and where it belongs. Do not "restore" any of them here — they
 are another context's code, and the monorepo still has every line.
+
+**The metadata sidecar is gone, not migrated.** `MetadataService`, `RepositoryDiscoveryService` and
+`RepositoryMetadata` used to write `<data-dir>/<repoId>/metadata/repository.json` beside every bare
+origin and restore a row's `url`/`archetype` from it at every boot. `url` and `archetype` are
+columns on `Repository`, in this service's own database, in the same transaction that writes them —
+the sidecar could only ever undo a row change, which is why `attachBackupRemote` and
+`ProjectService.adoptWrapperRepository`'s promotion arm used to have to rewrite it. Decoupling from
+the shared `qits-repositories` volume (projects-volume-decoupling-plan.md §1.4, BQ) removed the one
+scenario the sidecar served ("database wiped, volume kept") along with the volume itself. Do not
+bring any of the three back.

@@ -17,7 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Reads the commit log for a branch, scoped to the commits unique to it. The "parent" a branch is
@@ -49,8 +48,7 @@ public class CommitService {
 
   @Inject GitExecutor git;
 
-  @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
-  String dataDir;
+  @Inject GitMirrorRegistry gitMirrors;
 
   /**
    * Lists the commits on {@code branch} that are not on its parent ({@code git log
@@ -69,10 +67,7 @@ public class CommitService {
             .findByIdOptional(repoId)
             .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
 
-    Path originPath = Path.of(dataDir, repoId, "origin");
-    if (!Files.exists(originPath)) {
-      throw new NotFoundException("Repository origin not found on disk");
-    }
+    Path originPath = requireOriginPath(repoId);
 
     String parent = resolveParent(repoId, repo, branch);
     boolean usableParent =
@@ -225,7 +220,18 @@ public class CommitService {
     repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
-    Path originPath = Path.of(dataDir, repoId, "origin");
+    return requireOriginPath(repoId);
+  }
+
+  /**
+   * The local git directory for {@code repoId} — the mirror's bare git dir, same as {@code
+   * RepositoryService#originPath} (projects-volume-decoupling-plan.md §3.2): every local read here
+   * used to run against {@code <qits.repositories.data-dir>/<repoId>/origin} on the shared volume
+   * and now runs against the mirror instead. The verbs (git log, diff-tree) are unchanged and become
+   * wire calls only when this class's own workstream (BR) lands.
+   */
+  private Path requireOriginPath(String repoId) {
+    Path originPath = gitMirrors.of(repoId).gitDir();
     if (!Files.exists(originPath)) {
       throw new NotFoundException("Repository origin not found on disk");
     }

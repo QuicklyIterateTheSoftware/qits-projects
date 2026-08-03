@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.projects.control.GitHostAddress;
 import eu.wohlben.qits.projects.control.GitHostException;
 import eu.wohlben.qits.projects.control.GitHostRepositories;
+import io.quarkus.arc.DefaultBean;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.IOException;
@@ -36,8 +37,18 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * copies: a static client is built at image-build time and native-image refuses the {@code
  * HttpClientFacade} that lands in the heap. {@code @ApplicationScoped} keeps it one client per
  * process.
+ *
+ * <p><b>{@code @DefaultBean}</b>, the same posture {@link GitHostAddress}'s shipped implementation
+ * takes: {@code GitHostRepositories} being mandatory (a plain {@code @Inject}, not an
+ * {@code Instance<T>} — see the port's own javadoc) is a fact about the injection point, not about
+ * this class, and it does not conflict with yielding to a test double. Without the annotation a test
+ * double and this class are an ambiguous dependency and the build fails at
+ * {@code ArcProcessor#validate}, for every test at once — reached here because {@code service}'s
+ * test classpath carries both this class and {@code domain}'s test-jar, which is where such a double
+ * would live.
  */
 @ApplicationScoped
+@DefaultBean
 public class HttpGitHostRepositories implements GitHostRepositories {
 
   /** How long a connect may take — the receiver is a sibling service on the same network. */

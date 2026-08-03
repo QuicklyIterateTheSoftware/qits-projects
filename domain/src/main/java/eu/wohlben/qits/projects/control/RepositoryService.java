@@ -9,6 +9,9 @@ import eu.wohlben.qits.projects.dto.SyncStatusDto;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.entity.RepositorySubmodule;
+import eu.wohlben.qits.projects.gitmirror.GitMirrorException;
+import eu.wohlben.qits.projects.gitmirror.PushOutcome;
+import eu.wohlben.qits.projects.gitmirror.RepoMirror;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import eu.wohlben.qits.projects.persistence.RepositorySubmoduleRepository;
@@ -32,7 +35,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 @ApplicationScoped
@@ -45,7 +47,9 @@ public class RepositoryService {
 
   @Inject RepositoryRepository repositoryRepository;
 
-  @Inject MetadataService metadataService;
+  @Inject GitMirrorRegistry gitMirrors;
+
+  @Inject GitHostRepositories gitHostRepositories;
 
   /**
    * SEAM (migration-plan.md §6, repository <-> workspace). Was {@code WorkspaceService} +
@@ -96,9 +100,6 @@ public class RepositoryService {
   void shutdown() {
     processExecutor.shutdownNow();
   }
-
-  @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
-  String dataDir;
 
   /** Clones without importing submodules — the plain primitive (also what child imports use). */
   @Transactional
@@ -208,26 +209,22 @@ public class RepositoryService {
       repositoryNameRepository.registerSelfName(repo);
     }
 
-    Path originPath = Path.of(dataDir, repo.id, "origin");
+    RepoMirror mirror = gitMirrors.of(repo.id);
     try {
-      Files.createDirectories(originPath.getParent());
-      git.exec(
-          null,
-          remoteAuth.gitWithCredentials(
-              "clone", "--mirror", "--end-of-options", repo.url, originPath.toString()));
-    } catch (Exception e) {
+      mirror.cloneFrom(repo.url, remoteAuth);
+    } catch (GitMirrorException e) {
       throw new InternalServerErrorException("Git clone failed: " + e.getMessage());
     }
 
     // An empty upstream mirrors successfully but brings no refs, leaving nothing for a workspace
     // container's clone to land on. Give it the skeleton on `main` instead of demanding the user
     // push a first commit by hand — this is what makes a brand-new, never-pushed-to forge
-    // repository
-    // a supported starting state. Never reached for an upstream that has history.
-    if (seedSkeletonIfEmpty && !hasAnyRef(originPath)) {
+    // repository a supported starting state. Never reached for an upstream that has history.
+    String skeletonCommit = null;
+    if (seedSkeletonIfEmpty && !hasAnyRef(mirror.gitDir())) {
       try {
         git.exec(
-            originPath.toFile(),
+            mirror.gitDir().toFile(),
             "git",
             "symbolic-ref",
             "HEAD",
@@ -236,13 +233,41 @@ public class RepositoryService {
         throw new InternalServerErrorException(
             "Failed to point the empty mirror's HEAD at " + WRAPPER_DEFAULT_BRANCH);
       }
-      seedProjectTemplate(repo.id, originPath, WRAPPER_DEFAULT_BRANCH);
+      skeletonCommit = seedProjectTemplate(mirror);
     }
 
     // The main branch defaults to the remote's default branch (the mirror's HEAD).
-    repo.mainBranch = detectDefaultBranch(originPath);
+    repo.mainBranch = detectDefaultBranch(mirror.gitDir());
 
-    metadataService.writeRepositoryMetadata(repo);
+    // The git host must hold this repository before anything can be pushed to it (§2.2); idempotent,
+    // so a retry after a failed publish below simply re-runs this as a no-op.
+    gitHostRepositories.ensure(repo.id, repo.mainBranch);
+
+    if (skeletonCommit != null) {
+      // No upstream history existed to import, so there is nothing a suppressed CI run would have
+      // saved — the skeleton carries no pipeline config anyway (qits-ci discards the run for want of
+      // one). Publish the single root commit onto the main branch.
+      publishSingleRef(mirror, skeletonCommit, repo.mainBranch, "the skeleton commit");
+    } else {
+      // Publish the whole imported history in one push: every branch and every tag. `-o qits.no-ci`
+      // suppresses post-receive for this push only (⚖3, BN) — an imported upstream can carry a
+      // pipeline config and many branches, and without the option that becomes one CI run per branch
+      // against history that predates the platform. A later push to any of these branches fires
+      // normally. Explicit wildcard refspecs rather than `--mirror`, which also implies force and
+      // would push deletions the host should never take from an import.
+      PushOutcome outcome =
+          mirror.push(
+              eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                      eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.update(
+                          "refs/heads/*", "refs/heads/*"),
+                      eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.update(
+                          "refs/tags/*", "refs/tags/*"))
+                  .withOption("qits.no-ci"));
+      if (!outcome.accepted()) {
+        throw new InternalServerErrorException(
+            "Failed to publish the imported history: " + outcome.output());
+      }
+    }
 
     // Every repository starts with a default workspace checked out on its main branch, so the main
     // branch is immediately workable and appears as a workspace-backed root in the branch tree.
@@ -252,6 +277,29 @@ public class RepositoryService {
     }
 
     return repo;
+  }
+
+  /**
+   * Pushes a single ref — a branch name or a bare commit sha this class just built with {@link
+   * RepoMirror#commitTree} — to {@code branch} on the git host, failing loudly on rejection. Used by
+   * the creation paths, which publish onto a branch the host has never seen and so have no
+   * divergence to reconcile (unlike {@code pushRepository}, which does).
+   *
+   * <p>Pushing a bare sha moves it to the host but writes no local ref (that is the whole point of
+   * pushing by sha rather than by branch name — see {@link RepoMirror#commitTree}), so the mirror
+   * refreshes itself from the host afterwards: every reader of this repository, starting with the
+   * workspace container this call is immediately followed by, needs {@code refs/heads/<branch>} to
+   * resolve locally too, not only on the host.
+   */
+  private void publishSingleRef(RepoMirror mirror, String source, String branch, String what) {
+    PushOutcome outcome =
+        mirror.push(
+            eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(source, branch)));
+    if (!outcome.accepted()) {
+      throw new InternalServerErrorException("Failed to publish " + what + ": " + outcome.output());
+    }
+    mirror.refreshNow();
   }
 
   /**
@@ -454,8 +502,17 @@ public class RepositoryService {
     return trimmed.startsWith("./") || trimmed.startsWith("../");
   }
 
+  /**
+   * The local git directory for {@code repoId} — the mirror's bare git dir (projects-volume-
+   * decoupling-plan.md §3.2). Every local read and write in this class that used to run against
+   * {@code <qits.repositories.data-dir>/<repoId>/origin} on the shared volume now runs here
+   * instead; the verbs themselves (fetch, push, {@code git branch}, …) are unchanged and become wire
+   * calls only as later workstreams (BR, BS) land. An adopted repository (see {@link
+   * #adoptExistingOrigin}) has no mirror at all, so this path simply does not exist for one — the
+   * same absence {@link #requireOrigin} already turns into a 404.
+   */
   private Path originPath(String repoId) {
-    return Path.of(dataDir, repoId, "origin");
+    return gitMirrors.of(repoId).gitDir();
   }
 
   /**
@@ -510,23 +567,23 @@ public class RepositoryService {
     // registerWrapperName.
     registerWrapperName(repo, name);
 
-    Path originPath = originPath(repo.id);
+    RepoMirror mirror = gitMirrors.of(repo.id);
     try {
-      Files.createDirectories(originPath.getParent());
-      git.exec(null, "git", "init", "--bare", "--end-of-options", originPath.toString());
-      git.exec(
-          originPath.toFile(),
-          "git",
-          "symbolic-ref",
-          "HEAD",
-          "refs/heads/" + WRAPPER_DEFAULT_BRANCH);
-    } catch (Exception e) {
+      mirror.initEmpty(WRAPPER_DEFAULT_BRANCH);
+    } catch (GitMirrorException e) {
       throw new InternalServerErrorException(
-          "Failed to initialize the wrapper repository origin: " + e.getMessage());
+          "Failed to initialize the wrapper repository's mirror: " + e.getMessage());
     }
 
-    seedProjectTemplate(repo.id, originPath, WRAPPER_DEFAULT_BRANCH);
-    metadataService.writeRepositoryMetadata(repo);
+    String skeletonCommit = seedProjectTemplate(mirror);
+    // The git host must hold this repository before the skeleton can be pushed to it (§2.2).
+    gitHostRepositories.ensure(repo.id, WRAPPER_DEFAULT_BRANCH);
+    // No `-o qits.no-ci`: the skeleton carries no pipeline config, so qits-ci simply discards the
+    // run it fires for want of one — cheaper than special-casing this push.
+    publishSingleRef(mirror, skeletonCommit, WRAPPER_DEFAULT_BRANCH, "the wrapper's skeleton commit");
+
+    // The workspace container clones from the git host, so it must run after the push above, not
+    // before — an earlier clone would find the branch the host still does not have.
     if (!workspaceLifecycle.isUnsatisfied()) {
       workspaceLifecycle.get().createMainWorkspace(repo.id, repo.mainBranch);
     }
@@ -570,37 +627,34 @@ public class RepositoryService {
   private static final Pattern ADOPTABLE_ID =
       Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,63}");
 
-  /** Whether the shared repositories volume already carries a bare origin for {@code repoId}. */
+  /** Whether the git host already holds a repository for {@code repoId} — see {@link #adoptExistingOrigin}. */
   public boolean hasExistingOrigin(String repoId) {
     return repoId != null
         && ADOPTABLE_ID.matcher(repoId).matches()
-        && Files.isDirectory(originPath(repoId));
+        && gitHostRepositories.find(repoId).isPresent();
   }
 
   /**
-   * Registers a bare origin that is <b>already on the shared repositories volume</b> as a
-   * repository of {@code project}, keyed by the directory name itself.
+   * Registers a repository that the git host <b>already serves</b> as a repository of {@code
+   * project}, keyed by the id the host holds it under.
    *
-   * <p>The third creation path, beside {@link #cloneOne} (mirror an upstream into a fresh
-   * directory) and {@link #initWrapperOrigin} (initialize one locally): here the directory exists
-   * and this context did not make it. That is the platform's own git host — the bootstrap runs
-   * {@code git init --bare -b main /repos/qits-<name>/origin} for every deployable and
-   * qits-artifacts serves {@code <data-dir>/<repoId>/origin} id-addressed, so those repositories
-   * are real, pushed to and building with no row here at all.
+   * <p>The third creation path, beside {@link #cloneOne} (mirror an upstream into a fresh local
+   * mirror) and {@link #initWrapperOrigin} (initialize one locally): here the host already has the
+   * repository and this context did not put it there. That is the platform's own git host — the
+   * bootstrap creates a bare for every deployable directly on it, so those repositories are real,
+   * pushed to and building with no row here at all until adoption gives them one.
    *
-   * <p><b>{@code repoId} is the directory name, and that is the whole point.</b> Everything
-   * downstream keys on it: the git host hands the directory name to qits-ci's intake, so {@code
+   * <p><b>{@code repoId} is the id the host serves it under, and that is the whole point.</b>
+   * Everything downstream keys on it: the git host hands it to qits-ci's intake, so {@code
    * CiRun.repoId} carries it, and qits-cd's applications are seeded with it. A row minted with a
    * fresh UUID would name a repository nothing in the platform's history refers to. Hence a
    * client-supplied id here, uniquely among the creation paths, and hence {@link #ADOPTABLE_ID}.
    *
-   * <p>Nothing on disk is written but the metadata sidecar — without it {@link
-   * RepositoryDiscoveryService} has nothing to restore {@code url}/{@code archetype} from. In
-   * particular <b>no {@code origin} remote is configured</b>, which {@link #attachBackupRemote} is
-   * the seam for and this is deliberately not: {@code url} declares which forge repository backs
-   * this one (what a reader wants and what {@code RepositoryDto} carries), while a mirror-fetch
-   * refspec pointed at that forge would let a pull rewind refs the ci host has already built from.
-   * Pull and push are therefore not wired for an adopted repository, and it gets no workspace.
+   * <p>Nothing is cloned and no mirror is created. {@code url} declares which forge repository
+   * backs this one (what a reader wants and what {@code RepositoryDto} carries) — it is a row
+   * field, nothing more. Fetching from that forge into the platform's own already-built history
+   * would risk rewinding refs the ci host has already built from, so an adopted repository gets no
+   * mirror, no pull, no push and no workspace: it exists here only so the row can be found by id.
    *
    * <p>No name alias either. An alias is what makes {@code /git/<projectId>/<name>} resolve, and
    * every existing caller reaches these repositories id-addressed at {@code /artifacts/git/<id>}.
@@ -612,8 +666,8 @@ public class RepositoryService {
    * is returned untouched whatever its url, archetype or project. Re-running is the normal case —
    * this is reconciled on every boot.
    *
-   * @throws NotFoundException if no origin exists at {@code <data-dir>/<repoId>/origin}; adoption
-   *     registers what is there and never conjures a repository the git host cannot serve
+   * @throws NotFoundException if the git host does not hold {@code repoId}; adoption registers what
+   *     is there and never conjures a repository the git host cannot serve
    */
   @Transactional
   public Repository adoptExistingOrigin(
@@ -622,8 +676,8 @@ public class RepositoryService {
       throw new BadRequestException(
           "Invalid repository id '"
               + repoId
-              + "': an adopted repository is keyed by its directory name on the shared volume, so"
-              + " the id must be 1-64 characters of letters, digits and inner dashes.");
+              + "': an adopted repository is keyed by the id the git host serves it under, so the"
+              + " id must be 1-64 characters of letters, digits and inner dashes.");
     }
     if (archetype == RepositoryArchetype.PROJECT) {
       throw new BadRequestException(
@@ -636,11 +690,14 @@ public class RepositoryService {
     if (existing.isPresent()) {
       return existing.get();
     }
-    Path originPath = originPath(repoId);
-    if (!Files.isDirectory(originPath)) {
-      throw new NotFoundException(
-          "No origin on the shared repositories volume for '" + repoId + "'; nothing to adopt.");
-    }
+    GitHostRepositories.HostRepository hostRepo =
+        gitHostRepositories
+            .find(repoId)
+            .orElseThrow(
+                () ->
+                    new NotFoundException(
+                        "The git host does not hold a repository '" + repoId + "'; nothing to"
+                            + " adopt."));
     String trimmedUrl = url == null || url.isBlank() ? null : url.trim();
     // Same argv-injection guard as every other path that stores a url, held here too so a later
     // change that does hand this value to git inherits it rather than having to remember it.
@@ -654,12 +711,10 @@ public class RepositoryService {
     repo.url = trimmedUrl;
     repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
     repo.project = project;
-    // Read from the origin that is there rather than assumed: the bootstrap's `-b main` is a
-    // convention, and a repository whose HEAD says otherwise should say so too.
-    repo.mainBranch = detectDefaultBranch(originPath);
+    // Read from what the host reports rather than assumed: the bootstrap's `main` is a convention,
+    // and a repository whose host-side default branch says otherwise should say so too.
+    repo.mainBranch = hostRepo.defaultBranch();
     repositoryRepository.persist(repo);
-
-    metadataService.writeRepositoryMetadata(repo);
     return repo;
   }
 
@@ -667,10 +722,10 @@ public class RepositoryService {
    * Attaches a backup remote to a repository that has none — the wrapper created greenfield, which
    * later gains the forge repository it should be backed up to.
    *
-   * <p>Sets {@code url}, adds the {@code origin} remote in the bare with a mirror refspec (so
-   * {@code ls-remote origin}, pull and push behave exactly as for a cloned origin), and <b>rewrites
-   * the metadata sidecar</b> — without that last step {@code RepositoryDiscoveryService} restores
-   * the null url from the sidecar on the next boot and the attachment silently undoes itself.
+   * <p>A row write and nothing else. Every remote-touching operation on this repository already
+   * takes {@code url} as an explicit argument rather than reading a configured remote out of the
+   * bare (§3.4), so there is no local git state left to bring in step — attaching the remote here is
+   * simply declaring which forge backs this repository up.
    */
   @Transactional
   public Repository attachBackupRemote(String repoId, String url) {
@@ -694,18 +749,6 @@ public class RepositoryService {
     }
 
     repo.url = trimmedUrl;
-    Path originPath = originPath(repo.id);
-    try {
-      // Best-effort: a bare initialized by initWrapperOrigin has no remote yet, but re-running must
-      // not fail on "remote origin already exists".
-      git.execAllowNonZero(
-          originPath.toFile(), "git", "remote", "add", "--mirror=fetch", "origin", trimmedUrl);
-      git.exec(originPath.toFile(), "git", "remote", "set-url", "origin", trimmedUrl);
-    } catch (Exception e) {
-      throw new InternalServerErrorException(
-          "Failed to configure the backup remote: " + e.getMessage());
-    }
-    metadataService.writeRepositoryMetadata(repo);
     return repo;
   }
 
@@ -715,15 +758,6 @@ public class RepositoryService {
    */
   public void registerWrapperAlias(Repository repo, String name) {
     registerWrapperName(repo, name);
-  }
-
-  /**
-   * Rewrites the on-disk metadata sidecar from the row. Mandatory after any change to {@code url}
-   * or {@code archetype} outside the clone path: repository discovery restores both fields from the
-   * sidecar on every boot, so a change not written back is silently reverted.
-   */
-  public void rewriteMetadata(Repository repo) {
-    metadataService.writeRepositoryMetadata(repo);
   }
 
   /** Whether the origin has any branch at all — false for a freshly-initialized or empty mirror. */
@@ -744,80 +778,41 @@ public class RepositoryService {
   }
 
   /**
-   * Commits the {@link ProjectTemplate} skeleton as the <b>root commit</b> of {@code branch},
-   * directly in the bare origin.
+   * Builds the {@link ProjectTemplate} skeleton as a <b>root commit</b> in the mirror's object
+   * store, with no ref written — the caller pushes the returned sha to the branch it belongs on.
    *
-   * <p>Written with plumbing and no worktree — the same commit-without-checkout technique {@link
-   * #mergeDivergedRemote} uses, extended with a temporary index so a nested tree can be built:
-   * {@code hash-object} every blob, {@code update-index --add --cacheinfo <mode>,<sha>,<path>} them
-   * into a scratch index, then {@code write-tree} (which builds the subtrees, unlike {@code
-   * mktree}) + {@code commit-tree} + {@code update-ref}. The explicit per-entry mode is what lets
-   * {@code CLAUDE.md} land as a real git symlink ({@code 120000}) rather than a file.
+   * <p>Plumbing and no worktree, exactly as before ({@code hash-object} every blob, {@code
+   * update-index --cacheinfo} them into a scratch index, then {@code write-tree} + {@code
+   * commit-tree}, the explicit per-entry mode being what lets {@code CLAUDE.md} land as a real git
+   * symlink ({@code 120000}) rather than a file) — now run through {@link RepoMirror#writeTree} and
+   * {@link RepoMirror#commitTree} rather than directly against a bare origin via {@link
+   * GitExecutor}. The mirror module owns the scratch directory and its cleanup.
    *
-   * <p>The scratch lives at {@code <data-dir>/<repoId>/skeleton/}, a sibling of {@code origin}
-   * rather than {@code /tmp}: {@link #deleteDataDir} already reaps it if anything leaks, the test
-   * suite's per-class data-dir reset wipes it, and {@code RepositoryDiscoveryService} keys on the
-   * presence of {@code origin} so a stray sibling directory is invisible to it.
-   *
-   * <p>Only ever called for an origin with nothing to lose — a fresh {@code init} or a mirror that
-   * came back with no refs at all. It never overwrites or merges into existing history.
+   * <p>Only ever called for a mirror with nothing to lose — a fresh {@link RepoMirror#initEmpty} or
+   * one {@link RepoMirror#cloneFrom} came back with no refs at all. It never overwrites or merges
+   * into existing history.
    */
-  void seedProjectTemplate(String repoId, Path originPath, String branch) {
+  private String seedProjectTemplate(RepoMirror mirror) {
     List<ProjectTemplate.TemplateEntry> entries = projectTemplate.entries();
-    Path scratch = Path.of(dataDir, repoId, "skeleton");
-    Path tree = scratch.resolve("tree");
-    Path index = scratch.resolve("index");
+    List<RepoMirror.TreeEntry> treeEntries =
+        entries.stream()
+            .map(entry -> new RepoMirror.TreeEntry(entry.path(), entry.mode(), entry.content()))
+            .toList();
     try {
-      // Materialize the blobs so `git hash-object` can read them as files (GitExecutor has no stdin
-      // seam, and a file list keeps this to one process for the whole template).
-      List<String> hashArgs = new ArrayList<>(List.of("git", "hash-object", "-w", "--no-filters"));
-      for (ProjectTemplate.TemplateEntry entry : entries) {
-        Path file = tree.resolve(entry.path());
-        Files.createDirectories(file.getParent());
-        Files.write(file, entry.content());
-        hashArgs.add(file.toAbsolutePath().toString());
-      }
-
-      List<String> shas =
-          git.exec(originPath.toFile(), hashArgs.toArray(String[]::new))
-              .lines()
-              .map(String::trim)
-              .filter(line -> !line.isEmpty())
-              .toList();
-      if (shas.size() != entries.size()) {
-        throw new InternalServerErrorException(
-            "Expected " + entries.size() + " template blobs, got " + shas.size());
-      }
-
-      // One update-index for every entry. The index is flat, so nested paths need no directory
-      // entries — write-tree derives the subtrees.
-      List<String> indexArgs = new ArrayList<>(List.of("git", "update-index", "--add"));
-      for (int i = 0; i < entries.size(); i++) {
-        ProjectTemplate.TemplateEntry entry = entries.get(i);
-        indexArgs.add("--cacheinfo");
-        indexArgs.add(entry.mode() + "," + shas.get(i) + "," + entry.path());
-      }
-      var indexEnv = java.util.Map.of("GIT_INDEX_FILE", index.toAbsolutePath().toString());
-      git.exec(originPath.toFile(), indexEnv, indexArgs.toArray(String[]::new));
-
-      String treeSha = git.exec(originPath.toFile(), indexEnv, "git", "write-tree").trim();
-
-      // A root commit: no -p. Attributed like every other commit qits manufactures.
-      List<String> commitArgs = new ArrayList<>(List.of("git"));
-      commitArgs.addAll(gitIdentity.inlineArgs());
-      commitArgs.addAll(
-          List.of("commit-tree", treeSha, "-m", "Initialize the project template skeleton"));
+      String treeSha = mirror.writeTree(treeEntries);
       String commitSha =
-          git.exec(originPath.toFile(), gitIdentity.envMap(), commitArgs.toArray(String[]::new))
-              .trim();
-
-      git.exec(originPath.toFile(), "git", "update-ref", "refs/heads/" + branch, commitSha);
-      LOG.infof("Seeded the project template skeleton on '%s' of repository %s", branch, repoId);
-    } catch (Exception e) {
+          mirror.commitTree(
+              treeSha,
+              List.of(),
+              "Initialize the project template skeleton",
+              gitIdentity.asCommitIdentity());
+      LOG.infof(
+          "Built the project template skeleton commit %s for repository %s",
+          commitSha, mirror.repoId());
+      return commitSha;
+    } catch (GitMirrorException e) {
       throw new InternalServerErrorException(
-          "Failed to seed the project template skeleton: " + e.getMessage());
-    } finally {
-      deleteRecursively(scratch);
+          "Failed to build the project template skeleton: " + e.getMessage());
     }
   }
 
@@ -1586,12 +1581,16 @@ public class RepositoryService {
       return new SyncStatusDto(branch, true, false, null, null);
     }
 
+    // By repo.url, not a configured "origin" remote (§3.4): the bare's own remote config is never
+    // written any more (see attachBackupRemote), so a configured "origin" is not something every
+    // repository still has — a cloned repository's mirror happens to carry one from `git clone
+    // --mirror`, a wrapper's never does.
     String remoteSha;
     try {
       String out =
           git.exec(
                   originPath.toFile(),
-                  remoteAuth.gitWithCredentials("ls-remote", "origin", "refs/heads/" + branch))
+                  remoteAuth.gitWithCredentials("ls-remote", repo.url, "refs/heads/" + branch))
               .trim();
       remoteSha = out.isBlank() ? null : out.split("\\s+")[0];
     } catch (Exception e) {
@@ -1676,7 +1675,7 @@ public class RepositoryService {
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
 
-    Path originPath = Path.of(dataDir, repoId, "origin");
+    Path originPath = originPath(repoId);
     if (!Files.exists(originPath)) {
       throw new NotFoundException("Repository origin not found on disk");
     }
@@ -1700,7 +1699,7 @@ public class RepositoryService {
             .findByIdOptional(repoId)
             .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
 
-    Path originPath = Path.of(dataDir, repoId, "origin");
+    Path originPath = originPath(repoId);
     return listBranches(repoId).stream()
         .map(
             b -> {
@@ -1743,7 +1742,7 @@ public class RepositoryService {
       throw new BadRequestException("Branch has child workspaces: " + branch);
     }
 
-    Path originPath = Path.of(dataDir, repoId, "origin");
+    Path originPath = originPath(repoId);
     if (!Files.exists(originPath)) {
       throw new NotFoundException("Repository origin not found on disk");
     }
@@ -1772,14 +1771,22 @@ public class RepositoryService {
     deleteInternal(repoId);
   }
 
-  /** {@link #delete} without the wrapper guard — the path a project deletion takes. */
+  /**
+   * {@link #delete} without the wrapper guard — the path a project deletion takes.
+   *
+   * <p><b>The git host's copy is not touched (⚖2).</b> There is no delete verb on the host — see
+   * {@code GitHostRepositories}' javadoc — so this removes the row, the repository's workspaces and
+   * its local mirror cache, and leaves the history the host holds exactly where it is. A repository
+   * deleted here and re-created (or re-adopted) at the same id finds that history still there; a
+   * mirror is a cache and deleting it costs nothing worse than a re-clone on next use.
+   */
   @Transactional
   public void deleteInternal(String repoId) {
     Repository repo = get(repoId);
     // Delete the whole footprint, not just the DB row: otherwise every delete (and every seed
     // reset, which deletes then recreates) leaks the repo's workspace containers, their persistent
-    // /workspace volumes, and its on-disk clone directory as orphans. DB rows for
-    // workspaces/commands/events/services cascade off the repository row deletion below.
+    // /workspace volumes, and its local mirror as orphans. DB rows for workspaces/commands/events/
+    // services cascade off the repository row deletion below.
     // SEAM (migration-plan.md §6, repository <-> workspace). Was an inline docker teardown of this
     // repository's workspace containers and their persistent /workspace volumes (containers first —
     // docker refuses an in-use volume). ContainerRuntime/DockerExecutor are qits-workspaces'. The
@@ -1791,7 +1798,9 @@ public class RepositoryService {
         LOG.warnf("Workspace teardown failed while deleting repository %s: %s", repoId, e.getMessage());
       }
     }
-    deleteDataDir(repoId);
+    // An adopted repository (see adoptExistingOrigin) never had a mirror cloned, so this is a no-op
+    // for one — deleteRecursively already tolerates a path that does not exist.
+    deleteRecursively(gitMirrors.of(repoId).gitDir());
     // The rows referencing this repository (workspaces and their events, name aliases, commands)
     // go by the schema's `on delete cascade`, not one by one here. That is correct as long as each
     // service call owns its transaction, which every caller does. A caller that instead CREATED
@@ -1799,11 +1808,6 @@ public class RepositoryService {
     // Hibernate would flush a child pointing at a removed parent — so don't do that; give the
     // create and the delete their own transactions, as production always does.
     repositoryRepository.delete(repo);
-  }
-
-  /** Recursively remove {@code <data-dir>/<repoId>} (bare origin + any transient merge scratch). */
-  private void deleteDataDir(String repoId) {
-    deleteRecursively(Path.of(dataDir, repoId));
   }
 
   /** Best-effort recursive delete — children before parents. */

@@ -14,7 +14,6 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -36,9 +35,7 @@ public class RepositorySyncProcessTest {
   @Inject RepositoryService repositoryService;
   @Inject TechnicalProcessRegistry registry;
   @Inject GitExecutor git;
-
-  @ConfigProperty(name = "qits.repositories.data-dir")
-  String dataDir;
+  @Inject GitMirrorRegistry gitMirrors;
 
   /** Records a terminal process's full replay (attach on a terminal process replays + done). */
   private static final class Replay implements TechnicalProcess.Listener {
@@ -63,7 +60,7 @@ public class RepositorySyncProcessTest {
   }
 
   private Path originOf(String repoId) {
-    return Path.of(dataDir, repoId, "origin");
+    return gitMirrors.of(repoId).gitDir();
   }
 
   private TechnicalProcess awaitTerminal(String processId) throws InterruptedException {

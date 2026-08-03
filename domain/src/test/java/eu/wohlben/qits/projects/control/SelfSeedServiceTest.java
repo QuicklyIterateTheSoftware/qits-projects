@@ -71,8 +71,14 @@ public class SelfSeedServiceTest {
     public Map<String, String> getConfigOverrides() {
       try {
         Path tempDir = Files.createTempDirectory("qits-test-self-seed");
+        Path projectsDataDir = Files.createTempDirectory("qits-test-self-seed-projects");
         return Map.of(
             "qits.repositories.data-dir", tempDir.toString(),
+            // The mirror root (BQ): a separate temp dir from the one above, matching the "own
+            // volume" split the decoupling establishes. FakeGitHostAddress's fake host root is a
+            // fixed literal (target/qits-test-host), wiped per class by RepoDataDirReset regardless
+            // of this profile's own isolated temp dirs.
+            "qits.projects.data-dir", projectsDataDir.toString(),
             // Padded on purpose (a trailing newline is how an env file / k8s ConfigMap value
             // arrives)
             // so the whole suite exercises the manifest-side trim: without it the second reconcile
@@ -90,8 +96,7 @@ public class SelfSeedServiceTest {
   }
 
   @Inject SelfSeedService selfSeedService;
-  @Inject MetadataService metadataService;
-  @Inject GitExecutor git;
+  @Inject GitHostRepositories gitHostRepositories;
   @Inject ProjectService projectService;
   @Inject RepositoryRepository repositoryRepository;
   @Inject RepositoryNameRepository repositoryNameRepository;
@@ -304,14 +309,12 @@ public class SelfSeedServiceTest {
   }
 
   /**
-   * A bare origin on the shared volume that this service did not create — what the bootstrap's
-   * {@code git init --bare -b main /repos/qits-<name>/origin} leaves for the platform's own
-   * repositories, and the state the adopt half of the seed exists for.
+   * A repository the git host already holds that this service did not create — what the
+   * bootstrap's {@code git init --bare -b main} leaves for the platform's own repositories, and the
+   * state the adopt half of the seed exists for.
    */
-  private void seedGitHostOrigin(String repoId) throws Exception {
-    Path originPath = Path.of(metadataService.getDataDir(), repoId, "origin");
-    Files.createDirectories(originPath.getParent());
-    git.exec(null, "git", "init", "-q", "--bare", "-b", "main", originPath.toString());
+  private void seedGitHostOrigin(String repoId) {
+    gitHostRepositories.ensure(repoId, "main");
   }
 
   private Map<String, Repository> reposById(String projectId) {

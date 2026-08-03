@@ -35,7 +35,7 @@ public class RepositorySyncProcessTest {
   @Inject RepositoryService repositoryService;
   @Inject TechnicalProcessRegistry registry;
   @Inject GitExecutor git;
-  @Inject GitMirrorRegistry gitMirrors;
+  @Inject GitHostAddress gitHost;
 
   /** Records a terminal process's full replay (attach on a terminal process replays + done). */
   private static final class Replay implements TechnicalProcess.Listener {
@@ -59,8 +59,13 @@ public class RepositorySyncProcessTest {
     return GitFixtures.path(name);
   }
 
-  private Path originOf(String repoId) {
-    return gitMirrors.of(repoId).gitDir();
+  /**
+   * The git host's bare for a repository. Both halves of a sync refresh the mirror from the host
+   * before doing anything, so a fixture meaning "the platform already holds this commit" writes
+   * here rather than into the mirror.
+   */
+  private Path hostOf(String repoId) {
+    return Path.of(gitHost.fetchUrl(repoId));
   }
 
   private TechnicalProcess awaitTerminal(String processId) throws InterruptedException {
@@ -195,10 +200,10 @@ public class RepositorySyncProcessTest {
     var project = projectService.create("Sync Diverged", null);
     Path remote = writableRemote("qits-sync-diverged-remote");
     var repo = repositoryService.cloneRepository(remote.toString(), null, project);
-    // Point the local main branch at the divergent `feature` tip: neither is an ancestor of the
+    // Point the HOST's main branch at the divergent `feature` tip: neither is an ancestor of the
     // other, but the sides merge cleanly — the sync merges the remote in and pushes the merge.
-    String featureSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "feature").trim();
-    git.exec(originOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", featureSha);
+    String featureSha = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "feature").trim();
+    git.exec(hostOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", featureSha);
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginSyncRepository(repo.id)));
 
@@ -206,9 +211,10 @@ public class RepositorySyncProcessTest {
     assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
-    // The merge commit reached the remote: both tips now agree.
+    // The pull half pushed the merge commit to the host; the push half then refreshed the mirror
+    // from the host and carried it on to the forge. Both tips now agree.
     assertEquals(
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
         git.exec(remote.toFile(), "git", "rev-parse", "master").trim());
   }
 
@@ -219,7 +225,7 @@ public class RepositorySyncProcessTest {
     var repo = repositoryService.cloneRepository(remote.toString(), null, project);
     // A REAL conflict: both sides rewrite hello.txt differently.
     pushCommit(remote, "hello.txt", "remote change\n", "remote change");
-    pushCommit(originOf(repo.id), "hello.txt", "local change\n", "local change");
+    pushCommit(hostOf(repo.id), "hello.txt", "local change\n", "local change");
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginSyncRepository(repo.id)));
 
@@ -230,10 +236,11 @@ public class RepositorySyncProcessTest {
     assertTrue(
         segmentOpens(replay).stream().noneMatch(s -> s.startsWith("push:")),
         "the push segment never opens when the pull fails: " + segmentOpens(replay));
-    // The remote tip is parked on the merge branch for manual resolution.
+    // The remote tip is parked on the merge branch for manual resolution — by a push, so it lands
+    // on the git host.
     assertEquals(
         git.exec(remote.toFile(), "git", "rev-parse", "master").trim(),
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
             .trim());
   }
 

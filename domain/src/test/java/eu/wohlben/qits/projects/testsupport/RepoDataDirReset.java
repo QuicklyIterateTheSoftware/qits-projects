@@ -11,9 +11,8 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 
 /**
  * Wipes and recreates the shared test data directories once before each test class: {@code
- * qits.repositories.data-dir} ({@code target/qits-test-repos}, still read by the not-yet-migrated
- * read/sync cluster), {@code qits.projects.data-dir} ({@code target/qits-test-projects}, the mirror
- * root), and the fake git host's root ({@code target/qits-test-host}, {@link
+ * qits.projects.data-dir} ({@code target/qits-test-projects}, the mirror root) and the fake git
+ * host's root ({@code target/qits-test-host}, {@link
  * eu.wohlben.qits.projects.control.FakeGitHostAddress}).
  *
  * <p>Repository tests used to give each class its own {@code Files.createTempDirectory()} path via
@@ -26,19 +25,13 @@ import org.junit.jupiter.api.extension.ExtensionContext;
  * <p>Auto-registered for the whole module via {@code META-INF/services} + {@code
  * junit.jupiter.extensions.autodetection.enabled=true}, so tests only had to drop their profile —
  * no per-class annotation. Wiping before every class (including the ones that never touch a dir) is
- * cheap and harmless. A class that overrides one of these three keys via its own {@code
+ * cheap and harmless. A class that overrides the mirror root via its own {@code
  * @TestProfile} (e.g. {@code SelfSeedServiceTest}) still gets a clean fake host, since {@link
  * eu.wohlben.qits.projects.control.FakeGitHostAddress}'s root is fixed rather than config-driven.
  */
 public class RepoDataDirReset implements BeforeAllCallback {
 
-  /**
-   * Must match {@code qits.repositories.data-dir} in {@code
-   * src/test/resources/application.properties}.
-   */
-  static final Path DATA_DIR = Path.of("target", "qits-test-repos");
-
-  /** Must match {@code qits.projects.data-dir} in the same file. */
+  /** Must match {@code qits.projects.data-dir} in {@code src/test/resources/application.properties}. */
   static final Path PROJECTS_DATA_DIR = Path.of("target", "qits-test-projects");
 
   /** Must match {@code FakeGitHostAddress.ROOT}. */
@@ -46,7 +39,7 @@ public class RepoDataDirReset implements BeforeAllCallback {
 
   @Override
   public void beforeAll(ExtensionContext context) throws IOException {
-    for (Path dir : List.of(DATA_DIR, PROJECTS_DATA_DIR, FAKE_HOST_ROOT)) {
+    for (Path dir : List.of(PROJECTS_DATA_DIR, FAKE_HOST_ROOT)) {
       deleteRecursively(dir);
       Files.createDirectories(dir);
     }

@@ -70,14 +70,11 @@ public class SelfSeedServiceTest {
     @Override
     public Map<String, String> getConfigOverrides() {
       try {
-        Path tempDir = Files.createTempDirectory("qits-test-self-seed");
         Path projectsDataDir = Files.createTempDirectory("qits-test-self-seed-projects");
         return Map.of(
-            "qits.repositories.data-dir", tempDir.toString(),
-            // The mirror root (BQ): a separate temp dir from the one above, matching the "own
-            // volume" split the decoupling establishes. FakeGitHostAddress's fake host root is a
+            // The mirror root, isolated to this class. FakeGitHostAddress's fake host root is a
             // fixed literal (target/qits-test-host), wiped per class by RepoDataDirReset regardless
-            // of this profile's own isolated temp dirs.
+            // of this profile's own temp dir.
             "qits.projects.data-dir", projectsDataDir.toString(),
             // Padded on purpose (a trailing newline is how an env file / k8s ConfigMap value
             // arrives)

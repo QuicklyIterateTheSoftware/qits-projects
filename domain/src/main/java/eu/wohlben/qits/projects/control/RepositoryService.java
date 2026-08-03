@@ -10,6 +10,7 @@ import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.entity.RepositorySubmodule;
 import eu.wohlben.qits.projects.gitmirror.GitMirrorException;
+import eu.wohlben.qits.projects.gitmirror.MergeOutcome;
 import eu.wohlben.qits.projects.gitmirror.PushOutcome;
 import eu.wohlben.qits.projects.gitmirror.RepoMirror;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
@@ -24,7 +25,6 @@ import jakarta.transaction.Transactional;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -506,24 +506,18 @@ public class RepositoryService {
 
   /**
    * The local git directory for {@code repoId} — the mirror's bare git dir (projects-volume-
-   * decoupling-plan.md §3.2), with no clone-on-first-use and no freshness check of its own. Kept for
-   * the sync cluster (BS: {@code deleteBranch}, {@code push}, {@code reconcileRejectedPush}), which
-   * still reads and writes the mirror directly rather than through {@link RepoMirror}'s own verbs;
-   * every read call site moved to {@link #requireMirror}, which clones a cold mirror and refreshes a
-   * stale one before handing back the same path.
+   * decoupling-plan.md §3.2), with no clone-on-first-use and no freshness check of its own.
    */
   private Path originPath(String repoId) {
     return gitMirrors.of(repoId).gitDir();
   }
 
   /**
-   * {@link #originPath} with the BQ-era 404 guard, and deliberately nothing more: used only by the
-   * pull/push call sites ({@link #pullRepository(String, java.util.Set, TechnicalProcess, String,
-   * java.util.Set)}'s {@code PullContext}, {@link #pushSpec}), which read and write the mirror's own
-   * local refs directly and must not have them refreshed — let alone clobbered — by {@link
-   * #requireMirror}'s forced host fetch out from under an in-progress reconcile. Redirecting these
-   * two onto real wire operations, with their own freshness and disambiguation story, is the sync
-   * cluster's job (projects-volume-decoupling-plan.md §3.6, BS).
+   * {@link #originPath} with the "this repository has a mirror at all" guard, and deliberately
+   * nothing more. The pull and push paths call it <em>before</em> their {@code refreshNow()}, and
+   * the order is the point: {@code refreshNow()} clones a missing mirror from the git host, so
+   * checking afterwards would silently start supporting pull and push on an adopted repository —
+   * whose contract is "no mirror, no pull, no push, no workspace" (see {@code adoptExistingOrigin}).
    */
   private Path requireExistingOrigin(String repoId) {
     Path path = originPath(repoId);
@@ -885,12 +879,17 @@ public class RepositoryService {
   }
 
   /**
-   * Pulls the remote's main branch into the local mirror. Fetches the branch and fast-forwards the
-   * local ref when the remote is strictly ahead; a no-op when already up to date or locally ahead.
-   * Diverged histories are reconciled rather than refused: a cleanly-mergeable divergence becomes a
-   * real merge commit on the branch, and a conflicting one parks the remote tip on {@code
-   * merge/<branch>-origin-<branch>} (overwriting a previous attempt) and fails with the resolution
-   * path in the message — see {@link #mergeDivergedRemote}. After its own pull, recursively pulls
+   * Pulls the backup remote's main branch onto the git host. Fetches the branch from the forge into
+   * {@code FETCH_HEAD} and pushes it to the host when the forge is strictly ahead; a no-op when
+   * already up to date or when the host is ahead. Diverged histories are reconciled rather than
+   * refused: a cleanly-mergeable divergence becomes a real merge commit pushed to the host, and a
+   * conflicting one parks the remote tip on {@code merge/<branch>-origin-<branch>} (replacing a
+   * previous attempt) and fails with the resolution path in the message — see {@link
+   * #buildDivergedMerge}.
+   *
+   * <p>Every ref this moves is moved by a push, never by an {@code update-ref} in the mirror: a ref
+   * written by hand fires no {@code post-receive}, which is why a commit arriving from a forge never
+   * produced a CI run. After its own pull, recursively pulls
    * the repository's IMPORTED submodule children (sibling repositories) — a gitlink bump arriving
    * on the superproject's main branch must never point at a commit the child sibling's origin does
    * not yet have, or the workspace container's {@code submodule update} (which clones from that
@@ -994,7 +993,7 @@ public class RepositoryService {
   }
 
   /** The scalar snapshot a single repo's pull needs, read in one short transaction. */
-  private record PullContext(String url, String branch, Path workdir, boolean hasMainWorkspace) {}
+  private record PullContext(String url, String branch) {}
 
   /** A submodule edge flattened to scalars, so it outlives the transaction that loaded it. */
   private record ChildEdge(String path, String childId, String childUrl) {}
@@ -1023,32 +1022,13 @@ public class RepositoryService {
       process.openSegment(segmentName);
     }
 
-    // The main branch lives in its default workspace, so pull there: git refuses to fetch-update a
-    // ref that is checked out, and updating it behind the workspace's back would desync the working
-    // tree. We fetch by URL (into FETCH_HEAD, not refs/heads/*) and fast-forward the workspace,
-    // which moves the ref and the checkout together. Fall back to the bare origin for a repo with
-    // no main workspace.
     PullContext ctx =
         QuarkusTransaction.requiringNew()
             .call(
                 () -> {
                   Repository repo = get(repoId);
-                  // Deliberately NOT requireMirror: pull writes the mirror's own refs by hand below
-                  // (fast-forward, merge), and a forced host refresh here would fetch the mirror back
-                  // to whatever the host holds before the write, undoing exactly the divergence this
-                  // walk exists to reconcile. The real wire-based rewrite of this method is BS's job
-                  // (projects-volume-decoupling-plan.md §3.6); until then it keeps the BQ-era plain
-                  // path lookup.
-                  Path originPath = requireExistingOrigin(repoId);
-                  String branch = resolveMainBranch(repo, originPath);
-                  // WorkspaceLookup.workspacePathForBranch is gone (§1.3: dead on both sides, nothing
-                  // ever implemented it) — a main workspace is never found, exactly as before.
-                  Optional<Path> mainWorkspace = Optional.empty();
                   return new PullContext(
-                      repo.url,
-                      branch,
-                      mainWorkspace.orElse(originPath),
-                      mainWorkspace.isPresent());
+                      repo.url, resolveMainBranch(repo, gitMirrors.of(repoId).gitDir()));
                 });
 
     // A repository with no backup remote (a greenfield wrapper) has nothing to pull FROM. That is a
@@ -1060,22 +1040,71 @@ public class RepositoryService {
       return withImportedChildPulls(repoId, "", visited, process, usedSegments);
     }
 
-    try {
-      // `--end-of-options`: url and branch are positional, never parsed as flags, so neither a
-      // dash-leading url (already rejected at clone) nor branch can smuggle a git flag.
-      // Stream the fetch line by line into the segment (live progress on a slow fetch; every line
-      // stamps the process's activity clock so a long-but-active fetch can't trip the idle reaper).
-      // The other pull verbs below are single-line and stay post-hoc via streamLine.
-      String fetchOutput =
-          git.exec(
-              ctx.workdir().toFile(),
-              lineSink(process, segmentName),
-              remoteAuth.gitWithCredentials("fetch", "--end-of-options", ctx.url(), ctx.branch()));
-      String remoteSha = git.exec(ctx.workdir().toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
-      String localSha =
-          git.exec(ctx.workdir().toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch()).trim();
+    // A mirror this service never cloned means an adopted repository, whose contract is "no mirror,
+    // no pull, no push, no workspace" (see adoptExistingOrigin). This guard has to come BEFORE
+    // refreshNow(), which would otherwise clone one from the host and silently start supporting
+    // pull here.
+    requireExistingOrigin(repoId);
+    RepoMirror mirror = gitMirrors.of(repoId);
 
-      if (remoteSha.equals(localSha) || isAncestor(ctx.workdir(), remoteSha, localSha)) {
+    try {
+      // The "about to write" rule: every decision below compares the forge's tip against what the
+      // git host holds, so the mirror's own refs have to be the host's refs first. Without this the
+      // baseline could be an arbitrary number of pushes stale and every verdict would be wrong.
+      mirror.refreshNow();
+    } catch (GitMirrorException e) {
+      throw new InternalServerErrorException("Git pull failed: " + e.getMessage());
+    }
+
+    try {
+      // Fetch the forge's branch into FETCH_HEAD only — no ref moves; the reconcile below decides
+      // what gets pushed. Streamed line by line into the segment (live progress on a slow fetch;
+      // every line stamps the process's activity clock so a long-but-active fetch can't trip the
+      // idle reaper). The other pull verbs are single-line and stay post-hoc via streamLine.
+      // The tap also collects, because the synchronous callers return the fetch's own output as
+      // part of the walk's text and RepoMirror hands back none of it.
+      StringBuilder fetched = new StringBuilder();
+      Consumer<String> sink = lineSink(process, segmentName);
+      mirror.fetchIntoFetchHead(
+          ctx.url(),
+          ctx.branch(),
+          remoteAuth,
+          line -> {
+            if (fetched.length() > 0) {
+              fetched.append('\n');
+            }
+            fetched.append(line);
+            if (sink != null) {
+              sink.accept(line);
+            }
+          });
+      String fetchOutput = fetched.toString();
+      String remoteSha =
+          mirror
+              .resolve("FETCH_HEAD")
+              .orElseThrow(
+                  () ->
+                      new InternalServerErrorException(
+                          "Git pull failed: the fetch of '"
+                              + ctx.branch()
+                              + "' left no FETCH_HEAD to read"));
+      Optional<String> localOpt = mirror.resolve("refs/heads/" + ctx.branch());
+      if (localOpt.isEmpty()) {
+        // The git host has no such branch yet — rare (every repository gets its main branch
+        // published at creation), but publishing the forge's tip is the only sensible answer.
+        requireAccepted(
+            mirror.push(
+                eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                    eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                        remoteSha, ctx.branch()))),
+            "Git pull failed");
+        streamLine(process, segmentName, "Fast-forwarded to " + shortSha(remoteSha));
+        settleOk(process, segmentName);
+        return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
+      }
+      String localSha = localOpt.get();
+
+      if (remoteSha.equals(localSha) || mirror.isAncestor(remoteSha, localSha)) {
         // Already up to date, or local is ahead — nothing to pull; children may still be stale.
         streamLine(
             process,
@@ -1084,16 +1113,15 @@ public class RepositoryService {
         settleOk(process, segmentName);
         return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
       }
-      if (isAncestor(ctx.workdir(), localSha, remoteSha)) {
-        // Remote is strictly ahead — fast-forward.
-        if (ctx.hasMainWorkspace()) {
-          // Update the ref and the working tree together (the branch is checked out here).
-          git.exec(
-              ctx.workdir().toFile(), "git", "merge", "--ff-only", "--end-of-options", remoteSha);
-        } else {
-          git.exec(
-              ctx.workdir().toFile(), "git", "update-ref", "refs/heads/" + ctx.branch(), remoteSha);
-        }
+      if (mirror.isAncestor(localSha, remoteSha)) {
+        // Remote is strictly ahead — fast-forward, as a push to the host rather than a local
+        // update-ref, so receive-pack (and its post-receive) sees the commits arrive.
+        requireAccepted(
+            mirror.push(
+                eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                    eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                        remoteSha, ctx.branch()))),
+            "Git pull failed");
         streamLine(process, segmentName, "Fast-forwarded to " + shortSha(remoteSha));
         settleOk(process, segmentName);
         return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
@@ -1101,16 +1129,29 @@ public class RepositoryService {
       // Diverged: merge the remote in when the merge is clean; a conflict parks the remote tip on
       // the merge/<branch>-origin-<branch> branch and throws (the message carries the resolution
       // path).
-      String mergeVerdict =
-          mergeDivergedRemote(
-              ctx.workdir(), ctx.hasMainWorkspace(), ctx.branch(), localSha, remoteSha);
-      streamLine(process, segmentName, mergeVerdict);
+      MergeBuild merge = buildDivergedMerge(mirror, ctx.branch(), localSha, remoteSha);
+      // Pull's whole purpose is to advance the platform's own record, so the merge commit goes to
+      // the host.
+      requireAccepted(
+          mirror.push(
+              eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                  eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                      merge.mergeSha(), ctx.branch()))),
+          "Git pull failed");
+      streamLine(process, segmentName, merge.verdict());
       settleOk(process, segmentName);
       return withImportedChildPulls(repoId, fetchOutput, visited, process, usedSegments);
     } catch (BadRequestException e) {
       throw e;
-    } catch (Exception e) {
+    } catch (GitMirrorException e) {
       throw new InternalServerErrorException("Git pull failed: " + e.getMessage());
+    }
+  }
+
+  /** Every ref this method moves is moved by a push; a refused one is the operation failing. */
+  private static void requireAccepted(PushOutcome outcome, String what) {
+    if (!outcome.accepted()) {
+      throw new InternalServerErrorException(what + ": " + outcome.output());
     }
   }
 
@@ -1173,70 +1214,81 @@ public class RepositoryService {
     return "merge/" + branch + "-origin-" + branch;
   }
 
+  /** A built, unpublished merge commit and the verdict line that describes it. */
+  private record MergeBuild(String mergeSha, String verdict) {}
+
   /**
-   * Reconciles a diverged {@code branch} (neither {@code localSha} nor {@code remoteSha} is an
-   * ancestor of the other) after the remote commits were fetched into {@code workdir}'s object
-   * store. A clean three-way merge (probed with {@code git merge-tree --write-tree}, no working
-   * tree needed) becomes a real merge commit — local tip as first parent, remote tip as second —
-   * and the branch ref advances to it; the returned verdict line describes it. A conflicting merge
-   * parks the remote tip on {@code merge/<branch>-origin-<branch>} (created, or overwritten from a
-   * previous attempt, so the parked tip always matches the remote's current state) and throws — the
-   * message names the conflicting files and the resolution path: merge {@code branch} into the
-   * parked branch, resolve, integrate back, then pull/sync/push again.
+   * Builds the reconciliation of a diverged {@code branch} (neither {@code localSha} nor {@code
+   * remoteSha} is an ancestor of the other), and publishes nothing. A clean three-way merge (a real
+   * {@code merge-tree --write-tree} in the mirror, no working tree) becomes a real merge commit —
+   * local tip as first parent, remote tip as second — whose sha the caller pushes wherever its own
+   * job requires: pull pushes it to the git host (advancing the platform's record), push retries the
+   * forge with it (satisfying the forge's fast-forward check). A conflicting merge parks the remote
+   * tip on {@code merge/<branch>-origin-<branch>} and throws — the message names the conflicting
+   * files and the resolution path: merge {@code branch} into the parked branch, resolve, integrate
+   * back, then pull/sync/push again.
    */
-  private String mergeDivergedRemote(
-      Path workdir, boolean checkedOut, String branch, String localSha, String remoteSha)
-      throws Exception {
-    GitExecutor.ExecResult probe =
-        git.execAllowNonZero(
-            workdir.toFile(),
-            "git",
-            "merge-tree",
-            "--write-tree",
-            "--name-only",
-            "--end-of-options",
-            localSha,
-            remoteSha);
-    if (probe.exitCode() == 0) {
+  private MergeBuild buildDivergedMerge(
+      RepoMirror mirror, String branch, String localSha, String remoteSha) {
+    MergeOutcome outcome = mirror.previewMerge(localSha, remoteSha);
+    if (outcome.clean()) {
       String message = "Merge remote '" + branch + "' into " + branch;
-      String mergeSha;
-      if (checkedOut) {
-        // The branch is checked out here (host-workspace seam): a real `git merge` moves the ref,
-        // index and working tree together. The merge-tree probe said clean, so it won't conflict.
-        List<String> merge = new ArrayList<>(List.of("git"));
-        merge.addAll(gitIdentity.inlineArgs());
-        merge.addAll(List.of("merge", "-m", message, "--end-of-options", remoteSha));
-        git.exec(workdir.toFile(), gitIdentity.envMap(), merge.toArray(String[]::new));
-        mergeSha = git.exec(workdir.toFile(), "git", "rev-parse", "HEAD").trim();
-      } else {
-        // Bare origin: commit the merged tree directly in the object store and advance the ref.
-        String tree = probe.output().lines().findFirst().orElseThrow().trim();
-        List<String> commit = new ArrayList<>(List.of("git"));
-        commit.addAll(gitIdentity.inlineArgs());
-        commit.addAll(List.of("commit-tree", tree, "-p", localSha, "-p", remoteSha, "-m", message));
-        mergeSha =
-            git.exec(workdir.toFile(), gitIdentity.envMap(), commit.toArray(String[]::new)).trim();
-        git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + branch, mergeSha);
-      }
-      return "Merged remote into '" + branch + "' (merge commit " + shortSha(mergeSha) + ")";
+      String mergeSha =
+          mirror.commitTree(
+              outcome.treeSha(),
+              List.of(localSha, remoteSha),
+              message,
+              gitIdentity.asCommitIdentity());
+      return new MergeBuild(
+          mergeSha, "Merged remote into '" + branch + "' (merge commit " + shortSha(mergeSha) + ")");
     }
-    if (probe.exitCode() == 1) {
-      String mergeBranch = mergeBranchName(branch);
-      git.exec(workdir.toFile(), "git", "update-ref", "refs/heads/" + mergeBranch, remoteSha);
-      throw new BadRequestException(
-          "Branch '"
-              + branch
-              + "' conflicts with the remote (conflicting files: "
-              + String.join(", ", GitExecutor.conflictedFiles(probe.output()))
-              + "); the remote tip was saved to branch '"
-              + mergeBranch
-              + "' (replacing any previous attempt) — merge '"
-              + branch
-              + "' into it, resolve the conflicts, integrate it back, then pull, sync or push"
-              + " again");
+    String mergeBranch = mergeBranchName(branch);
+    parkConflictingRemoteTip(mirror, branch, remoteSha);
+    throw new BadRequestException(
+        "Branch '"
+            + branch
+            + "' conflicts with the remote (conflicting files: "
+            + String.join(", ", outcome.conflictedPaths())
+            + "); the remote tip was saved to branch '"
+            + mergeBranch
+            + "' (replacing any previous attempt) — merge '"
+            + branch
+            + "' into it, resolve the conflicts, integrate it back, then pull, sync or push"
+            + " again");
+  }
+
+  /**
+   * Parks {@code remoteSha} on {@code merge/<branch>-origin-<branch>}, replacing whatever a previous
+   * attempt left there.
+   *
+   * <p>This used to be a force-push ({@code +<sha>:refs/heads/…}) and cannot be one any more: {@code
+   * gitmirror} has no force flag by design, so every push it makes is a compare-and-swap. Delete
+   * then recreate is the two-step equivalent — a deletion is never subject to a fast-forward check,
+   * only an update is — and it is safe precisely here: this branch is a disposable scratch pointer
+   * offered as a coordination convenience, never protected history. A ref anyone else's work depends
+   * on would not be replaced this way.
+   */
+  private void parkConflictingRemoteTip(RepoMirror mirror, String branch, String remoteSha) {
+    String mergeBranch = mergeBranchName(branch);
+    eu.wohlben.qits.projects.gitmirror.PushSpec park =
+        eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+            eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(remoteSha, mergeBranch));
+    PushOutcome parked = mirror.push(park);
+    if (parked.accepted()) {
+      return;
     }
-    throw new InternalServerErrorException(
-        "Git merge-tree failed [" + probe.exitCode() + "]: " + probe.output());
+    if (!parked.saysNotFastForward()) {
+      throw new InternalServerErrorException(
+          "Could not park the remote tip on '" + mergeBranch + "': " + parked.output());
+    }
+    // A previous attempt is in the way. Its outcome is deliberately ignored: no such branch is also
+    // a rejection, and that is the state we want anyway.
+    mirror.deleteBranch(mergeBranch);
+    PushOutcome retried = mirror.push(park);
+    if (!retried.accepted()) {
+      throw new InternalServerErrorException(
+          "Could not park the remote tip on '" + mergeBranch + "': " + retried.output());
+    }
   }
 
   /**
@@ -1303,10 +1355,8 @@ public class RepositoryService {
         .call(
             () -> {
               Repository repo = get(repoId);
-              // Deliberately NOT requireMirror: push (and the sign-in terminal's interactive push)
-              // read and write the mirror's own local state directly, and a forced host refresh here
-              // would fetch it back to whatever the host holds before the write — see the identical
-              // note on the pull side above. BS's job (§3.6), not this one's.
+              // The 404 guard runs here rather than after the caller's refreshNow(), which would
+              // clone a missing mirror from the host — see requireExistingOrigin.
               Path originPath = requireExistingOrigin(repoId);
               return new PushSpec(repo.url, resolveMainBranch(repo, originPath));
             });
@@ -1318,10 +1368,10 @@ public class RepositoryService {
    *
    * <p>A push the remote rejects as non-fast-forward (the remote gained commits we don't have)
    * doesn't just fail anymore: the remote branch is fetched and reconciled with the same policy the
-   * pull uses — remote strictly ahead fast-forwards the mirror (nothing to push), a diverged branch
-   * that merges cleanly gets a merge commit and the push is retried once, and a conflicting
-   * divergence parks the remote tip on {@code merge/<branch>-origin-<branch>} (see {@link
-   * #mergeDivergedRemote}) and fails with the resolution path in the message.
+   * pull uses — remote strictly ahead fast-forwards the git host (nothing to push), a diverged
+   * branch that merges cleanly gets a merge commit and the push is retried once with it, and a
+   * conflicting divergence parks the remote tip on {@code merge/<branch>-origin-<branch>} (see
+   * {@link #buildDivergedMerge}) and fails with the resolution path in the message.
    *
    * <p>Reads its inputs in a short transaction and runs {@code git push} outside it (the pull's
    * {@link PullContext} pattern), so it is safe on a worker thread with no request context — the
@@ -1335,19 +1385,28 @@ public class RepositoryService {
     if (ctx.url() == null || ctx.url().isBlank()) {
       return "No backup remote configured — nothing to push";
     }
+    RepoMirror mirror = gitMirrors.of(repoId);
     try {
-      return push(repoId, ctx);
+      // The "about to write" rule: what reaches the forge must be what the git host holds, so the
+      // mirror is caught up first and the branch pushed below is the host's own tip.
+      mirror.refreshNow();
+    } catch (GitMirrorException e) {
+      throw new InternalServerErrorException("Git push failed: " + e.getMessage());
+    }
+    try {
+      return push(mirror, ctx);
     } catch (Exception e) {
       if (!isNonFastForwardRejection(e.getMessage())) {
         throw new InternalServerErrorException("Git push failed: " + e.getMessage());
       }
-      return reconcileRejectedPush(repoId, ctx, e.getMessage());
+      return reconcileRejectedPush(repoId, mirror, ctx, e.getMessage());
     }
   }
 
-  private String push(String repoId, PushSpec ctx) throws Exception {
+  /** The push to the <b>forge</b> — the row's own remote, with the row's own credentials. */
+  private String push(RepoMirror mirror, PushSpec ctx) throws Exception {
     return git.exec(
-        originPath(repoId).toFile(),
+        mirror.gitDir().toFile(),
         remoteAuth.gitWithCredentials(
             "push", ctx.url(), "refs/heads/" + ctx.branch() + ":refs/heads/" + ctx.branch()));
   }
@@ -1370,32 +1429,47 @@ public class RepositoryService {
    * (already contained locally — e.g. a racing pull got there first), the original rejection is
    * surfaced unchanged.
    */
-  private String reconcileRejectedPush(String repoId, PushSpec ctx, String rejection) {
-    Path originPath = originPath(repoId);
+  private String reconcileRejectedPush(
+      String repoId, RepoMirror mirror, PushSpec ctx, String rejection) {
     try {
-      git.exec(
-          originPath.toFile(),
-          remoteAuth.gitWithCredentials(
-              "fetch", "--end-of-options", ctx.url(), "refs/heads/" + ctx.branch()));
-      String remoteSha = git.exec(originPath.toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
-      String localSha =
-          git.exec(originPath.toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch()).trim();
-      if (remoteSha.equals(localSha) || isAncestor(originPath, remoteSha, localSha)) {
+      mirror.fetchIntoFetchHead(ctx.url(), "refs/heads/" + ctx.branch(), remoteAuth);
+      Optional<String> remoteOpt = mirror.resolve("FETCH_HEAD");
+      Optional<String> localOpt = mirror.resolve("refs/heads/" + ctx.branch());
+      if (remoteOpt.isEmpty() || localOpt.isEmpty()) {
         throw new InternalServerErrorException("Git push failed: " + rejection);
       }
-      if (isAncestor(originPath, localSha, remoteSha)) {
-        // The remote simply moved ahead — catch the mirror up instead of failing.
-        git.exec(originPath.toFile(), "git", "update-ref", "refs/heads/" + ctx.branch(), remoteSha);
+      String remoteSha = remoteOpt.get();
+      String localSha = localOpt.get();
+      if (remoteSha.equals(localSha) || mirror.isAncestor(remoteSha, localSha)) {
+        // The fetched tip does not explain the rejection (already contained locally — e.g. a racing
+        // pull got there first): surface the original rejection unchanged.
+        throw new InternalServerErrorException("Git push failed: " + rejection);
+      }
+      if (mirror.isAncestor(localSha, remoteSha)) {
+        // The forge simply moved ahead — catch the git host up instead of failing. This is a push
+        // to the HOST, so the commits arrive through receive-pack like any other.
+        requireAccepted(
+            mirror.push(
+                eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                    eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                        remoteSha, ctx.branch()))),
+            "Git push failed");
         return "Remote is ahead; fast-forwarded '"
             + ctx.branch()
             + "' to "
             + shortSha(remoteSha)
             + " — nothing to push";
       }
-      String mergeVerdict =
-          mergeDivergedRemote(originPath, false, ctx.branch(), localSha, remoteSha);
-      String pushOutput = push(repoId, ctx);
-      return mergeVerdict + "\n" + pushOutput;
+      MergeBuild merge = buildDivergedMerge(mirror, ctx.branch(), localSha, remoteSha);
+      // Retry the FORGE push with the merge commit itself. It needs no ref of its own and no trip
+      // through the host: its only job here is satisfying the forge's fast-forward check, and a
+      // later pull reconciles the forge's content into the host if anyone cares.
+      String pushOutput =
+          git.exec(
+              mirror.gitDir().toFile(),
+              remoteAuth.gitWithCredentials(
+                  "push", ctx.url(), merge.mergeSha() + ":refs/heads/" + ctx.branch()));
+      return merge.verdict() + "\n" + pushOutput;
     } catch (BadRequestException | InternalServerErrorException e) {
       throw e;
     } catch (Exception e) {
@@ -1692,17 +1766,6 @@ public class RepositoryService {
     return new SyncStatusDto(branch, true, true, ahead, behind);
   }
 
-  /** True when {@code maybeAncestor} is an ancestor of {@code descendant} (or they are equal). */
-  private boolean isAncestor(Path originPath, String maybeAncestor, String descendant) {
-    try {
-      git.exec(
-          originPath.toFile(), "git", "merge-base", "--is-ancestor", maybeAncestor, descendant);
-      return true;
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
   public Repository get(String repoId) {
     return repositoryRepository
         .findByIdOptional(repoId)
@@ -1768,9 +1831,9 @@ public class RepositoryService {
    * <p>Pushed as a deletion (projects-volume-decoupling-plan.md §3.7) rather than run as a local
    * {@code git branch -D}: with {@link #listBranches} now reading the git host directly (§3.5), a
    * local-only delete would silently un-delete itself the moment anything re-reads the branch list.
-   * The full §3.7 treatment — the delete reaching {@code ProtectedRefHook} and its refusal surfacing
-   * as a 4xx rather than a 500 — is the sync cluster's job (BS); this is the minimal git-verb swap
-   * BR needs to keep its own read-side change from regressing this method's existing behaviour.
+   * The push passes through the git host's {@code ProtectedRefHook}, so deleting a repository's
+   * default branch is refused there — and that refusal surfaces as a 4xx carrying the hook's own
+   * message rather than a 500, since it is a statement about the request.
    */
   @Transactional
   public void deleteBranch(String repoId, String branch) {
@@ -1797,6 +1860,15 @@ public class RepositoryService {
     try {
       PushOutcome outcome = gitMirrors.of(repoId).deleteBranch(branch);
       if (!outcome.accepted()) {
+        // The delete goes through the git host's ProtectedRefHook, which guards the repository's
+        // HEAD. Its refusal is a statement about the request, not a fault here, so it surfaces as a
+        // 4xx carrying the hook's own words — the same rule qits-workspaces settled for
+        // PUSH_REJECTED. Anything receive-pack did not phrase as a refusal stays a 500.
+        String refusal = outcome.remoteRefusal();
+        if (refusal != null) {
+          throw new BadRequestException(
+              "The git host refused to delete '" + branch + "': " + refusal);
+        }
         throw new InternalServerErrorException("Git branch delete failed: " + outcome.output());
       }
     } catch (GitMirrorException e) {

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 /**
  * One repository's local mirror, and every git operation this service performs on it.
@@ -218,13 +219,24 @@ public final class RepoMirror {
    * refs never change except through {@link #push}.
    */
   public void fetchIntoFetchHead(String upstreamUrl, String ref, GitCredentials credentials) {
+    fetchIntoFetchHead(upstreamUrl, ref, credentials, null);
+  }
+
+  /**
+   * {@link #fetchIntoFetchHead(String, String, GitCredentials)} with a per-line tap, so a caller
+   * narrating a long fetch (the streamed pull's technical-process segment) sees git's progress as it
+   * arrives rather than after it finishes. {@code onLine} may be null, which is the plain form.
+   */
+  public void fetchIntoFetchHead(
+      String upstreamUrl, String ref, GitCredentials credentials, Consumer<String> onLine) {
     requireUrl("upstreamUrl", upstreamUrl);
     requireRefName("ref", ref);
     if (credentials == null) {
       throw new GitMirrorException("fetchIntoFetchHead needs credentials, even if they wrap nothing");
     }
     String[] argv = credentials.wrap("fetch", "--end-of-options", upstreamUrl, ref);
-    GitCli.Result result = wire("Could not fetch " + ref + " from " + upstreamUrl, gitDir, argv);
+    GitCli.Result result =
+        wire("Could not fetch " + ref + " from " + upstreamUrl, gitDir, onLine, argv);
     if (result.exitCode() != 0) {
       throw new GitMirrorException(
           "Could not fetch " + ref + " from " + upstreamUrl + ": " + result.output());
@@ -565,8 +577,13 @@ public final class RepoMirror {
 
   /** A git call that talks to a remote, and therefore carries a deadline. */
   private GitCli.Result wire(String what, Path cwd, String... argv) {
+    return wire(what, cwd, null, argv);
+  }
+
+  /** {@link #wire(String, Path, String...)} with a per-line tap on the merged output. */
+  private GitCli.Result wire(String what, Path cwd, Consumer<String> onLine, String... argv) {
     try {
-      return cli.run(cwd == null ? null : cwd.toFile(), Map.of(), null, networkTimeout, argv);
+      return cli.run(cwd == null ? null : cwd.toFile(), Map.of(), onLine, networkTimeout, argv);
     } catch (Exception e) {
       throw new GitMirrorException(what + ": " + e.getMessage(), e);
     }

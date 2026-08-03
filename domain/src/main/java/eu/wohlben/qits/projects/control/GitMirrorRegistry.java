@@ -23,10 +23,11 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 public class GitMirrorRegistry {
 
   /**
-   * This service's <b>own</b> data tree, and the asymmetry with {@code qits.repositories.data-dir}
-   * is the point: that one is the shared volume qits-artifacts serves, and once this decoupling
-   * lands nothing here writes to it any more. The mirrors are a private cache of repositories this
-   * service does not own, so they live where its database and its skeleton scratch already do.
+   * This service's <b>own</b> data tree — the only one it has. The mirrors are a private cache of
+   * repositories this service does not own, so they live where its database and its skeleton
+   * scratch already do, and nothing outside this service reads them. The shared volume the bare
+   * origins used to sit on is gone from this context entirely
+   * (projects-volume-decoupling-plan.md).
    */
   @ConfigProperty(name = "qits.projects.data-dir", defaultValue = "data/projects")
   String dataDir;

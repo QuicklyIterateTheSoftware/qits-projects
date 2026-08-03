@@ -6,9 +6,10 @@ import eu.wohlben.qits.projects.gitmirror.GitRemotes;
  * Where a repository answers as a <em>git remote</em> — the platform's own git host, the url this
  * service mirrors from and pushes to (projects-volume-decoupling-plan.md §3.2).
  *
- * <p>Before this port existed, this context held every repository's bare origin on disk under
- * {@code qits.repositories.data-dir} and advanced refs by writing them there — which is why no
- * branch create, delete or pulled-in commit ever fired {@code post-receive} or produced a CI run.
+ * <p>Before this port existed, this context held every repository's bare origin on a volume it
+ * shared with qits-artifacts and qits-workspaces, and advanced refs by writing them there — which
+ * is why no branch create, delete or pulled-in commit ever fired {@code post-receive} or produced a
+ * CI run.
  * Every one of those becomes a push over HTTP to the ordinary git host now, so receive-pack is the
  * sole writer of every ref and the existing post-receive → qits-ci → build chain happens for the
  * ordinary reason.

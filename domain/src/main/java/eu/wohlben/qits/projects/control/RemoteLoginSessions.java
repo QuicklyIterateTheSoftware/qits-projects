@@ -2,6 +2,7 @@ package eu.wohlben.qits.projects.control;
 
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
+import eu.wohlben.qits.projects.gitmirror.GitMirrorException;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
@@ -208,6 +209,15 @@ public class RemoteLoginSessions {
     if (spec.url() == null || spec.url().isBlank()) {
       throw new BadRequestException(
           "Repository has no backup remote configured; configure one before signing in.");
+    }
+    // The interactive push below pushes the mirror's own branch to the forge, so the mirror has to
+    // hold what the git host holds first — without this an unfetched mirror would push an empty or
+    // stale branch (projects-volume-decoupling-plan.md §3.6).
+    try {
+      gitMirrors.of(repoId).refreshNow();
+    } catch (GitMirrorException e) {
+      throw new InternalServerErrorException(
+          "Could not refresh the mirror before signing in: " + e.getMessage());
     }
     ForeignPty pty;
     try {

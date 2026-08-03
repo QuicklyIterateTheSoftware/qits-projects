@@ -273,6 +273,37 @@ public class RepositoryServiceTest {
     }
   }
 
+  /**
+   * projects-volume-decoupling-plan.md §3.7: a branch delete is a push, so it passes through the git
+   * host's ref-protection hook — and the hook's refusal is a statement about the request, not a
+   * fault here. It has to surface as a 4xx carrying the hook's own words, never as a 500.
+   *
+   * <p>Stood up with a plain {@code pre-receive} that refuses every update, which is as far as the
+   * fake host goes: native git renders a shell hook's decline as {@code ! [remote rejected] <ref>
+   * (pre-receive hook declined)} — its own fixed wording, not the script's stderr. A hook that puts
+   * its own sentence in those parentheses is qits-artifacts' JGit {@code ProtectedRefHook}, and
+   * proving that text is its test suite's job; what this pins is the mapping.
+   */
+  @Test
+  public void aBranchDeleteTheHostRefusesSurfacesAsA4xx() throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Protected Delete Project", null);
+    var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
+
+    Path hook = Path.of(gitHost.fetchUrl(repo.id)).resolve("hooks/pre-receive");
+    Files.writeString(hook, "#!/bin/sh\nexit 1\n");
+    Files.setPosixFilePermissions(hook, PosixFilePermissions.fromString("rwxr-xr-x"));
+
+    BadRequestException refused =
+        assertThrows(
+            BadRequestException.class,
+            () -> repositoryService.deleteBranch(repo.id, repo.mainBranch));
+    assertTrue(
+        refused.getMessage().contains("pre-receive hook declined"),
+        "the hook's own words reach the caller: " + refused.getMessage());
+    assertTrue(refused.getMessage().contains(repo.mainBranch), refused.getMessage());
+  }
+
   private static void deleteRecursively(Path root) throws IOException {
     if (!Files.exists(root)) {
       return;

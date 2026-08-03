@@ -48,9 +48,7 @@ public class RepositoryServiceSubmoduleTest {
 
   @Inject RecordingWorkspaceLifecycle workspaceLifecycle;
   @Inject GitExecutor git;
-
-  @org.eclipse.microprofile.config.inject.ConfigProperty(name = "qits.repositories.data-dir")
-  String dataDir;
+  @Inject GitMirrorRegistry gitMirrors;
 
   private String fixture(String name) throws Exception {
     return GitFixtures.path(name);
@@ -476,14 +474,10 @@ public class RepositoryServiceSubmoduleTest {
     git.exec(worktree.toFile(), "git", "push", "origin", "HEAD");
   }
 
-  /** Whether the qits-side origin of {@code repoId} contains {@code sha}. */
+  /** Whether the imported sibling's local mirror contains {@code sha}. */
   private boolean originHasCommit(String repoId, String sha) throws Exception {
     return git.execAllowNonZero(
-                Path.of(dataDir, repoId, "origin").toFile(),
-                "git",
-                "cat-file",
-                "-e",
-                sha + "^{commit}")
+                gitMirrors.of(repoId).gitDir().toFile(), "git", "cat-file", "-e", sha + "^{commit}")
             .exitCode()
         == 0;
   }

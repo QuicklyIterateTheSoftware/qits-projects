@@ -19,7 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -42,9 +41,7 @@ public class RepositoryPullProcessTest {
   @Inject RepositoryRepository repositoryRepository;
   @Inject TechnicalProcessRegistry registry;
   @Inject GitExecutor git;
-
-  @ConfigProperty(name = "qits.repositories.data-dir")
-  String dataDir;
+  @Inject GitHostAddress gitHost;
 
   /** Records a terminal process's full replay (attach on a terminal process replays + done). */
   private static final class Replay implements TechnicalProcess.Listener {
@@ -78,8 +75,27 @@ public class RepositoryPullProcessTest {
         .collect(Collectors.toMap(r -> Path.of(r.url).getFileName().toString(), r -> r));
   }
 
-  private Path originOf(String repoId) {
-    return Path.of(dataDir, repoId, "origin");
+  /**
+   * The git host's bare for a repository — {@code FakeGitHostAddress}'s {@code
+   * target/qits-test-host/<repoId>.git}, reached through the injected port rather than the fake.
+   *
+   * <p>This is where a fixture that means "the platform already holds a different commit" has to
+   * write. A pull refreshes the mirror from the host before it reads anything (the "about to write"
+   * rule), so a commit written straight into the mirror is gone before the pull ever sees it.
+   */
+  private Path hostOf(String repoId) {
+    return Path.of(gitHost.fetchUrl(repoId));
+  }
+
+  private static void deleteRecursively(Path root) throws Exception {
+    if (!Files.exists(root)) {
+      return;
+    }
+    try (var paths = Files.walk(root)) {
+      for (Path p : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+        Files.deleteIfExists(p);
+      }
+    }
   }
 
   private TechnicalProcess awaitTerminal(String processId) throws InterruptedException {
@@ -209,11 +225,15 @@ public class RepositoryPullProcessTest {
     Map<String, Repository> repos = reposByName(project.id);
     repositoryService.importDirectSubmodules(repos.get("submodule-child-a.git").id);
 
-    // Break the shared child's local mirror so its own pull throws (fetch by URL still works, but
-    // rev-parse of the now-missing local ref fails). It is reached by two edges — the visited dedup
-    // means it fails once and is not retried under the other edge.
+    // Break the shared child's git-host bare so its own pull throws. It cannot be broken in the
+    // mirror any more: a pull refreshes the mirror from the host first, which would repair any
+    // local damage before the pull ever read it. Taking the host's bare away instead makes the
+    // refresh itself fail — the same shape as a host that has lost the repository — which is what
+    // this test is really about: one child's git operation throws mid-walk and the walk degrades
+    // loudly instead of blocking. It is reached by two edges; the visited dedup means it fails once
+    // and is not retried under the other edge.
     Repository shared = reposByName(project.id).get("submodule-shared.git");
-    git.exec(originOf(shared.id).toFile(), "git", "update-ref", "-d", "refs/heads/main");
+    deleteRecursively(hostOf(shared.id));
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(superRepo.id)));
 
@@ -236,21 +256,22 @@ public class RepositoryPullProcessTest {
   public void aCleanlyMergeableDivergenceMergesTheRemoteIn() throws Exception {
     var project = projectService.create("Pull Root Divergence", null);
     var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project);
-    // Point the local main branch at the divergent `feature` tip: neither is an ancestor of the
+    // Point the HOST's main branch at the divergent `feature` tip: neither is an ancestor of the
     // other, but the two sides touch different content — the pull now merges the remote in instead
-    // of refusing.
-    String masterSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
-    String featureSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "feature").trim();
-    git.exec(originOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", featureSha);
+    // of refusing. The host is what "local" means to a pull, so the fixture writes there.
+    String masterSha = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+    String featureSha = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "feature").trim();
+    git.exec(hostOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", featureSha);
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
 
     assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
-    // The branch advanced to a real merge commit: local tip first parent, remote tip second.
+    // The host's branch advanced to a real merge commit, arrived by push: host tip first parent,
+    // forge tip second.
     String parents =
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master^1", "master^2").trim();
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master^1", "master^2").trim();
     assertEquals(featureSha + "\n" + masterSha, parents);
   }
 
@@ -289,37 +310,39 @@ public class RepositoryPullProcessTest {
         remote.toString());
     var repo = repositoryService.cloneRepository(remote.toString(), null, project);
     pushCommit(remote, "hello.txt", "remote change\n", "remote change");
-    pushCommit(originOf(repo.id), "hello.txt", "local change\n", "local change");
-    String localSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+    // The platform side of the conflict goes into the HOST's bare: the pull refreshes the mirror
+    // from the host before reading anything, so a commit written into the mirror would be gone.
+    pushCommit(hostOf(repo.id), "hello.txt", "local change\n", "local change");
+    String localSha = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
     String remoteSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
 
     // The pull fails (the branch is NOT merged) but the remote tip is parked on the merge branch,
-    // with the conflicting file and the resolution path named in the stream.
+    // with the conflicting file and the resolution path named in the stream. The park is a push
+    // like every other write here, so the parked branch appears on the host.
     assertEquals("failed", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "merge/master-origin-master"), "the parked branch named");
     assertTrue(hasLineContaining(replay, "hello.txt"), "the conflicting file is named");
     assertEquals(
         localSha,
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
-        "the local branch stays untouched");
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        "the host's branch stays untouched");
     assertEquals(
         remoteSha,
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
-            .trim(),
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master").trim(),
         "the merge branch holds the remote tip");
 
     // The remote moves on (still conflicting) and the user pulls again: the parked branch is
-    // overwritten with the remote's NEW tip — never a second branch, never the stale tip.
+    // overwritten with the remote's NEW tip — never a second branch, never the stale tip. With no
+    // force flag in gitmirror that overwrite is a delete-then-recreate; this is what pins it.
     pushCommit(remote, "hello.txt", "remote change 2\n", "remote change 2");
     String remoteSha2 = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
     Replay retry = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
     assertEquals("failed", doneFrame(retry).status());
     assertEquals(
         remoteSha2,
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
-            .trim(),
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master").trim(),
         "a repeated conflict overwrites the parked branch with the new remote tip");
   }
 
@@ -327,9 +350,9 @@ public class RepositoryPullProcessTest {
   public void aFastForwardStreamsTheVerdictAndConfigReingestionLine() throws Exception {
     var project = projectService.create("Pull Fast Forward", null);
     var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project);
-    // Rewind the local main branch one commit so the remote is strictly ahead -> fast-forward.
-    String parentSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master~1").trim();
-    git.exec(originOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", parentSha);
+    // Rewind the HOST's main branch one commit so the remote is strictly ahead -> fast-forward.
+    String parentSha = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master~1").trim();
+    git.exec(hostOf(repo.id).toFile(), "git", "update-ref", "refs/heads/master", parentSha);
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
 
@@ -344,6 +367,41 @@ public class RepositoryPullProcessTest {
         1,
         countLinesContaining(replay, "Fast-forwarded to"),
         "the fast-forward verdict, exactly once");
+  }
+
+  @Test
+  public void aPullThatAdvancesMainPushesTheNewTipToTheGitHost() throws Exception {
+    var project = projectService.create("Pull Advances Host", null);
+    // A writable forge, so a new commit can land on it after the repository was created.
+    Path remoteParent = Files.createTempDirectory("qits-pull-advance-remote");
+    Path remote = remoteParent.resolve("testing-repo.git");
+    git.exec(
+        remoteParent.toFile(),
+        "git",
+        "clone",
+        "--bare",
+        fixture("testing-repo.git"),
+        remote.toString());
+    var repo = repositoryService.cloneRepository(remote.toString(), null, project);
+    String before = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+
+    // The forge gains a commit the platform has never seen.
+    pushCommit(remote, "hello.txt", "forward\n", "a commit only the forge has");
+    String forgeSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
+
+    assertEquals("ok", settledStatus(replay, "pull:testing-repo"));
+    assertEquals("ok", doneFrame(replay).status());
+    assertTrue(hasLineContaining(replay, "Fast-forwarded to"), "the fast-forward verdict lands");
+    // The point of the whole workstream: the ref moved on the GIT HOST, through a real push and so
+    // through receive-pack. A regression to a bare `update-ref` would move only the mirror's own
+    // ref and leave the host exactly where it was.
+    assertEquals(
+        forgeSha,
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        "the git host's branch now holds the forge's commit");
+    assertTrue(!forgeSha.equals(before), "the fixture really did advance the branch");
   }
 
   @Test

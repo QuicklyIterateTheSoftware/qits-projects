@@ -7,7 +7,7 @@
     <parent>
         <groupId>eu.wohlben.qits</groupId>
         <artifactId>qits-projects</artifactId>
-        <version>2026.802.191319</version>
+        <version>2026.803.161428</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -28,6 +28,13 @@
     <name>qits-projects :: domain</name>
 
     <dependencies>
+        <dependency>
+            <!-- The git substrate: mirrors, wire reads and pushes. GitMirrorRegistry is the one
+                 place this module builds it from config; GitHostAddress/GitCredentials are this
+                 module's own vocabulary for the shapes it declares. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-gitmirror</artifactId>
+        </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc</artifactId>

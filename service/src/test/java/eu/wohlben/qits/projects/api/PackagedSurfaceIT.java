@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
+import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusIntegrationTest;
 import io.restassured.RestAssured;
 import java.net.URI;
@@ -47,8 +48,18 @@ import org.junit.jupiter.api.condition.OS;
  * <p>ITs are skipped by default ({@code skipITs} in the root pom) and the {@code native} profile
  * flips that, so {@code ./mvnw verify -Dnative} is what runs this. {@code -DskipITs=false} runs it
  * against the fast-jar.
+ *
+ * <p>{@code creatingAProjectSeedsTheWrapperFromTheTemplate} and {@code
+ * theRemoteLoginSocketRunsARealTerminal} both publish to the git host — {@code
+ * GitHostRepositories.ensure} plus a real push — and the packaged binary wires the shipped {@code
+ * HttpGitHostRepositories}/{@code ConfiguredGitHostAddress}, not the {@code Fake*} CDI doubles
+ * {@code domain}'s and this module's own {@code @QuarkusTest}s use (those win only inside the JVM
+ * that starts them, and this test starts a separate process). {@link GitHostFixture} is that
+ * process' stand-in for qits-artifacts: a real HTTP server in this JVM, handed to the launched
+ * process as {@code qits.artifacts.url}.
  */
 @QuarkusIntegrationTest
+@QuarkusTestResource(GitHostFixture.class)
 public class PackagedSurfaceIT {
 
   @Test

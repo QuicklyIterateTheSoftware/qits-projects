@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.control;
 
+import eu.wohlben.qits.projects.gitmirror.CommitIdentity;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,5 +54,18 @@ public class GitIdentity {
   /** Inline config overrides for a host git invocation: {@code -c user.email=… -c user.name=…}. */
   public List<String> inlineArgs() {
     return List.of("-c", "user.email=" + email, "-c", "user.name=" + name);
+  }
+
+  /**
+   * This identity in {@code gitmirror}'s own vocabulary — what {@link
+   * eu.wohlben.qits.projects.gitmirror.RepoMirror#commitTree} takes.
+   *
+   * <p>A method, not a field read: {@code name}/{@code email} are populated by config injection on
+   * the real bean instance, and a normal-scoped CDI client proxy does not delegate field access —
+   * only method calls — so a caller holding this bean as {@code @Inject GitIdentity} must go through
+   * a method to see the configured values rather than reading the fields directly.
+   */
+  public CommitIdentity asCommitIdentity() {
+    return new CommitIdentity(name, email);
   }
 }

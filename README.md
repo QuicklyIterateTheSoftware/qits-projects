@@ -16,7 +16,7 @@ Concretely:
 | | |
 |---|---|
 | `Project` | the aggregate root: name, an immutable git-safe `slug`, its repositories |
-| `Repository` | a git remote as an entity — a bare origin under `qits.repositories.data-dir`, cloned/pulled/pushed/synced host-side |
+| `Repository` | a git remote as an entity — a private mirror under `qits.projects.data-dir`, cloned/pulled/pushed/synced host-side against the git host and the row's own backup remote |
 | `repository_name` | addressable `(project, name) → repository` aliases, which is what makes a committed relative submodule url (`../<name>.git`) resolve natively |
 | `repository_submodule` | the submodule graph between repositories of one project, deduped per project |
 | the wrapper | every project owns exactly one `PROJECT`-archetype repository named `<slug>-<slug>`, seeded from `project-template/` |

@@ -9,15 +9,14 @@ import eu.wohlben.qits.projects.dto.CommitFileChangeDto;
 import eu.wohlben.qits.projects.dto.CommitFileDiffDto;
 import eu.wohlben.qits.projects.dto.CommitLogDto;
 import eu.wohlben.qits.projects.entity.Repository;
+import eu.wohlben.qits.projects.gitmirror.GitMirrorException;
+import eu.wohlben.qits.projects.gitmirror.RepoMirror;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Reads the commit log for a branch, scoped to the commits unique to it. The "parent" a branch is
@@ -49,8 +48,9 @@ public class CommitService {
 
   @Inject GitExecutor git;
 
-  @ConfigProperty(name = "qits.repositories.data-dir", defaultValue = "data/repositories")
-  String dataDir;
+  @Inject GitMirrorRegistry gitMirrors;
+
+  @Inject GitHostRepositories gitHostRepositories;
 
   /**
    * Lists the commits on {@code branch} that are not on its parent ({@code git log
@@ -69,10 +69,7 @@ public class CommitService {
             .findByIdOptional(repoId)
             .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
 
-    Path originPath = Path.of(dataDir, repoId, "origin");
-    if (!Files.exists(originPath)) {
-      throw new NotFoundException("Repository origin not found on disk");
-    }
+    RepoMirror mirror = requireMirror(repoId);
 
     String parent = resolveParent(repoId, repo, branch);
     boolean usableParent =
@@ -82,7 +79,7 @@ public class CommitService {
     try {
       // `--` terminates option parsing so the refspec is never read as a flag.
       String output =
-          git.exec(originPath.toFile(), "git", "log", "--name-only", LOG_FORMAT, range, "--");
+          git.exec(mirror.gitDir().toFile(), "git", "log", "--name-only", LOG_FORMAT, range, "--");
       return new CommitLogDto(branch, usableParent ? parent : null, parseCommits(output));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git log failed: " + e.getMessage());
@@ -109,11 +106,11 @@ public class CommitService {
       throw new NotFoundException("Workspace not found: " + workspaceId);
     }
 
-    Path originPath = requireOrigin(repoId);
+    RepoMirror mirror = requireMirror(repoId);
 
     // The branch is the workspace's stored column (there is no host checkout to read it from — the
-    // checkout lives in the container). The log range below runs against the bare origin, which
-    // holds every workspace branch as a ref.
+    // checkout lives in the container). The log range below runs against the mirror, which holds
+    // every workspace branch as a ref.
     String branch = workspace.branch();
     String parent = workspace.parent();
     boolean usable =
@@ -134,7 +131,7 @@ public class CommitService {
     String range = branch + ".." + parent;
     try {
       String output =
-          git.exec(originPath.toFile(), "git", "log", "--name-only", LOG_FORMAT, range, "--");
+          git.exec(mirror.gitDir().toFile(), "git", "log", "--name-only", LOG_FORMAT, range, "--");
       return new CommitLogDto(branch, parent, parseCommits(output));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git log failed: " + e.getMessage());
@@ -150,7 +147,7 @@ public class CommitService {
   public CommitChangesDto listChanges(String repoId, String commit, String parent) {
     requireRef(commit, "commit");
     String base = normalizeParent(parent);
-    Path originPath = requireOrigin(repoId);
+    RepoMirror mirror = requireMirror(repoId);
 
     List<String> cmd =
         new ArrayList<>(List.of("git", "diff-tree", "-r", "--no-commit-id", "--name-status", "-M"));
@@ -163,7 +160,7 @@ public class CommitService {
     cmd.add("--"); // terminate options so refs/paths can't be read as flags
 
     try {
-      String output = git.exec(originPath.toFile(), cmd.toArray(String[]::new));
+      String output = git.exec(mirror.gitDir().toFile(), cmd.toArray(String[]::new));
       return new CommitChangesDto(commit, base, parseChanges(output));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git diff-tree failed: " + e.getMessage());
@@ -181,7 +178,7 @@ public class CommitService {
       throw new BadRequestException("Invalid path: " + path);
     }
     String base = normalizeParent(parent);
-    Path originPath = requireOrigin(repoId);
+    RepoMirror mirror = requireMirror(repoId);
 
     List<String> cmd = new ArrayList<>(List.of("git", "diff-tree", "-p", "-M", "--no-commit-id"));
     if (base != null) {
@@ -194,7 +191,7 @@ public class CommitService {
     cmd.add(path);
 
     try {
-      String diff = git.exec(originPath.toFile(), cmd.toArray(String[]::new));
+      String diff = git.exec(mirror.gitDir().toFile(), cmd.toArray(String[]::new));
       return new CommitFileDiffDto(path, changeTypeFromPatch(diff), diff);
     } catch (Exception e) {
       throw new InternalServerErrorException("Git diff-tree failed: " + e.getMessage());
@@ -221,15 +218,37 @@ public class CommitService {
     return parent;
   }
 
-  private Path requireOrigin(String repoId) {
+  /**
+   * The mirror for {@code repoId}, cloned from the git host on first use and refreshed when the
+   * freshness window has lapsed — same rule as {@code RepositoryService#requireMirror}
+   * (projects-volume-decoupling-plan.md §3.5). The row check is unchanged (a 404 for an unknown id).
+   *
+   * <p>A refresh failure is ambiguous between "no such repository on the host" and "the host is
+   * unreachable": on failure only, {@link GitHostRepositories#find} disambiguates — absent is the
+   * same 404 an unknown row already gives, present (or the host still refusing to say) is a 500.
+   */
+  private RepoMirror requireMirror(String repoId) {
     repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
-    Path originPath = Path.of(dataDir, repoId, "origin");
-    if (!Files.exists(originPath)) {
-      throw new NotFoundException("Repository origin not found on disk");
+    RepoMirror mirror = gitMirrors.of(repoId);
+    try {
+      mirror.refresh();
+    } catch (GitMirrorException e) {
+      boolean existsOnHost;
+      try {
+        existsOnHost = gitHostRepositories.find(repoId).isPresent();
+      } catch (GitHostException hostError) {
+        throw new InternalServerErrorException(
+            "Git host unreachable for " + repoId + ": " + hostError.getMessage());
+      }
+      if (!existsOnHost) {
+        throw new NotFoundException("Repository not found on the git host: " + repoId);
+      }
+      throw new InternalServerErrorException(
+          "Could not refresh the mirror for " + repoId + ": " + e.getMessage());
     }
-    return originPath;
+    return mirror;
   }
 
   private List<CommitFileChangeDto> parseChanges(String output) {

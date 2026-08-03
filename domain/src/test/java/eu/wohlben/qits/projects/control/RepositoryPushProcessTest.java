@@ -16,7 +16,6 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -39,9 +38,7 @@ public class RepositoryPushProcessTest {
   @Inject RepositoryService repositoryService;
   @Inject TechnicalProcessRegistry registry;
   @Inject GitExecutor git;
-
-  @ConfigProperty(name = "qits.repositories.data-dir")
-  String dataDir;
+  @Inject GitHostAddress gitHost;
 
   /** Records a terminal process's full replay (attach on a terminal process replays + done). */
   private static final class Replay implements TechnicalProcess.Listener {
@@ -223,8 +220,13 @@ public class RepositoryPushProcessTest {
     git.exec(work.toFile(), "git", "push", "origin", "HEAD:master");
   }
 
-  private Path originOf(String repoId) {
-    return Path.of(dataDir, repoId, "origin");
+  /**
+   * The git host's bare for a repository. A push refreshes the mirror from the host before it does
+   * anything (the "about to write" rule), so a fixture meaning "the platform already holds this
+   * commit" has to write here — writing into the mirror would be undone before the push read it.
+   */
+  private Path hostOf(String repoId) {
+    return Path.of(gitHost.fetchUrl(repoId));
   }
 
   @Test
@@ -241,10 +243,11 @@ public class RepositoryPushProcessTest {
     assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "nothing to push"), "the fast-forward verdict lands");
+    // The catch-up is a push to the git host, not a local update-ref, so the host is where it shows.
     assertEquals(
         git.exec(remote.toFile(), "git", "rev-parse", "master").trim(),
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
-        "the mirror caught up to the remote");
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        "the git host caught up to the remote");
   }
 
   @Test
@@ -252,10 +255,12 @@ public class RepositoryPushProcessTest {
     var project = projectService.create("Push Diverged", null);
     Path remote = writableRemote("qits-push-diverged-remote");
     var repo = repositoryService.cloneRepository(remote.toString(), null, project);
-    // Both sides gain a commit, touching different files — diverged but cleanly mergeable.
+    // Both sides gain a commit, touching different files — diverged but cleanly mergeable. The
+    // platform's commit goes into the HOST's bare: the push refreshes the mirror from the host
+    // first, so a commit written into the mirror would be wiped before the push saw it.
     pushCommit(remote, "hello.txt", "remote change\n", "remote change");
-    pushCommit(originOf(repo.id), "README.md", "local change\n", "local change");
-    String localSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+    pushCommit(hostOf(repo.id), "README.md", "local change\n", "local change");
+    String localSha = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
     String remoteSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
@@ -263,14 +268,13 @@ public class RepositoryPushProcessTest {
     assertEquals("ok", settledStatus(replay, "push:testing-repo"));
     assertEquals("ok", doneFrame(replay).status());
     assertTrue(hasLineContaining(replay, "Merged remote into 'master'"), "the merge verdict lands");
-    // The mirror's branch became a merge commit (local tip first parent, remote tip second) and
-    // the retried push landed it on the remote.
-    String parents =
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master^1", "master^2").trim();
+    // The merge commit reached the FORGE and nowhere else: its only job on this arm is satisfying
+    // the forge's fast-forward check, so it is pushed there by sha and never sent to the host. The
+    // remote's tip is a fresh commit whose parents are exactly the two diverged tips.
+    String parents = git.exec(remote.toFile(), "git", "rev-parse", "master^1", "master^2").trim();
     assertEquals(localSha + "\n" + remoteSha, parents);
-    assertEquals(
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
-        git.exec(remote.toFile(), "git", "rev-parse", "master").trim());
+    String mergeSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
+    assertTrue(!mergeSha.equals(localSha) && !mergeSha.equals(remoteSha), "a new merge commit");
   }
 
   @Test
@@ -278,10 +282,11 @@ public class RepositoryPushProcessTest {
     var project = projectService.create("Push Conflict", null);
     Path remote = writableRemote("qits-push-conflict-remote");
     var repo = repositoryService.cloneRepository(remote.toString(), null, project);
-    // Both sides rewrite hello.txt differently — a REAL conflict.
+    // Both sides rewrite hello.txt differently — a REAL conflict. The platform's side goes into the
+    // host's bare, for the same reason as the diverged case above.
     pushCommit(remote, "hello.txt", "remote change\n", "remote change");
-    pushCommit(originOf(repo.id), "hello.txt", "local change\n", "local change");
-    String localSha = git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
+    pushCommit(hostOf(repo.id), "hello.txt", "local change\n", "local change");
+    String localSha = git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim();
     String remoteSha = git.exec(remote.toFile(), "git", "rev-parse", "master").trim();
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPushRepository(repo.id)));
@@ -293,12 +298,12 @@ public class RepositoryPushProcessTest {
         "the parked merge branch is named in the stream");
     assertEquals(
         localSha,
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
-        "the local branch stays untouched");
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
+        "the host's branch stays untouched");
+    // The park is a push like every other write, so the parked branch lands on the host.
     assertEquals(
         remoteSha,
-        git.exec(originOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master")
-            .trim(),
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "merge/master-origin-master").trim(),
         "the merge branch holds the remote tip");
   }
 

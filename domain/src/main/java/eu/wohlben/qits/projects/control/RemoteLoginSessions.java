@@ -2,6 +2,7 @@ package eu.wohlben.qits.projects.control;
 
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
+import eu.wohlben.qits.projects.gitmirror.GitMirrorException;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
@@ -82,6 +83,8 @@ public class RemoteLoginSessions {
   @Inject RepositoryService repositories;
 
   @Inject GitRemoteAuth remoteAuth;
+
+  @Inject GitMirrorRegistry gitMirrors;
 
   /**
    * SEAM (migration-plan.md §6): the technical-process framework is a port here (see {@link
@@ -207,6 +210,15 @@ public class RemoteLoginSessions {
       throw new BadRequestException(
           "Repository has no backup remote configured; configure one before signing in.");
     }
+    // The interactive push below pushes the mirror's own branch to the forge, so the mirror has to
+    // hold what the git host holds first — without this an unfetched mirror would push an empty or
+    // stale branch (projects-volume-decoupling-plan.md §3.6).
+    try {
+      gitMirrors.of(repoId).refreshNow();
+    } catch (GitMirrorException e) {
+      throw new InternalServerErrorException(
+          "Could not refresh the mirror before signing in: " + e.getMessage());
+    }
     ForeignPty pty;
     try {
       pty = ForeignPty.open(INITIAL_COLUMNS, INITIAL_ROWS);
@@ -226,7 +238,10 @@ public class RemoteLoginSessions {
       argv[0] = "setsid";
       argv[1] = "--ctty";
       System.arraycopy(git, 0, argv, 2, git.length);
-      ProcessBuilder builder = new ProcessBuilder(argv).directory(spec.originPath().toFile());
+      // pushSpec no longer carries a path (projects-volume-decoupling-plan.md §3.5) — the mirror's
+      // git dir comes from the registry directly, by repo id.
+      ProcessBuilder builder =
+          new ProcessBuilder(argv).directory(gitMirrors.of(repoId).gitDir().toFile());
       // Strip inherited prompt-diverting vars: an ambient GIT_ASKPASS (VS Code's integrated
       // terminal — the documented quarkus:dev launch — sets it), SSH_ASKPASS, or
       // GIT_TERMINAL_PROMPT=0

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.projects.error.BadRequestException;
+import eu.wohlben.qits.projects.error.InternalServerErrorException;
 import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
@@ -14,11 +15,13 @@ import eu.wohlben.qits.projects.testsupport.RecordingWorkspaceLifecycle;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
-import java.util.UUID;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Comparator;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 @QuarkusTest
@@ -26,16 +29,19 @@ public class RepositoryServiceTest {
 
   @Inject RepositoryService repositoryService;
 
+  @Inject CommitService commitService;
+
   @Inject ProjectService projectService;
 
   @Inject RecordingWorkspaceLifecycle workspaceLifecycle;
 
-  @Inject MetadataService metadataService;
+  @Inject GitMirrorRegistry gitMirrors;
 
-  @Inject GitExecutor git;
+  @Inject GitHostAddress gitHost;
 
-  @ConfigProperty(name = "qits.repositories.data-dir")
-  String dataDir;
+  @Inject GitHostRepositories gitHostRepositories;
+
+  @Inject FakeGitHostRepositories fakeGitHostRepositories;
 
   @Test
   public void testClone() throws Exception {
@@ -60,13 +66,14 @@ public class RepositoryServiceTest {
     var project = projectService.create("Delete Cleanup Project", null);
     var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
 
-    Path repoDir = Path.of(dataDir, repo.id);
-    assertTrue(Files.exists(repoDir), "clone dir should exist before delete");
+    Path mirrorDir = gitMirrors.of(repo.id).gitDir();
+    assertTrue(Files.exists(mirrorDir), "mirror should exist before delete");
 
     // Delete via the aggregate root (project) — the path a seed reset takes.
     projectService.delete(project.id);
 
-    assertFalse(Files.exists(repoDir), "clone dir should be removed after delete");
+    assertFalse(Files.exists(mirrorDir), "the local mirror should be removed after delete (⚖2 — the"
+        + " git host's own copy is untouched, there is just no delete verb for it to reach)");
     assertTrue(
         workspaceLifecycle.releasedRepository(repo.id),
         "the workspaces context is asked to release the repository before its row goes");
@@ -79,6 +86,21 @@ public class RepositoryServiceTest {
   // Those tables are daemon-commands' (migration-plan.md §3.3/§7) and are not in this context's
   // database, so there is no cascade here to test. It is UNOWNED as of this extraction and needs a
   // home in qits-workspace-daemon.
+
+  /**
+   * projects-volume-decoupling-plan.md §2.4, §3.3 step 6, ⚖3: importing an upstream's whole history
+   * publishes it in one push carrying {@code -o qits.no-ci}, so a pipeline config already committed
+   * upstream does not fire one CI run per branch against history that predates the platform.
+   */
+  @Test
+  public void cloneRepositoryPublishesTheImportWithNoCiSuppressed() throws Exception {
+    var project = projectService.create("No CI Import", null);
+    var repo = repositoryService.cloneRepository(GitFixtures.path("testing-repo.git"), null, project);
+
+    assertTrue(
+        fakeGitHostRepositories.lastPushOptions(repo.id).contains("qits.no-ci"),
+        "the import path's publish push must carry -o qits.no-ci");
+  }
 
   @Test
   public void testCloneRejectsDangerousUrls() {
@@ -93,22 +115,19 @@ public class RepositoryServiceTest {
   }
 
   /**
-   * Stands in for the platform's own git host: a bare origin on the shared volume that this service
-   * did not create, named by hand rather than by a UUID — exactly what {@code git init --bare -b
-   * main /repos/qits-<name>/origin} leaves behind.
+   * Stands in for the platform's own git host already holding a repository this service did not
+   * create, keyed by an id chosen by hand rather than a fresh UUID — exactly what the bootstrap's
+   * {@code git init --bare -b main} leaves for the platform's own repositories.
    */
-  private Path seedBareOrigin(String repoId) throws Exception {
-    Path originPath = Path.of(dataDir, repoId, "origin");
-    Files.createDirectories(originPath.getParent());
-    git.exec(null, "git", "init", "-q", "--bare", "-b", "main", originPath.toString());
-    return originPath;
+  private void seedGitHostOrigin(String repoId) {
+    gitHostRepositories.ensure(repoId, "main");
   }
 
   @Test
   public void adoptingAnExistingOriginKeysTheRowOnTheDirectoryName() throws Exception {
     // The whole point: CiRun.repoId, cd's applications and the git host route all carry the
     // directory name, so a row that attributes any of them must carry it as its id.
-    seedBareOrigin("qits-adopt-me");
+    seedGitHostOrigin("qits-adopt-me");
     var project = projectService.create("Adoption Project", null);
 
     var repo =
@@ -124,18 +143,13 @@ public class RepositoryServiceTest {
         repo.url,
         "the forge repository backing it is declared");
     assertEquals(RepositoryArchetype.SERVICE, repo.archetype);
-    assertEquals("main", repo.mainBranch, "read from the origin's HEAD, not assumed");
+    assertEquals("main", repo.mainBranch, "read from what the git host reports, not assumed");
     assertEquals(project.id, repo.project.id);
-    // The sidecar is what repository discovery restores url/archetype from on the next boot;
-    // without it the adoption would silently blank both.
-    var metadata = metadataService.readRepositoryMetadata("qits-adopt-me").orElseThrow();
-    assertEquals(repo.url, metadata.url);
-    assertEquals(RepositoryArchetype.SERVICE, metadata.archetype);
   }
 
   @Test
   public void adoptingIsIdempotentAndNeverModifiesTheRowItFinds() throws Exception {
-    seedBareOrigin("qits-adopt-twice");
+    seedGitHostOrigin("qits-adopt-twice");
     var project = projectService.create("Adoption Idempotence Project", null);
     var first =
         repositoryService.adoptExistingOrigin(
@@ -161,7 +175,7 @@ public class RepositoryServiceTest {
   public void adoptionRegistersNothingItCannotServe() throws Exception {
     var project = projectService.create("Adoption Guard Project", null);
 
-    // No origin on the volume: a row here would name a repository the git host answers 404 for.
+    // Not on the git host: a row here would name a repository it answers 404 for.
     assertFalse(repositoryService.hasExistingOrigin("qits-never-seeded"));
     assertThrows(
         NotFoundException.class,
@@ -169,7 +183,7 @@ public class RepositoryServiceTest {
             repositoryService.adoptExistingOrigin(
                 project, "qits-never-seeded", "https://example.com/x.git", null));
 
-    // The id becomes a path segment under the data dir and a git-host route segment.
+    // The id becomes a git-host route segment.
     assertThrows(
         BadRequestException.class,
         () ->
@@ -182,7 +196,7 @@ public class RepositoryServiceTest {
                 project, "-flag", "https://example.com/x.git", null));
 
     // The wrapper archetype has exactly one seam, and this is not it.
-    seedBareOrigin("qits-adopt-wrapper");
+    seedGitHostOrigin("qits-adopt-wrapper");
     assertThrows(
         BadRequestException.class,
         () ->
@@ -191,5 +205,113 @@ public class RepositoryServiceTest {
                 "qits-adopt-wrapper",
                 "https://example.com/x.git",
                 RepositoryArchetype.PROJECT));
+  }
+
+  /**
+   * projects-volume-decoupling-plan.md §3.5, BR: every read that used to assume a warm mirror now
+   * goes through {@code requireMirror}, which clones a cold one from the git host before reading it
+   * — deleting the on-disk mirror (as if it had been evicted, §4 item 8) must not surface as an
+   * error, only as one extra clone.
+   */
+  @Test
+  public void aColdMirrorIsClonedOnFirstRead() throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Cold Mirror Project", null);
+    var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
+
+    Path mirrorDir = gitMirrors.of(repo.id).gitDir();
+    assertTrue(Files.isDirectory(mirrorDir), "the mirror is cloned as part of creation");
+    deleteRecursively(mirrorDir);
+    assertFalse(Files.exists(mirrorDir), "the mirror is now cold, as if evicted from disk");
+
+    var log = commitService.listCommits(repo.id, repo.mainBranch);
+
+    assertEquals(3, log.commits().size(), "the re-cloned mirror still holds the fixture's history");
+    assertTrue(Files.isDirectory(mirrorDir), "the read re-cloned the mirror from the git host");
+  }
+
+  /**
+   * The row check {@code requireMirror} opens with is unchanged: an id with no repository row never
+   * reaches the git host at all.
+   */
+  @Test
+  public void requireMirrorStill404sForAnUnknownRepository() {
+    assertThrows(
+        NotFoundException.class, () -> commitService.listCommits("does-not-exist", "main"));
+    assertThrows(NotFoundException.class, () -> repositoryService.syncStatus("does-not-exist"));
+  }
+
+  /**
+   * projects-volume-decoupling-plan.md §3.5: a refresh failure is ambiguous between "no such
+   * repository on the host" and "the host is unreachable", so {@code requireMirror} asks {@link
+   * GitHostRepositories#find} to tell them apart — present (the host answers, but a clone still
+   * fails) is a 500, distinct from the absent case covered by {@code adoptionRegistersNothingItCannotServe}.
+   *
+   * <p>Simulated by revoking read access to the host bare's {@code objects/} directory: {@code git
+   * symbolic-ref --short HEAD} (what {@code find} asks) reads only the sibling {@code HEAD} file and
+   * still succeeds, while {@code git clone --mirror} needs the objects and fails.
+   */
+  @Test
+  public void requireMirrorReports500WhenTheHostIsUnreachable() throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Unreachable Host Project", null);
+    var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
+    deleteRecursively(gitMirrors.of(repo.id).gitDir()); // cold, same as the test above
+
+    Path objectsDir = Path.of(gitHost.fetchUrl(repo.id)).resolve("objects");
+    Set<PosixFilePermission> original = Files.getPosixFilePermissions(objectsDir);
+    Files.setPosixFilePermissions(objectsDir, PosixFilePermissions.fromString("---------"));
+    try {
+      assertThrows(
+          InternalServerErrorException.class,
+          () -> commitService.listCommits(repo.id, repo.mainBranch));
+      assertTrue(
+          gitHostRepositories.find(repo.id).isPresent(),
+          "the host still answers for this id — that is what makes the failure a 500, not a 404");
+    } finally {
+      Files.setPosixFilePermissions(objectsDir, original);
+    }
+  }
+
+  /**
+   * projects-volume-decoupling-plan.md §3.7: a branch delete is a push, so it passes through the git
+   * host's ref-protection hook — and the hook's refusal is a statement about the request, not a
+   * fault here. It has to surface as a 4xx carrying the hook's own words, never as a 500.
+   *
+   * <p>Stood up with a plain {@code pre-receive} that refuses every update, which is as far as the
+   * fake host goes: native git renders a shell hook's decline as {@code ! [remote rejected] <ref>
+   * (pre-receive hook declined)} — its own fixed wording, not the script's stderr. A hook that puts
+   * its own sentence in those parentheses is qits-artifacts' JGit {@code ProtectedRefHook}, and
+   * proving that text is its test suite's job; what this pins is the mapping.
+   */
+  @Test
+  public void aBranchDeleteTheHostRefusesSurfacesAsA4xx() throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Protected Delete Project", null);
+    var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
+
+    Path hook = Path.of(gitHost.fetchUrl(repo.id)).resolve("hooks/pre-receive");
+    Files.writeString(hook, "#!/bin/sh\nexit 1\n");
+    Files.setPosixFilePermissions(hook, PosixFilePermissions.fromString("rwxr-xr-x"));
+
+    BadRequestException refused =
+        assertThrows(
+            BadRequestException.class,
+            () -> repositoryService.deleteBranch(repo.id, repo.mainBranch));
+    assertTrue(
+        refused.getMessage().contains("pre-receive hook declined"),
+        "the hook's own words reach the caller: " + refused.getMessage());
+    assertTrue(refused.getMessage().contains(repo.mainBranch), refused.getMessage());
+  }
+
+  private static void deleteRecursively(Path root) throws IOException {
+    if (!Files.exists(root)) {
+      return;
+    }
+    try (var paths = Files.walk(root)) {
+      for (Path p : paths.sorted(Comparator.reverseOrder()).toList()) {
+        Files.deleteIfExists(p);
+      }
+    }
   }
 }

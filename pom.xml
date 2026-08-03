@@ -30,12 +30,15 @@
          the mandatory -Dqits.variant=oauth|forwardauth|local auth profiles. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-projects</artifactId>
-    <version>2026.802.191319</version>
+    <version>2026.803.161428</version>
     <packaging>pom</packaging>
     <name>qits-projects</name>
 
     <modules>
-        <!-- Listed first: `service` depends on both. `epics` deliberately depends on neither. -->
+        <!-- gitmirror has no reactor dependency and is what `domain` builds its git substrate from
+             (see its own pom for why it is a separate module); `service` depends on both `domain`
+             and `epics`; `epics` deliberately depends on neither. -->
+        <module>gitmirror</module>
         <module>domain</module>
         <module>epics</module>
         <module>service</module>
@@ -88,6 +91,14 @@
                 <version>${mapstruct.version}</version>
             </dependency>
             <!-- The reactor's own modules, so children depend on them version-less. -->
+            <dependency>
+                <!-- The git substrate: mirrors, wire reads and pushes. Framework-free like the
+                     domain/epics entries beside it, so `domain` gets a library and not a second CDI
+                     graph. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-projects-gitmirror</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-projects-domain</artifactId>

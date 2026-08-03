@@ -57,7 +57,10 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   active-record with public fields; mappers are MapStruct `@Mapper(componentModel = "jakarta")`.
 - `service/` — `api` (JAX-RS + the remote-login websocket), `mcp` (the `repository` MCP server),
   `startup`, `notify` (the outbound fire-and-forget notifiers — the sole implementations of the
-  creation ports; the same package name and the same idiom as qits-ci's `ci.notify`).
+  creation ports; the same package name and the same idiom as qits-ci's `ci.notify`), `wiring` (the
+  git host's lifecycle client — `HttpGitHostRepositories`, a `java.net.http.HttpClient` as an
+  instance field like `notify`'s, but named apart from it: `notify` is for fire-and-forget and a
+  repository create is waited on and can fail the caller's request).
 - `epics/` — untouched by the extraction beyond its `<parent>`: its own package, its own error
   types, its own datasource and its own Flyway lineage. It depends on neither `domain` nor any
   auth module, and it should stay that way — it is the module most likely to be lifted out next.
@@ -226,3 +229,13 @@ injection therefore needs `@PersistenceUnit("projects")`.
 Grep for `SEAM (migration-plan.md` to find every place this repo cut something rather than carrying
 it. Each one names what was removed and where it belongs. Do not "restore" any of them here — they
 are another context's code, and the monorepo still has every line.
+
+**The metadata sidecar is gone, not migrated.** `MetadataService`, `RepositoryDiscoveryService` and
+`RepositoryMetadata` used to write `<data-dir>/<repoId>/metadata/repository.json` beside every bare
+origin and restore a row's `url`/`archetype` from it at every boot. `url` and `archetype` are
+columns on `Repository`, in this service's own database, in the same transaction that writes them —
+the sidecar could only ever undo a row change, which is why `attachBackupRemote` and
+`ProjectService.adoptWrapperRepository`'s promotion arm used to have to rewrite it. Decoupling from
+the shared `qits-repositories` volume (projects-volume-decoupling-plan.md §1.4, BQ) removed the one
+scenario the sidecar served ("database wiped, volume kept") along with the volume itself. Do not
+bring any of the three back.

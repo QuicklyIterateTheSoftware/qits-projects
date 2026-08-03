@@ -366,9 +366,6 @@ public class ProjectService {
    *   <li><b>an existing url-less wrapper</b> — attach {@code url} as its backup remote. Reached
    *       whenever the project was created greenfield and the manifest later names its upstream.
    * </ol>
-   *
-   * <p>Both mutating states rewrite the metadata sidecar, without which repository discovery would
-   * restore the pre-change values from disk on the next boot.
    */
   @Transactional
   public Repository adoptWrapperRepository(String projectId, String url) {
@@ -404,7 +401,6 @@ public class ProjectService {
       Repository repo = sameUrl.get();
       repo.archetype = RepositoryArchetype.PROJECT;
       repositoryService.registerWrapperAlias(repo, name);
-      repositoryService.rewriteMetadata(repo);
       return repo;
     }
 

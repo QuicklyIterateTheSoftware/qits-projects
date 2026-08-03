@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-projects</artifactId>
+        <version>2026.803.161428</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The git SUBSTRATE: a local mirror per repository, and the pushes that are now the only way
+         a ref moves. Nothing about projects, repositories or rows is here — those stay in `domain`,
+         which calls this through a handful of records and two declared ports.
+
+         WHY IT IS ITS OWN MODULE. This service used to reach into the bare origins qits-artifacts
+         serves, on the shared `qits-repositories` volume, and write refs there directly. That is
+         what made skeleton commits, branch creates and deletes, and pulled-in commits fire no
+         post-receive and produce no CI run. Removing it means every one of those becomes a push —
+         and a push needs somewhere to push FROM, which is the mirror.
+
+         FRAMEWORK-FREE, deliberately, mirroring qits-workspaces' `gitmirror`: no Quarkus, no CDI, no
+         MicroProfile config, no Jackson. It takes its collaborators as constructor arguments, so its
+         tests run offline against throwaway local bares with no container, no database and no
+         augmentation — holding this repo's "a clone of this repo alone builds and tests green" rule
+         one module deeper. `domain` owns the one CDI producer that builds it from config.
+
+         NO WORKTREE. Unlike qits-workspaces, which merges and version-bumps in a checkout, this
+         service only ever manufactures a commit with plumbing that needs no working tree at all —
+         `hash-object`/`update-index`/`write-tree`/`commit-tree` for the project template skeleton,
+         and `commit-tree -p -p` on a `merge-tree`-produced tree for a diverged pull. Both move here
+         unchanged, which is the whole reason this module is smaller than qits-workspaces' `gitmirror`. -->
+    <artifactId>qits-projects-gitmirror</artifactId>
+    <name>qits-projects :: gitmirror</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The parent sets java.util.logging.manager=org.jboss.logmanager.LogManager for
+                     every module; this one has no jboss-logmanager on its test classpath (no
+                     Quarkus here at all), so that override is cleared rather than inherited. -->
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables combine.self="override"/>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

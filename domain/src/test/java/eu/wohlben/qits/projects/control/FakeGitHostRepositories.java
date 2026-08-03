@@ -76,6 +76,64 @@ public class FakeGitHostRepositories implements GitHostRepositories {
     }
   }
 
+  /**
+   * Installs a {@code pre-receive} hook on {@code repoId}'s bare that refuses an UPDATE or DELETE of
+   * the repository's own default branch unless the push carries a matching {@code -o
+   * qits.token=<value>} — the shape of qits-artifacts' real {@code ProtectedRefHook}, reduced to
+   * what this suite needs (no {@code qits.release} fast-forward door: this service never presents
+   * that option). {@code requiredToken} may be blank, standing for "no token configured on the
+   * host" — {@code -o qits.token=<anything>} then never matches, the same as the real hook treats an
+   * unset value. A create (the branch's first push) is always let through, matching the real hook
+   * too.
+   */
+  public void protectDefaultBranch(String repoId, String requiredToken) {
+    Path bare = bareOf(repoId);
+    String token = requiredToken == null ? "" : requiredToken;
+    String script =
+        "#!/bin/sh\n"
+            + "head=$(git symbolic-ref --short HEAD)\n"
+            + "protected=\"refs/heads/$head\"\n"
+            + "required='" + token.replace("'", "'\\''") + "'\n"
+            + "token_ok=0\n"
+            + "i=0\n"
+            + "while [ \"$i\" -lt \"${GIT_PUSH_OPTION_COUNT:-0}\" ]; do\n"
+            + "  eval \"opt=\\$GIT_PUSH_OPTION_$i\"\n"
+            + "  case \"$opt\" in\n"
+            + "    qits.token=*)\n"
+            + "      val=\"${opt#qits.token=}\"\n"
+            + "      if [ -n \"$required\" ] && [ \"$val\" = \"$required\" ]; then\n"
+            + "        token_ok=1\n"
+            + "      fi\n"
+            + "      ;;\n"
+            + "  esac\n"
+            + "  i=$((i + 1))\n"
+            + "done\n"
+            + "refused=0\n"
+            + "while read -r old new ref; do\n"
+            + "  if [ \"$ref\" = \"$protected\" ] \\\n"
+            + "      && [ \"$old\" != \"0000000000000000000000000000000000000000\" ] \\\n"
+            + "      && [ \"$token_ok\" -ne 1 ]; then\n"
+            + "    refused=1\n"
+            + "  fi\n"
+            + "done\n"
+            + "if [ \"$refused\" -eq 1 ]; then\n"
+            + "  echo \"ProtectedRefHook: refused UPDATE of protected ref $protected\" >&2\n"
+            + "  exit 1\n"
+            + "fi\n"
+            + "exit 0\n";
+    try {
+      Path hooksDir = bare.resolve("hooks");
+      Files.createDirectories(hooksDir);
+      Path hook = hooksDir.resolve("pre-receive");
+      Files.writeString(hook, script);
+      if (!hook.toFile().setExecutable(true)) {
+        throw new GitHostException("Could not make the pre-receive hook executable: " + hook);
+      }
+    } catch (IOException e) {
+      throw new GitHostException("Could not install the pre-receive hook in " + bare, e);
+    }
+  }
+
   private Path bareOf(String repoId) {
     return Path.of(gitHost.fetchUrl(repoId));
   }

@@ -35,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 @ApplicationScoped
@@ -44,6 +45,20 @@ public class RepositoryService {
 
   /** Backstop for the recursive submodule-closure import (the cycle guard's belt-and-braces). */
   private static final int MAX_SUBMODULE_DEPTH = 10;
+
+  /** {@code -o qits.token=<value>} — the git host's {@code ProtectedRefHook} bypass option. */
+  private static final String TOKEN_OPTION_PREFIX = "qits.token=";
+
+  /**
+   * The git host's push-token, under the exact config key {@code ProtectedRefHook} itself reads —
+   * one deployment value, presented back by whoever pushes. No default, matching the hook: unset
+   * means this service presents no token, and a host push that needs one to reach a protected
+   * default branch is refused exactly as it was before this existed. A configured-empty value reads
+   * as unset too (SmallRye's own rule for {@code Optional<String>}), which is why {@link
+   * #withHostToken} still guards against a blank value explicitly rather than trusting that alone.
+   */
+  @ConfigProperty(name = "qits.repositories.git.push-token")
+  Optional<String> pushToken;
 
   @Inject RepositoryRepository repositoryRepository;
 
@@ -257,16 +272,14 @@ public class RepositoryService {
       // would push deletions the host should never take from an import.
       PushOutcome outcome =
           mirror.push(
-              eu.wohlben.qits.projects.gitmirror.PushSpec.of(
-                      eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.update(
-                          "refs/heads/*", "refs/heads/*"),
-                      eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.update(
-                          "refs/tags/*", "refs/tags/*"))
-                  .withOption("qits.no-ci"));
-      if (!outcome.accepted()) {
-        throw new InternalServerErrorException(
-            "Failed to publish the imported history: " + outcome.output());
-      }
+              withHostToken(
+                  eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                          eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.update(
+                              "refs/heads/*", "refs/heads/*"),
+                          eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.update(
+                              "refs/tags/*", "refs/tags/*"))
+                      .withOption("qits.no-ci")));
+      requireAccepted(outcome, "Failed to publish the imported history");
     }
 
     // Every repository starts with a default workspace checked out on its main branch, so the main
@@ -294,11 +307,10 @@ public class RepositoryService {
   private void publishSingleRef(RepoMirror mirror, String source, String branch, String what) {
     PushOutcome outcome =
         mirror.push(
-            eu.wohlben.qits.projects.gitmirror.PushSpec.of(
-                eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(source, branch)));
-    if (!outcome.accepted()) {
-      throw new InternalServerErrorException("Failed to publish " + what + ": " + outcome.output());
-    }
+            withHostToken(
+                eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                    eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(source, branch))));
+    requireAccepted(outcome, "Failed to publish " + what);
     mirror.refreshNow();
   }
 
@@ -945,10 +957,14 @@ public class RepositoryService {
                 process.expectServices(List.of());
                 process.finishProvision(true);
               } catch (RuntimeException e) {
-                // Root failure (diverged branch, unreachable remote, auth wall): settle the open
-                // root segment failed (appending the message) and emit `done failed`. Idempotent.
+                // Root failure (diverged branch, unreachable remote, auth wall, a host push the git
+                // host refused): settle the open root segment failed (appending the message) and
+                // emit `done failed`. Idempotent. WARN, not debug — this walk runs off the request
+                // thread with no other implementation wired to narrate it (TechnicalProcessRegistry
+                // is genuinely optional), so this line is the only place the failure is guaranteed
+                // to be visible at all.
                 failWithAuthHint(process, e.getMessage(), repoId);
-                LOG.debugf(e, "Streamed pull failed for repository %s", repoId);
+                LOG.warnf(e, "Streamed pull failed for repository %s", repoId);
               }
             });
         yield process.id();
@@ -1094,9 +1110,10 @@ public class RepositoryService {
         // published at creation), but publishing the forge's tip is the only sensible answer.
         requireAccepted(
             mirror.push(
-                eu.wohlben.qits.projects.gitmirror.PushSpec.of(
-                    eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
-                        remoteSha, ctx.branch()))),
+                withHostToken(
+                    eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                        eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                            remoteSha, ctx.branch())))),
             "Git pull failed");
         streamLine(process, segmentName, "Fast-forwarded to " + shortSha(remoteSha));
         settleOk(process, segmentName);
@@ -1118,9 +1135,10 @@ public class RepositoryService {
         // update-ref, so receive-pack (and its post-receive) sees the commits arrive.
         requireAccepted(
             mirror.push(
-                eu.wohlben.qits.projects.gitmirror.PushSpec.of(
-                    eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
-                        remoteSha, ctx.branch()))),
+                withHostToken(
+                    eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                        eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                            remoteSha, ctx.branch())))),
             "Git pull failed");
         streamLine(process, segmentName, "Fast-forwarded to " + shortSha(remoteSha));
         settleOk(process, segmentName);
@@ -1134,9 +1152,10 @@ public class RepositoryService {
       // the host.
       requireAccepted(
           mirror.push(
-              eu.wohlben.qits.projects.gitmirror.PushSpec.of(
-                  eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
-                      merge.mergeSha(), ctx.branch()))),
+              withHostToken(
+                  eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                      eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                          merge.mergeSha(), ctx.branch())))),
           "Git pull failed");
       streamLine(process, segmentName, merge.verdict());
       settleOk(process, segmentName);
@@ -1148,11 +1167,44 @@ public class RepositoryService {
     }
   }
 
-  /** Every ref this method moves is moved by a push; a refused one is the operation failing. */
+  /**
+   * Every ref this method moves is moved by a push; a refused one is the operation failing.
+   *
+   * <p>A refusal the git host phrased as a reason — chiefly {@code ProtectedRefHook} declining an
+   * unauthorized update of the repository's default branch — is a statement about the request, not
+   * a fault here: it surfaces as a 4xx carrying the hook's own words, the same rule {@link
+   * #deleteBranch} already applies to a branch delete refusal. Logged at WARN either way, since a
+   * refused pull/push/merge must never be silent — see the caller's async wrapper, which is the only
+   * thing standing between this and a 200 nobody can act on. Anything receive-pack did not phrase as
+   * a refusal (a transport failure, an unreadable response) stays a 500.
+   */
   private static void requireAccepted(PushOutcome outcome, String what) {
-    if (!outcome.accepted()) {
-      throw new InternalServerErrorException(what + ": " + outcome.output());
+    if (outcome.accepted()) {
+      return;
     }
+    String refusal = outcome.remoteRefusal();
+    if (refusal != null) {
+      LOG.warnf("%s: the git host refused the push: %s", what, refusal);
+      throw new BadRequestException(what + ": the git host refused the push: " + refusal);
+    }
+    LOG.warnf("%s: %s", what, outcome.output());
+    throw new InternalServerErrorException(what + ": " + outcome.output());
+  }
+
+  /**
+   * Every push this service makes TO THE GIT HOST carries this, except a branch delete: {@link
+   * #deleteBranch} calls {@code RepoMirror#deleteBranch} directly and never builds a {@link
+   * eu.wohlben.qits.projects.gitmirror.PushSpec} to attach it to — deliberately, since refusing a
+   * direct delete of the protected default branch is intended behaviour (proven live) and a token
+   * there would bypass it instead of triggering it. Omitted entirely with no token configured, since
+   * an absent option changes nothing the hook would have accepted anyway.
+   */
+  private eu.wohlben.qits.projects.gitmirror.PushSpec withHostToken(
+      eu.wohlben.qits.projects.gitmirror.PushSpec spec) {
+    return pushToken
+        .filter(token -> !token.isBlank())
+        .map(token -> spec.withOption(TOKEN_OPTION_PREFIX + token))
+        .orElse(spec);
   }
 
   /**
@@ -1271,8 +1323,9 @@ public class RepositoryService {
   private void parkConflictingRemoteTip(RepoMirror mirror, String branch, String remoteSha) {
     String mergeBranch = mergeBranchName(branch);
     eu.wohlben.qits.projects.gitmirror.PushSpec park =
-        eu.wohlben.qits.projects.gitmirror.PushSpec.of(
-            eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(remoteSha, mergeBranch));
+        withHostToken(
+            eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(remoteSha, mergeBranch)));
     PushOutcome parked = mirror.push(park);
     if (parked.accepted()) {
       return;
@@ -1450,9 +1503,10 @@ public class RepositoryService {
         // to the HOST, so the commits arrive through receive-pack like any other.
         requireAccepted(
             mirror.push(
-                eu.wohlben.qits.projects.gitmirror.PushSpec.of(
-                    eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
-                        remoteSha, ctx.branch()))),
+                withHostToken(
+                    eu.wohlben.qits.projects.gitmirror.PushSpec.of(
+                        eu.wohlben.qits.projects.gitmirror.PushSpec.Ref.branch(
+                            remoteSha, ctx.branch())))),
             "Git push failed");
         return "Remote is ahead; fast-forwarded '"
             + ctx.branch()
@@ -1535,18 +1589,21 @@ public class RepositoryService {
                   // A push failure degrades this segment only (not failProvision): the pull
                   // segments
                   // stay green and finish() computes overall `done failed` from the red push
-                  // segment.
+                  // segment. WARN so a host refusal (or anything else) is never silent — see the
+                  // outer catch below for why this must not be debug.
                   process.appendLine(pushSegment, "push failed: " + e.getMessage());
                   settleWithAuthHint(process, pushSegment, e.getMessage(), repoId);
+                  LOG.warnf(e, "Streamed sync's push segment failed for repository %s", repoId);
                 }
                 process.expectServices(List.of());
                 process.finishProvision(true);
               } catch (RuntimeException e) {
-                // Root pull failure (diverged branch, unreachable remote): settle the open pull
-                // segment failed and emit `done failed` before the push segment ever opens.
-                // Idempotent.
+                // Root pull failure (diverged branch, unreachable remote, a host push refused):
+                // settle the open pull segment failed and emit `done failed` before the push
+                // segment ever opens. Idempotent. WARN, not debug — see beginPullRepository's catch
+                // for why.
                 failWithAuthHint(process, e.getMessage(), repoId);
-                LOG.debugf(e, "Streamed sync failed for repository %s", repoId);
+                LOG.warnf(e, "Streamed sync failed for repository %s", repoId);
               }
             });
         yield process.id();
@@ -1584,15 +1641,17 @@ public class RepositoryService {
                   settleOk(process, rootSegment);
                 } catch (RuntimeException e) {
                   // Degrade the segment only (not failProvision): the red segment carries git's
-                  // full message and finish() computes overall `done failed` from it.
+                  // full message and finish() computes overall `done failed` from it. WARN so a
+                  // host refusal is never silent — see beginPullRepository's catch for why.
                   process.appendLine(rootSegment, "push failed: " + e.getMessage());
                   settleWithAuthHint(process, rootSegment, e.getMessage(), repoId);
+                  LOG.warnf(e, "Streamed push failed for repository %s", repoId);
                 }
                 process.expectServices(List.of());
                 process.finishProvision(true);
               } catch (RuntimeException e) {
                 process.failProvision(e.getMessage());
-                LOG.debugf(e, "Streamed push failed for repository %s", repoId);
+                LOG.warnf(e, "Streamed push failed for repository %s", repoId);
               }
             });
         yield process.id();

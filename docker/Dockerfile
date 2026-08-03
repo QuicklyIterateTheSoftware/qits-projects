@@ -38,23 +38,32 @@
 #
 # That is a missing-configuration failure, not a packaging one, and it is deliberately NOT patched
 # here with an `ENV HOME=…`: a home dir inside the container would make the bare run "work" by
-# writing a database and a repositories tree that die with the container and that no sibling service
-# can reach — the failure would move from the first second to the first restart. What a deployment
-# supplies instead:
+# writing a database and a mirror tree that die with the container and that no sibling service can
+# reach — the failure would move from the first second to the first restart. The same
+# `${user.home}` default sits under `qits.projects.data-dir` (this service's own git mirrors and
+# project-template scratch, projects-volume-decoupling-plan.md), so it belongs on this list too now
+# that the image no longer names a working default for it. What a deployment supplies instead:
 #
 #   quarkus.datasource.projects.*  /  quarkus.datasource.epics.*
 #                       two separate lineages on two separate datasources; see AGENTS.md.
+#   qits.projects.data-dir
+#                       this service's own private mirror root — nothing else reads it.
 #
 #
-# What a deployment does NOT supply, because the image names it: `qits.repositories.data-dir` and
-# `qits.repositories.credentials-file`. Those are the bare origins — settled, and stored on disk
-# rather than in SQL — so they resolve correctly out of the box, at `/data/repositories`, the same
-# literal qits-artifacts and qits-workspaces ship. qits-artifacts serves those trees over git
-# smart-HTTP and qits-workspaces branches from them, so it is a VOLUME three containers mount at the
-# same path, not a scratch dir; naming it once per image is what stops the three drifting apart.
+# What a deployment does NOT supply, because the image names it: `qits.repositories.credentials-file`
+# — where `git credential-store` keeps what a remote-login session captures. Settled, and stored on
+# disk rather than in SQL, the same reason the git mirrors above are not in the database either.
 #
-# That split is deliberate: the H2 arrangement is a prototype and must not look decided, so it
-# refuses to start unconfigured — while the git tree is not the prototype and simply works.
+# The on-disk contract that used to put `qits.repositories.data-dir` on this list is two-way now,
+# not three: qits-artifacts serves the bare origins over git smart-HTTP, and qits-workspaces still
+# reads pre-move workspace sidecars off the same volume. This service mounts neither — every
+# repository it touches is now a private mirror it clones over the wire, through
+# `qits.artifacts.url`.
+#
+# That split is deliberate, but it is now a three-way one, not two: the H2 arrangement is a
+# prototype and must not look decided, so it refuses to start unconfigured; the mirror root has
+# nowhere safe to default to under this user either, so it refuses the same way; only the
+# credentials file is genuinely settled, and it is the one that simply works.
 #
 # Also NOT supplied: `qits.cd.url` and `qits.dns.url`, which ship as `http://qits-cd:8080` and
 # `http://qits-dns:8080` — the service names on qits-net, correct for this image out of the box. They
@@ -63,7 +72,7 @@
 # environment and the dns record simply never appear, with one WARN per attempt as the only sign.
 # `qits.dns.token` ships blank, matching qits-dns' own open mode; set both ends together or neither.
 #
-# With those four set the binary starts in ~65ms, migrates both schemas, self-seeds the `qits`
+# With those five set the binary starts in ~65ms, migrates both schemas, self-seeds the `qits`
 # project — which forks `git init --bare`, writes a tree and clones from a remote — and serves
 # /projects/mcp. That run is the check worth doing after a change here, because it is the only one
 # that exercises the native image's resource and reflection registrations at all.
@@ -181,24 +190,23 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 git-core util-linu
 COPY --from=build --chown=1001:root /src/service/target/qits-projects /work/qits-projects
 RUN chmod +x /work/qits-projects
 
-# The mount point for the git tree, created here so it is OWNED. Docker seeds a fresh named volume
-# from whatever the image has at the mount path, ownership included; with no such directory it makes
-# one root-owned 0755 and the boot dies on an AccessDeniedException rather than on the config error,
-# which reads like a bug in this image and is not one. Group-writable and group-root because a ubi
-# image is meant to survive being assigned an arbitrary uid with gid 0. (A bind mount still takes its
-# ownership from the host — nothing in an image can change that.)
-RUN mkdir -p /data/repositories && chown -R 1001:root /data && chmod -R 775 /data
+# The mount point for this service's own volume, created here so it is OWNED. Docker seeds a fresh
+# named volume from whatever the image has at the mount path, ownership included; with no such
+# directory it makes one root-owned 0755 and the boot dies on an AccessDeniedException rather than
+# on the config error, which reads like a bug in this image and is not one. Group-writable and
+# group-root because a ubi image is meant to survive being assigned an arbitrary uid with gid 0. (A
+# bind mount still takes its ownership from the host — nothing in an image can change that.)
+RUN mkdir -p /data && chown -R 1001:root /data && chmod -R 775 /data
 
-# The git tree and the credentials beside it, named here rather than left to a deployment: they are
-# not the prototype, and nothing in them is stored in SQL — they are bare origins on disk.
-# `/data/repositories` is a literal qits-artifacts and qits-workspaces also ship, because the
-# three-way contract in the header only holds if all three resolve it to the same volume, and three
-# services each told the same string separately is three chances to get it wrong.
+# The credentials file, named here rather than left to a deployment: it is not the prototype, and
+# nothing in it is stored in SQL. Everything else this service keeps on `/data` — the git mirrors
+# (`qits.projects.data-dir`), the H2 files — is a deployment's to name, per the header comment
+# above; this is the one path the image still names outright.
 #
-# Note what is NOT set beside them: no QUARKUS_DATASOURCE_*. That asymmetry is the point — the git
-# side works out of the box, the prototype database refuses to.
-ENV QITS_REPOSITORIES_DATA_DIR=/data/repositories \
-    QITS_REPOSITORIES_CREDENTIALS_FILE=/data/git-credentials
+# Note what is NOT set beside it: no QUARKUS_DATASOURCE_* and no qits.projects.data-dir. That
+# asymmetry is the point — the credentials path works out of the box, the rest is left for a
+# deployment to supply.
+ENV QITS_REPOSITORIES_CREDENTIALS_FILE=/data/git-credentials
 
 EXPOSE 8080
 USER 1001

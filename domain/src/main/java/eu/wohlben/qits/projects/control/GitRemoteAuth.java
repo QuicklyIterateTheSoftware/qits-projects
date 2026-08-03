@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.control;
 
+import eu.wohlben.qits.projects.gitmirror.GitCredentials;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -34,9 +35,14 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * <p>Helper-based auth deliberately keeps tokens out of argvs, URLs, and error output — nothing to
  * redact in streamed segments or logs (unlike embedding {@code user:token@} in the repository URL,
  * which would leak through every {@code GitExecutor} error message).
+ *
+ * <p>Also implements {@code gitmirror}'s {@link GitCredentials}: {@link #gitWithCredentials} already
+ * has that interface's exact signature, so {@link #wrap} is a one-line delegation rather than a
+ * second implementation. Same shape as {@code GitHostAddress extends GitRemotes} — the module names
+ * what it needs, this class names it in this context's own vocabulary.
  */
 @ApplicationScoped
-public class GitRemoteAuth {
+public class GitRemoteAuth implements GitCredentials {
 
   /** Owner read/write only — the store holds plaintext credentials. */
   private static final Set<PosixFilePermission> CREDENTIALS_FILE_PERMISSIONS =
@@ -131,6 +137,12 @@ public class GitRemoteAuth {
       argv[i++] = a;
     }
     return argv;
+  }
+
+  /** {@link GitCredentials#wrap} — the same argv {@link #gitWithCredentials} already builds. */
+  @Override
+  public String[] wrap(String... gitArgs) {
+    return gitWithCredentials(gitArgs);
   }
 
   /**

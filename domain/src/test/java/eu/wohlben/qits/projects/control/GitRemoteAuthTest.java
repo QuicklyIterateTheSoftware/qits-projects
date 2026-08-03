@@ -60,6 +60,16 @@ class GitRemoteAuthTest {
   }
 
   @Test
+  void wrapDelegatesToGitWithCredentials() {
+    // GitCredentials#wrap is gitmirror's seam; GitRemoteAuth implements it as a one-line
+    // delegation, so the two must produce the identical argv rather than two independently
+    // maintained ones.
+    assertEquals(
+        List.of(remoteAuth.gitWithCredentials("fetch", "url", "branch")),
+        List.of(remoteAuth.wrap("fetch", "url", "branch")));
+  }
+
+  @Test
   void theClassifierMatchesTheKnownAuthSignaturesAnywhereInTheOutput() {
     // The no-TTY username prompt failure (GIT_TERMINAL_PROMPT=0 turns a hang into this).
     assertTrue(

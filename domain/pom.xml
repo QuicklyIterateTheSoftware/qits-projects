@@ -29,6 +29,13 @@
 
     <dependencies>
         <dependency>
+            <!-- The git substrate: mirrors, wire reads and pushes. GitMirrorRegistry is the one
+                 place this module builds it from config; GitHostAddress/GitCredentials are this
+                 module's own vocabulary for the shapes it declares. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-gitmirror</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc</artifactId>
         </dependency>

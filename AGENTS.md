@@ -57,7 +57,10 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   active-record with public fields; mappers are MapStruct `@Mapper(componentModel = "jakarta")`.
 - `service/` — `api` (JAX-RS + the remote-login websocket), `mcp` (the `repository` MCP server),
   `startup`, `notify` (the outbound fire-and-forget notifiers — the sole implementations of the
-  creation ports; the same package name and the same idiom as qits-ci's `ci.notify`).
+  creation ports; the same package name and the same idiom as qits-ci's `ci.notify`), `wiring` (the
+  git host's lifecycle client — `HttpGitHostRepositories`, a `java.net.http.HttpClient` as an
+  instance field like `notify`'s, but named apart from it: `notify` is for fire-and-forget and a
+  repository create is waited on and can fail the caller's request).
 - `epics/` — untouched by the extraction beyond its `<parent>`: its own package, its own error
   types, its own datasource and its own Flyway lineage. It depends on neither `domain` nor any
   auth module, and it should stay that way — it is the module most likely to be lifted out next.

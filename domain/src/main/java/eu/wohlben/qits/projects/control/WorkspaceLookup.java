@@ -1,6 +1,5 @@
 package eu.wohlben.qits.projects.control;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -51,15 +50,13 @@ public interface WorkspaceLookup {
   List<WorkspaceView> findActiveByRepository(String repoId);
 
   /**
-   * The host path of the workspace checkout that owns {@code branch}, when there is one. The pull
-   * walk fast-forwards it alongside the bare origin so a live workspace is not left behind. Empty
-   * means "pull into the bare origin only".
+   * Where {@code branch} sits relative to the workspace tree, for the branch list. No local path
+   * argument (projects-volume-decoupling-plan.md §3.5): this now aligns with {@code
+   * WorkspaceService.summarize}'s own signature on the other side of the seam, which already takes
+   * none.
    */
-  Optional<Path> workspacePathForBranch(String repoId, String branch);
-
-  /** Where {@code branch} sits relative to the workspace tree, for the branch list. */
-  BranchSummary summarize(String repoId, Path originPath, String branch, String mainBranch);
+  BranchSummary summarize(String repoId, String branch, String mainBranch);
 
   /** Whether {@code branch} is fully merged and has no dependents, so cleanup is safe to offer. */
-  boolean canCleanupBranch(String repoId, Path originPath, String branch, String mainBranch);
+  boolean canCleanupBranch(String repoId, String branch, String mainBranch);
 }

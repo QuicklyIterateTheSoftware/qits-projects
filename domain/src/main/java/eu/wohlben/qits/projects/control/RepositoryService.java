@@ -336,9 +336,9 @@ public class RepositoryService {
     if (depth >= MAX_SUBMODULE_DEPTH || !visited.add(repo.id)) {
       return;
     }
-    Path originPath = originPath(repo.id);
+    RepoMirror mirror = requireMirror(repo.id);
     for (GitSubmoduleParser.Submodule sub :
-        submoduleParser.readSubmodules(originPath.toFile(), repo.mainBranch)) {
+        submoduleParser.readSubmodules(mirror.gitDir().toFile(), repo.mainBranch)) {
       // A RELATIVE url folds against the superproject's real backend; with no backup remote
       // configured there is nothing to fold it against, and resolveSubmoduleUrl would NPE. An
       // absolute url ignores the superproject's url entirely, so those keep importing normally.
@@ -473,7 +473,9 @@ public class RepositoryService {
         repositorySubmoduleRepository.findByParentId(repoId).stream()
             .map(edge -> edge.path)
             .collect(java.util.stream.Collectors.toSet());
-    return submoduleParser.readSubmodules(originPath(repo.id).toFile(), repo.mainBranch).stream()
+    return submoduleParser
+        .readSubmodules(requireMirror(repo.id).gitDir().toFile(), repo.mainBranch)
+        .stream()
         .filter(sub -> !importedPaths.contains(sub.path()))
         .map(
             sub ->
@@ -504,15 +506,64 @@ public class RepositoryService {
 
   /**
    * The local git directory for {@code repoId} — the mirror's bare git dir (projects-volume-
-   * decoupling-plan.md §3.2). Every local read and write in this class that used to run against
-   * {@code <qits.repositories.data-dir>/<repoId>/origin} on the shared volume now runs here
-   * instead; the verbs themselves (fetch, push, {@code git branch}, …) are unchanged and become wire
-   * calls only as later workstreams (BR, BS) land. An adopted repository (see {@link
-   * #adoptExistingOrigin}) has no mirror at all, so this path simply does not exist for one — the
-   * same absence {@link #requireOrigin} already turns into a 404.
+   * decoupling-plan.md §3.2), with no clone-on-first-use and no freshness check of its own. Kept for
+   * the sync cluster (BS: {@code deleteBranch}, {@code push}, {@code reconcileRejectedPush}), which
+   * still reads and writes the mirror directly rather than through {@link RepoMirror}'s own verbs;
+   * every read call site moved to {@link #requireMirror}, which clones a cold mirror and refreshes a
+   * stale one before handing back the same path.
    */
   private Path originPath(String repoId) {
     return gitMirrors.of(repoId).gitDir();
+  }
+
+  /**
+   * {@link #originPath} with the BQ-era 404 guard, and deliberately nothing more: used only by the
+   * pull/push call sites ({@link #pullRepository(String, java.util.Set, TechnicalProcess, String,
+   * java.util.Set)}'s {@code PullContext}, {@link #pushSpec}), which read and write the mirror's own
+   * local refs directly and must not have them refreshed — let alone clobbered — by {@link
+   * #requireMirror}'s forced host fetch out from under an in-progress reconcile. Redirecting these
+   * two onto real wire operations, with their own freshness and disambiguation story, is the sync
+   * cluster's job (projects-volume-decoupling-plan.md §3.6, BS).
+   */
+  private Path requireExistingOrigin(String repoId) {
+    Path path = originPath(repoId);
+    if (!Files.exists(path)) {
+      throw new NotFoundException("Repository origin not found on disk");
+    }
+    return path;
+  }
+
+  /**
+   * The mirror for {@code repoId}, cloned from the git host on first use and refreshed when the
+   * freshness window ({@code qits.projects.git.mirror-freshness-ms}) has lapsed —
+   * projects-volume-decoupling-plan.md §3.5. The row check is unchanged (a 404 for an unknown id).
+   *
+   * <p>A refresh failure is ambiguous between "no such repository on the host" and "the host is
+   * unreachable", and the two must not answer the same status: on failure only, {@link
+   * GitHostRepositories#find} disambiguates — absent is the same 404 an unknown row already gives,
+   * present (or the host still refusing to say) is a 500. One extra network call, on a path that was
+   * already about to clone.
+   */
+  private RepoMirror requireMirror(String repoId) {
+    get(repoId);
+    RepoMirror mirror = gitMirrors.of(repoId);
+    try {
+      mirror.refresh();
+    } catch (GitMirrorException e) {
+      boolean existsOnHost;
+      try {
+        existsOnHost = gitHostRepositories.find(repoId).isPresent();
+      } catch (GitHostException hostError) {
+        throw new InternalServerErrorException(
+            "Git host unreachable for " + repoId + ": " + hostError.getMessage());
+      }
+      if (!existsOnHost) {
+        throw new NotFoundException("Repository not found on the git host: " + repoId);
+      }
+      throw new InternalServerErrorException(
+          "Could not refresh the mirror for " + repoId + ": " + e.getMessage());
+    }
+    return mirror;
   }
 
   /**
@@ -982,12 +1033,17 @@ public class RepositoryService {
             .call(
                 () -> {
                   Repository repo = get(repoId);
-                  Path originPath = requireOrigin(repoId);
+                  // Deliberately NOT requireMirror: pull writes the mirror's own refs by hand below
+                  // (fast-forward, merge), and a forced host refresh here would fetch the mirror back
+                  // to whatever the host holds before the write, undoing exactly the divergence this
+                  // walk exists to reconcile. The real wire-based rewrite of this method is BS's job
+                  // (projects-volume-decoupling-plan.md §3.6); until then it keeps the BQ-era plain
+                  // path lookup.
+                  Path originPath = requireExistingOrigin(repoId);
                   String branch = resolveMainBranch(repo, originPath);
-                  Optional<Path> mainWorkspace =
-                      workspaces.isUnsatisfied()
-                          ? Optional.empty()
-                          : workspaces.get().workspacePathForBranch(repoId, branch);
+                  // WorkspaceLookup.workspacePathForBranch is gone (§1.3: dead on both sides, nothing
+                  // ever implemented it) — a main workspace is never found, exactly as before.
+                  Optional<Path> mainWorkspace = Optional.empty();
                   return new PullContext(
                       repo.url,
                       branch,
@@ -1234,11 +1290,12 @@ public class RepositoryService {
   }
 
   /**
-   * The scalar snapshot a push needs (url, main branch, bare-origin path), read in one short
-   * transaction — shared by {@link #pushRepository} and the remote-login sign-in terminal, whose
-   * interactive push runs exactly the same command shape in a host-side PTY.
+   * The scalar snapshot a push needs (url, main branch), read in one short transaction — shared by
+   * {@link #pushRepository} and the remote-login sign-in terminal, whose interactive push runs
+   * exactly the same command shape in a host-side PTY. No path (projects-volume-decoupling-plan.md
+   * §3.5): every reader gets the mirror's git dir from {@link GitMirrorRegistry} itself, by repo id.
    */
-  public record PushSpec(String url, String branch, Path originPath) {}
+  public record PushSpec(String url, String branch) {}
 
   /** Reads a {@link PushSpec} in its own short transaction (404 for an unknown id). */
   public PushSpec pushSpec(String repoId) {
@@ -1246,8 +1303,12 @@ public class RepositoryService {
         .call(
             () -> {
               Repository repo = get(repoId);
-              Path originPath = requireOrigin(repoId);
-              return new PushSpec(repo.url, resolveMainBranch(repo, originPath), originPath);
+              // Deliberately NOT requireMirror: push (and the sign-in terminal's interactive push)
+              // read and write the mirror's own local state directly, and a forced host refresh here
+              // would fetch it back to whatever the host holds before the write — see the identical
+              // note on the pull side above. BS's job (§3.6), not this one's.
+              Path originPath = requireExistingOrigin(repoId);
+              return new PushSpec(repo.url, resolveMainBranch(repo, originPath));
             });
   }
 
@@ -1275,7 +1336,7 @@ public class RepositoryService {
       return "No backup remote configured — nothing to push";
     }
     try {
-      return push(ctx);
+      return push(repoId, ctx);
     } catch (Exception e) {
       if (!isNonFastForwardRejection(e.getMessage())) {
         throw new InternalServerErrorException("Git push failed: " + e.getMessage());
@@ -1284,9 +1345,9 @@ public class RepositoryService {
     }
   }
 
-  private String push(PushSpec ctx) throws Exception {
+  private String push(String repoId, PushSpec ctx) throws Exception {
     return git.exec(
-        ctx.originPath().toFile(),
+        originPath(repoId).toFile(),
         remoteAuth.gitWithCredentials(
             "push", ctx.url(), "refs/heads/" + ctx.branch() + ":refs/heads/" + ctx.branch()));
   }
@@ -1310,27 +1371,21 @@ public class RepositoryService {
    * surfaced unchanged.
    */
   private String reconcileRejectedPush(String repoId, PushSpec ctx, String rejection) {
+    Path originPath = originPath(repoId);
     try {
       git.exec(
-          ctx.originPath().toFile(),
+          originPath.toFile(),
           remoteAuth.gitWithCredentials(
               "fetch", "--end-of-options", ctx.url(), "refs/heads/" + ctx.branch()));
-      String remoteSha =
-          git.exec(ctx.originPath().toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
+      String remoteSha = git.exec(originPath.toFile(), "git", "rev-parse", "FETCH_HEAD").trim();
       String localSha =
-          git.exec(ctx.originPath().toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch())
-              .trim();
-      if (remoteSha.equals(localSha) || isAncestor(ctx.originPath(), remoteSha, localSha)) {
+          git.exec(originPath.toFile(), "git", "rev-parse", "refs/heads/" + ctx.branch()).trim();
+      if (remoteSha.equals(localSha) || isAncestor(originPath, remoteSha, localSha)) {
         throw new InternalServerErrorException("Git push failed: " + rejection);
       }
-      if (isAncestor(ctx.originPath(), localSha, remoteSha)) {
+      if (isAncestor(originPath, localSha, remoteSha)) {
         // The remote simply moved ahead — catch the mirror up instead of failing.
-        git.exec(
-            ctx.originPath().toFile(),
-            "git",
-            "update-ref",
-            "refs/heads/" + ctx.branch(),
-            remoteSha);
+        git.exec(originPath.toFile(), "git", "update-ref", "refs/heads/" + ctx.branch(), remoteSha);
         return "Remote is ahead; fast-forwarded '"
             + ctx.branch()
             + "' to "
@@ -1338,8 +1393,8 @@ public class RepositoryService {
             + " — nothing to push";
       }
       String mergeVerdict =
-          mergeDivergedRemote(ctx.originPath(), false, ctx.branch(), localSha, remoteSha);
-      String pushOutput = push(ctx);
+          mergeDivergedRemote(originPath, false, ctx.branch(), localSha, remoteSha);
+      String pushOutput = push(repoId, ctx);
       return mergeVerdict + "\n" + pushOutput;
     } catch (BadRequestException | InternalServerErrorException e) {
       throw e;
@@ -1561,8 +1616,8 @@ public class RepositoryService {
    */
   public SyncStatusDto syncStatus(String repoId) {
     Repository repo = get(repoId);
-    Path originPath = requireOrigin(repoId);
-    String branch = resolveMainBranch(repo, originPath);
+    RepoMirror mirror = requireMirror(repoId);
+    String branch = resolveMainBranch(repo, mirror.gitDir());
 
     // No backup remote configured (a greenfield wrapper): the query itself succeeded, there is just
     // no remote branch to compare against. The UI keys its "configure backup remote" affordance off
@@ -1571,13 +1626,11 @@ public class RepositoryService {
       return new SyncStatusDto(branch, true, false, null, null);
     }
 
-    String localSha;
-    try {
-      localSha =
-          git.exec(originPath.toFile(), "git", "rev-parse", "--verify", "refs/heads/" + branch)
-              .trim();
-    } catch (Exception e) {
-      // The main branch doesn't exist locally — treat as nothing to report.
+    // "Local" means what the git host currently holds, read with ls-remote (§3.5): authoritative and
+    // unaffected by the mirror's own freshness window, unlike a rev-parse of the local clone.
+    String localSha = mirror.remoteBranchSha(branch).orElse(null);
+    if (localSha == null) {
+      // The main branch doesn't exist on the git host — treat as nothing to report.
       return new SyncStatusDto(branch, true, false, null, null);
     }
 
@@ -1589,7 +1642,7 @@ public class RepositoryService {
     try {
       String out =
           git.exec(
-                  originPath.toFile(),
+                  mirror.gitDir().toFile(),
                   remoteAuth.gitWithCredentials("ls-remote", repo.url, "refs/heads/" + branch))
               .trim();
       remoteSha = out.isBlank() ? null : out.split("\\s+")[0];
@@ -1616,12 +1669,12 @@ public class RepositoryService {
       // `refs/heads/` prefix means a crafted branch name can never start with `-`, so neither
       // can smuggle a git flag (e.g. `--upload-pack=<cmd>`) into the fetch.
       git.exec(
-          originPath.toFile(),
+          mirror.gitDir().toFile(),
           remoteAuth.gitWithCredentials(
               "fetch", "--end-of-options", repo.url, "refs/heads/" + branch));
       String counts =
           git.exec(
-                  originPath.toFile(),
+                  mirror.gitDir().toFile(),
                   "git",
                   "rev-list",
                   "--left-right",
@@ -1637,14 +1690,6 @@ public class RepositoryService {
       // Fetch failed or counts unavailable — leave them null (the UI shows "unknown", not in-sync).
     }
     return new SyncStatusDto(branch, true, true, ahead, behind);
-  }
-
-  private Path requireOrigin(String repoId) {
-    Path originPath = originPath(repoId);
-    if (!Files.exists(originPath)) {
-      throw new NotFoundException("Repository origin not found on disk");
-    }
-    return originPath;
   }
 
   /** True when {@code maybeAncestor} is an ancestor of {@code descendant} (or they are equal). */
@@ -1670,20 +1715,19 @@ public class RepositoryService {
     return repositorySubmoduleRepository.findByParentId(repoId);
   }
 
+  /**
+   * The repository's branches, read live off the git host ({@code ls-remote --heads}) rather than
+   * the local mirror (§3.5): authoritative and no clone needed, so this answers correctly even for a
+   * repository whose mirror was never cloned.
+   */
   public List<String> listBranches(String repoId) {
     repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
 
-    Path originPath = originPath(repoId);
-    if (!Files.exists(originPath)) {
-      throw new NotFoundException("Repository origin not found on disk");
-    }
-
     try {
-      String output = git.exec(originPath.toFile(), "git", "branch", "--format=%(refname:short)");
-      return output.lines().map(String::trim).filter(b -> !b.isBlank()).toList();
-    } catch (Exception e) {
+      return gitMirrors.of(repoId).remoteBranches();
+    } catch (GitMirrorException e) {
       throw new InternalServerErrorException("Git branch listing failed: " + e.getMessage());
     }
   }
@@ -1699,7 +1743,6 @@ public class RepositoryService {
             .findByIdOptional(repoId)
             .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
 
-    Path originPath = originPath(repoId);
     return listBranches(repoId).stream()
         .map(
             b -> {
@@ -1707,10 +1750,10 @@ public class RepositoryService {
               var summary =
                   lookup == null
                       ? new WorkspaceLookup.BranchSummary(null, null, null)
-                      : lookup.summarize(repoId, originPath, b, repo.mainBranch);
+                      : lookup.summarize(repoId, b, repo.mainBranch);
               return new BranchDto(
                   b,
-                  lookup != null && lookup.canCleanupBranch(repoId, originPath, b, repo.mainBranch),
+                  lookup != null && lookup.canCleanupBranch(repoId, b, repo.mainBranch),
                   summary.parent(),
                   summary.ahead(),
                   summary.behind());
@@ -1721,6 +1764,13 @@ public class RepositoryService {
   /**
    * Deletes a git branch from the repository's origin. Refuses to delete a branch that is the
    * {@code parent} of any workspace, since that would orphan those workspaces in the branch tree.
+   *
+   * <p>Pushed as a deletion (projects-volume-decoupling-plan.md §3.7) rather than run as a local
+   * {@code git branch -D}: with {@link #listBranches} now reading the git host directly (§3.5), a
+   * local-only delete would silently un-delete itself the moment anything re-reads the branch list.
+   * The full §3.7 treatment — the delete reaching {@code ProtectedRefHook} and its refusal surfacing
+   * as a 4xx rather than a 500 — is the sync cluster's job (BS); this is the minimal git-verb swap
+   * BR needs to keep its own read-side change from regressing this method's existing behaviour.
    */
   @Transactional
   public void deleteBranch(String repoId, String branch) {
@@ -1742,15 +1792,14 @@ public class RepositoryService {
       throw new BadRequestException("Branch has child workspaces: " + branch);
     }
 
-    Path originPath = originPath(repoId);
-    if (!Files.exists(originPath)) {
-      throw new NotFoundException("Repository origin not found on disk");
-    }
+    requireExistingOrigin(repoId); // 404 for a repository with no mirror at all
 
     try {
-      // `--` terminates option parsing so the branch name is always treated as a ref.
-      git.exec(originPath.toFile(), "git", "branch", "-D", "--", branch);
-    } catch (Exception e) {
+      PushOutcome outcome = gitMirrors.of(repoId).deleteBranch(branch);
+      if (!outcome.accepted()) {
+        throw new InternalServerErrorException("Git branch delete failed: " + outcome.output());
+      }
+    } catch (GitMirrorException e) {
       throw new InternalServerErrorException("Git branch delete failed: " + e.getMessage());
     }
   }

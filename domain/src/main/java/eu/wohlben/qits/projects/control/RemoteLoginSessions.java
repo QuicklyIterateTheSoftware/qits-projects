@@ -83,6 +83,8 @@ public class RemoteLoginSessions {
 
   @Inject GitRemoteAuth remoteAuth;
 
+  @Inject GitMirrorRegistry gitMirrors;
+
   /**
    * SEAM (migration-plan.md §6): the technical-process framework is a port here (see {@link
    * TechnicalProcessRegistry}) and is optional. With no implementation the repository is never
@@ -226,7 +228,10 @@ public class RemoteLoginSessions {
       argv[0] = "setsid";
       argv[1] = "--ctty";
       System.arraycopy(git, 0, argv, 2, git.length);
-      ProcessBuilder builder = new ProcessBuilder(argv).directory(spec.originPath().toFile());
+      // pushSpec no longer carries a path (projects-volume-decoupling-plan.md §3.5) — the mirror's
+      // git dir comes from the registry directly, by repo id.
+      ProcessBuilder builder =
+          new ProcessBuilder(argv).directory(gitMirrors.of(repoId).gitDir().toFile());
       // Strip inherited prompt-diverting vars: an ambient GIT_ASKPASS (VS Code's integrated
       // terminal — the documented quarkus:dev launch — sets it), SSH_ASKPASS, or
       // GIT_TERMINAL_PROMPT=0

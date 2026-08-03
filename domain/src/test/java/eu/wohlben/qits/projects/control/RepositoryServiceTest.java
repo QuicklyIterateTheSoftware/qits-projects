@@ -43,6 +43,8 @@ public class RepositoryServiceTest {
 
   @Inject FakeGitHostRepositories fakeGitHostRepositories;
 
+  @Inject GitExecutor git;
+
   @Test
   public void testClone() throws Exception {
     String fixtureUrl = GitFixtures.path("testing-repo.git");
@@ -302,6 +304,41 @@ public class RepositoryServiceTest {
         refused.getMessage().contains("pre-receive hook declined"),
         "the hook's own words reach the caller: " + refused.getMessage());
     assertTrue(refused.getMessage().contains(repo.mainBranch), refused.getMessage());
+  }
+
+  /**
+   * projects-volume-decoupling-plan.md's regression: a pull's push to the git host can hit the same
+   * {@code ProtectedRefHook} refusal a branch delete does, and with no token configured (the shipped
+   * default — {@code qits.repositories.git.push-token} unset) that refusal must reach the caller as
+   * a 4xx, never as a silently-logged 500 the streamed API's 200 then buries. Proved on the
+   * synchronous {@code pullRepository} overload, which throws in-request; {@link
+   * RepositoryPullProcessTest} proves the streamed variant surfaces the same message in its stream
+   * rather than only in a log line.
+   */
+  @Test
+  public void aTokenlessPullAgainstAProtectedDefaultBranchSurfacesTheRefusalNonSilently()
+      throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Protected Pull No Token", null);
+    var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
+    fakeGitHostRepositories.protectDefaultBranch(
+        repo.id, "a-token-this-deployment-never-configures");
+
+    // Rewind the HOST's branch so the pull must fast-forward the protected ref — the exact update
+    // ProtectedRefHook refuses without a matching token.
+    Path hostDir = Path.of(gitHost.fetchUrl(repo.id));
+    String parentSha = git.exec(hostDir.toFile(), "git", "rev-parse", repo.mainBranch + "~1").trim();
+    git.exec(hostDir.toFile(), "git", "update-ref", "refs/heads/" + repo.mainBranch, parentSha);
+
+    BadRequestException refused =
+        assertThrows(BadRequestException.class, () -> repositoryService.pullRepository(repo.id));
+    assertTrue(
+        refused.getMessage().contains("the git host refused the push"),
+        "the refusal is classified, not just re-thrown output: " + refused.getMessage());
+    assertTrue(
+        refused.getMessage().contains("declined"),
+        "the hook's own words (as far as a shell hook can carry them) reach the caller: "
+            + refused.getMessage());
   }
 
   private static void deleteRecursively(Path root) throws IOException {

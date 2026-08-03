@@ -42,6 +42,7 @@ public class RepositoryPullProcessTest {
   @Inject TechnicalProcessRegistry registry;
   @Inject GitExecutor git;
   @Inject GitHostAddress gitHost;
+  @Inject FakeGitHostRepositories fakeGitHostRepositories;
 
   /** Records a terminal process's full replay (attach on a terminal process replays + done). */
   private static final class Replay implements TechnicalProcess.Listener {
@@ -402,6 +403,35 @@ public class RepositoryPullProcessTest {
         git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", "master").trim(),
         "the git host's branch now holds the forge's commit");
     assertTrue(!forgeSha.equals(before), "the fixture really did advance the branch");
+  }
+
+  /**
+   * With no push-token configured (the shipped default here), a pull that needs to advance a
+   * protected default branch is refused by the git host's hook — and that refusal must reach the
+   * stream as a real line, not only a debug log line nobody reading the process replay ever sees.
+   * {@link RepositoryServiceTest#aTokenlessPullAgainstAProtectedDefaultBranchSurfacesTheRefusalNonSilently}
+   * proves the same thing on the synchronous overload, in-request.
+   */
+  @Test
+  public void aProtectedBranchRefusalSurfacesInTheStreamRatherThanSilently() throws Exception {
+    var project = projectService.create("Pull Protected No Token", null);
+    var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project);
+    fakeGitHostRepositories.protectDefaultBranch(
+        repo.id, "a-token-this-deployment-never-configures");
+
+    // Rewind the HOST so the pull must fast-forward the protected branch.
+    String parentSha =
+        git.exec(hostOf(repo.id).toFile(), "git", "rev-parse", repo.mainBranch + "~1").trim();
+    git.exec(
+        hostOf(repo.id).toFile(), "git", "update-ref", "refs/heads/" + repo.mainBranch, parentSha);
+
+    Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(repo.id)));
+
+    assertEquals("failed", doneFrame(replay).status());
+    assertTrue(
+        hasLineContaining(replay, "the git host refused the push")
+            || hasLineContaining(replay, "declined"),
+        "the refusal's own words land in the stream, not only in a log line: " + replay.frames);
   }
 
   @Test

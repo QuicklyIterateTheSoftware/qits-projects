@@ -108,21 +108,25 @@ container is a real one.
 | `WorkspaceLookup` | qits-workspaces | no branch is workspace-backed: commit logs compare against the repository's main branch, the branch list reports nothing cleanupable, the "branch has child workspaces" delete guard stands down |
 | `WorkspaceLifecycle` | qits-workspaces | a cloned repository gets no default workspace; deleting one removes its origin, rows and aliases but reaps no containers or volumes — there are none |
 | `TechnicalProcessRegistry` (+ `TechnicalProcess`, `RepoProcessLease`, `RepoReservation`, `TechnicalProcessFrame`) | qits-workspace-daemon | pull/push/sync still run, on the same worker thread, against the same origins — unnarrated, returning a null process id, with no single-flight guard |
-| `ProjectEnvironmentNotifier` | this repo's `service/…/notify/CdEnvironmentNotifier` → qits-cd | a created project gets no standing deployment target — nothing degrades, because nothing was deploying it |
 | `ProjectDomainRegistrar` | this repo's `service/…/notify/DnsDomainRegistrar` → qits-dns | a created project's domain is stored and registered nowhere, which is what a project whose dns lives at a registrar's control panel wants |
 | `CommandOutputSink` | the service module's websocket | — (an SPI this context calls, not one it looks up) |
 
-The last two are the first ports this repo implements *itself*, in `service/`, and they differ from
-the rest in one way worth stating: they are **fire-and-forget**. `ProjectService.create` calls them
+`ProjectDomainRegistrar` is the one port this repo implements *itself*, in `service/`, and it differs
+from the rest in one way worth stating: it is **fire-and-forget**. `ProjectService.create` calls it
 after its transaction commits and swallows every failure, because a project must never fail to exist
-because a sibling service was down. So a wrong `qits.cd.url` or `qits.dns.url` produces no error
-anywhere — environments and dns records simply stop appearing. Both keys carry that hazard in their
-comment in `service/src/main/resources/application.properties`. The remedy is a manual step whose
-result you can see: `POST /projects/api/projects/{projectId}/reconcile` re-asserts both facts
-**synchronously** through the same two ports and answers with a per-target outcome
-(`CREATED`/`ALREADY_EXISTS`/`FAILED`, `REGISTERED`/`NO_MATCHING_ZONE`/`NOT_CONFIGURED`/`FAILED`) —
-also the retro-fire for every project created before the hooks existed, the seeded `qits` project
-included (`ProjectReconcileService`, `main-environment-plan.md` §5).
+because a sibling service was down. So a wrong `qits.dns.url` produces no error anywhere — dns
+records simply stop appearing. The key carries that hazard in its comment in
+`service/src/main/resources/application.properties`. The remedy is a manual step whose result you can
+see: `POST /projects/api/projects/{projectId}/reconcile` re-asserts the record **synchronously**
+through the same port and answers with the outcome
+(`REGISTERED`/`NO_MATCHING_ZONE`/`NOT_CONFIGURED`/`FAILED`) — also the retro-fire for every project
+created before the hook existed, the seeded `qits` project included (`ProjectReconcileService`,
+`main-environment-plan.md` §5).
+
+**A project no longer announces a deployment environment.** It used to `POST /cd/api/environments`
+per project, through a `ProjectEnvironmentNotifier` port. qits-cd owns environments now: they are
+deliberate tiers (`dev`, and later `preprod`/`prod`) created over qits-cd's own REST surface, one per
+tier and not one per project. Nothing here creates, names or reconciles one.
 
 Reached the other way: qits-workspaces' `RepositoryLookup` and `RepositoryAddressResolver`, and
 qits-artifacts' `githost.RepositoryNameResolver`, are ports **those** repos declare and this one
@@ -133,8 +137,7 @@ name collision: artifacts' `githost.RepositoryNameResolver` (a port) and this co
 
 ## The startup self-seed
 
-A packaged run reconciles a `qits` project (slug `qits`, the name qits-cd's standing environment
-also carries) on every boot — `StartupSelfSeed` gates it to `LaunchMode.NORMAL`, `SelfSeedService`
+A packaged run reconciles a `qits` project (slug `qits`) on every boot — `StartupSelfSeed` gates it to `LaunchMode.NORMAL`, `SelfSeedService`
 is the reconcile. It is additive and per-item idempotent: nothing is deleted, nothing already there
 is modified, and one failing item never denies the rest.
 

@@ -214,10 +214,9 @@ injection therefore needs `@PersistenceUnit("projects")`.
   `RecordingWorkspaceLifecycle`. They are **test scope only**; nothing under `src/main` references
   them, and the published jars ship no implementation of any port. `service`'s suite reuses them
   through domain's test-jar rather than carrying a second copy. A fake for a port whose method
-  **returns a result** must be `@Alternative @Priority` (`RecordingProjectEnvironmentNotifier`,
-  `RecordingProjectDomainRegistrar`): in `service`'s suite the real notifier in `notify/` is a bean
-  too, so without it the port has two implementations and the caller reports whichever the container
-  hands it first. A recording fake for a `void` port does not need this, which is why the older two
+  **returns a result** must be `@Alternative @Priority` (`RecordingProjectDomainRegistrar`): in
+  `service`'s suite the real registrar in `notify/` is a bean too, so without it the port has two
+  implementations and the caller reports whichever the container hands it first. A recording fake for a `void` port does not need this, which is why the older two
   do not have it.
 - Where a monorepo assertion queried another context's table, it is re-expressed against the seam —
   "did this context ask?" rather than "did the other context's row appear". `RecordingWorkspaceLifecycle`

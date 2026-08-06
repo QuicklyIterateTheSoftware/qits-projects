@@ -65,12 +65,12 @@
 # nowhere safe to default to under this user either, so it refuses the same way; only the
 # credentials file is genuinely settled, and it is the one that simply works.
 #
-# Also NOT supplied: `qits.cd.url` and `qits.dns.url`, which ship as `http://qits-cd:8080` and
-# `http://qits-dns:8080` — the service names on qits-net, correct for this image out of the box. They
-# are worth knowing about anyway, because a project creation announces itself to both and does so
-# FIRE-AND-FORGET: on a network where those names do not resolve, creation still succeeds and the
-# environment and the dns record simply never appear, with one WARN per attempt as the only sign.
-# `qits.dns.token` ships blank, matching qits-dns' own open mode; set both ends together or neither.
+# Also NOT supplied: `qits.dns.url`, which ships as `http://qits-dns:8080` — the service name on
+# qits-net, correct for this image out of the box. It is worth knowing about anyway, because a
+# project creation announces itself to qits-dns and does so FIRE-AND-FORGET: on a network where that
+# name does not resolve, creation still succeeds and the dns record simply never appears, with one
+# WARN per attempt as the only sign. `qits.dns.token` ships blank, matching qits-dns' own open mode;
+# set both ends together or neither.
 #
 # With those five set the binary starts in ~65ms, migrates both schemas, self-seeds the `qits`
 # project — which forks `git init --bare`, writes a tree and clones from a remote — and serves

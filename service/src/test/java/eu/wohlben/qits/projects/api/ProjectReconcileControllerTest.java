@@ -6,11 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.projects.control.ProjectReconciliation.DomainAssertion;
-import eu.wohlben.qits.projects.control.ProjectReconciliation.EnvironmentAssertion;
 import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
 import eu.wohlben.qits.projects.testsupport.RecordingProjectDomainRegistrar;
-import eu.wohlben.qits.projects.testsupport.RecordingProjectEnvironmentNotifier;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
@@ -20,25 +18,23 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@code POST /projects/api/projects/{projectId}/reconcile} at the HTTP boundary
- * (main-environment-plan.md §5): that both ports are driven through their <b>synchronous</b>
- * halves, and that whatever they answer reaches the caller unflattened — including a failure, which
- * is a 200 because the outcomes are the result.
+ * (main-environment-plan.md §5): that the registrar is driven through its <b>synchronous</b> half,
+ * and that whatever it answers reaches the caller unflattened — including a failure, which is a 200
+ * because the outcome is the result.
  *
- * <p>Scripted port fakes rather than servers: what a status code becomes is {@code
- * CdEnvironmentNotifierTest} / {@code DnsDomainRegistrarTest}'s business against a real socket.
- * Here the question is only whether an outcome survives the trip out.
+ * <p>A scripted port fake rather than a server: what a status code becomes is {@code
+ * DnsDomainRegistrarTest}'s business against a real socket. Here the question is only whether an
+ * outcome survives the trip out.
  */
 @QuarkusTest
 public class ProjectReconcileControllerTest {
 
   @Inject ProjectService projectService;
-  @Inject RecordingProjectEnvironmentNotifier environments;
   @Inject RecordingProjectDomainRegistrar domains;
 
-  /** One application, and therefore one of each scripted bean, is shared across the class. */
+  /** One application, and therefore one scripted bean, is shared across the class. */
   @BeforeEach
   void clearRecordings() {
-    environments.clear();
     domains.clear();
   }
 
@@ -74,14 +70,13 @@ public class ProjectReconcileControllerTest {
   }
 
   /**
-   * The happy path, and the assertion that matters most: the reconcile drives the ports'
-   * <b>synchronous</b> halves with the project's own values — a reconcile that fired the
-   * fire-and-forget methods would answer before anything had happened.
+   * The happy path, and the assertion that matters most: the reconcile drives the port's
+   * <b>synchronous</b> half with the project's own values — a reconcile that fired the
+   * fire-and-forget method would answer before anything had happened.
    */
   @Test
-  public void testAReconcileReassertsBothTargetsSynchronouslyAndReportsThem() {
+  public void testAReconcileReassertsTheDomainSynchronouslyAndReportsIt() {
     String projectId = createProject("reconcile-ok", "reconcile-ok.test.eu");
-    environments.willAnswer(EnvironmentAssertion.created());
     domains.willAnswer(DomainAssertion.registered());
 
     given()
@@ -90,14 +85,8 @@ public class ProjectReconcileControllerTest {
         .post("/projects/api/projects/" + projectId + "/reconcile")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("environment", equalTo("CREATED"))
-        .body("environmentDetail", nullValue())
         .body("domain", equalTo("REGISTERED"))
         .body("domainDetail", nullValue());
-
-    var reassertion = environments.reassertions().stream().findFirst().orElseThrow();
-    assertEquals(projectId, reassertion.projectId());
-    assertEquals("reconcile-ok", reassertion.slug());
 
     var registration = domains.reassertions().stream().findFirst().orElseThrow();
     assertEquals("reconcile-ok.test.eu", registration.domain());
@@ -106,13 +95,12 @@ public class ProjectReconcileControllerTest {
   }
 
   /**
-   * The steady state a repeated reconcile finds: both receivers are idempotent, which is what makes
-   * re-asserting legitimate rather than reckless.
+   * The registrar's documented stop, promoted to a reportable outcome: no zone contains the name, so
+   * nothing was written and the caller reads why.
    */
   @Test
-  public void testTheAlreadyExistsAndNoMatchingZoneOutcomesSurface() {
+  public void testTheNoMatchingZoneOutcomeSurfaces() {
     String projectId = createProject("reconcile-steady", "reconcile-steady.test.eu");
-    environments.willAnswer(EnvironmentAssertion.alreadyExists());
     domains.willAnswer(DomainAssertion.noMatchingZone("No qits-dns zone contains this name."));
 
     given()
@@ -121,21 +109,17 @@ public class ProjectReconcileControllerTest {
         .post("/projects/api/projects/" + projectId + "/reconcile")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("environment", equalTo("ALREADY_EXISTS"))
-        .body("environmentDetail", nullValue())
         .body("domain", equalTo("NO_MATCHING_ZONE"))
         .body("domainDetail", containsString("No qits-dns zone"));
   }
 
   /**
-   * <b>A failed target is still a 200.</b> The outcomes are what the caller asked for, and a 5xx
-   * would throw away the half that worked — asserted here with both halves failing and their
-   * reasons intact.
+   * <b>A failure is still a 200.</b> The outcome is what the caller asked for, and a 5xx would throw
+   * away the reason with it.
    */
   @Test
-  public void testAFailedTargetIsStillA200WithItsReason() {
+  public void testAFailedReassertionIsStillA200WithItsReason() {
     String projectId = createProject("reconcile-down", "reconcile-down.test.eu");
-    environments.willAnswer(EnvironmentAssertion.failed("qits-cd answered 500."));
     domains.willAnswer(DomainAssertion.failed("qits-dns is unreachable."));
 
     given()
@@ -144,27 +128,8 @@ public class ProjectReconcileControllerTest {
         .post("/projects/api/projects/" + projectId + "/reconcile")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("environment", equalTo("FAILED"))
-        .body("environmentDetail", containsString("qits-cd answered 500"))
         .body("domain", equalTo("FAILED"))
         .body("domainDetail", containsString("unreachable"));
-  }
-
-  /** And the mixed case, which is the whole reason a partial failure is not an error. */
-  @Test
-  public void testOneTargetFailingLeavesTheOthersOutcomeIntact() {
-    String projectId = createProject("reconcile-half", "reconcile-half.test.eu");
-    environments.willAnswer(EnvironmentAssertion.failed("qits-cd is unreachable."));
-    domains.willAnswer(DomainAssertion.registered());
-
-    given()
-        .contentType(ContentType.JSON)
-        .when()
-        .post("/projects/api/projects/" + projectId + "/reconcile")
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("environment", equalTo("FAILED"))
-        .body("domain", equalTo("REGISTERED"));
   }
 
   /**
@@ -184,7 +149,6 @@ public class ProjectReconcileControllerTest {
         .post("/projects/api/projects/" + project.id + "/reconcile")
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
-        .body("environment", equalTo("CREATED"))
         .body("domain", equalTo("NOT_CONFIGURED"))
         .body("domainDetail", containsString("no dns record"));
 

@@ -1,15 +1,18 @@
 package eu.wohlben.qits.projects.control;
 
 /**
- * What one reconcile actually <em>did</em>, per target: the answer {@code POST
+ * What one reconcile actually <em>did</em>: the answer {@code POST
  * /projects/api/projects/{projectId}/reconcile} reports back (main-environment-plan.md §5,
  * "Automatic drift healing").
  *
- * <p><b>An outcome is not an error.</b> Creation's two hooks are fire-and-forget, so a missed
- * environment or registration leaves nothing behind but a warn line in a log nobody is watching;
- * this type exists so the manual remedy answers with what happened instead. A target that failed is
- * therefore a <em>value</em> here and not an exception — a reconcile whose environment failed and
- * whose domain registered did half its job, and the caller has to be able to see which half.
+ * <p><b>An outcome is not an error.</b> Creation's domain hook is fire-and-forget, so a missed
+ * registration leaves nothing behind but a warn line in a log nobody is watching; this type exists
+ * so the manual remedy answers with what happened instead. A failure is therefore a <em>value</em>
+ * here and not an exception — the caller asked what happened, not for it to work.
+ *
+ * <p>One target, deliberately: a project used to announce a deployment environment too, and that
+ * half is gone. qits-cd owns environments now — deliberate tiers created over its REST surface, not
+ * one per project — so there is nothing here to re-assert on its behalf.
  *
  * <p>Two outcomes carry a decision worth naming:
  *
@@ -29,7 +32,7 @@ package eu.wohlben.qits.projects.control;
  * remote service's response text and a reconcile must not answer with a megabyte of somebody else's
  * html.
  */
-public record ProjectReconciliation(EnvironmentAssertion environment, DomainAssertion domain) {
+public record ProjectReconciliation(DomainAssertion domain) {
 
   /**
    * The cap on a {@code detail}. Generous enough for a stack-frame-free exception message or a
@@ -37,18 +40,6 @@ public record ProjectReconciliation(EnvironmentAssertion environment, DomainAsse
    * transport.
    */
   static final int MAX_DETAIL = 200;
-
-  /** What re-asserting the project's {@code main} environment against qits-cd came to. */
-  public enum EnvironmentOutcome {
-    /** The environment did not exist and now does. */
-    CREATED,
-    /**
-     * The environment was already there — the steady state, and the reason re-asserting is safe.
-     */
-    ALREADY_EXISTS,
-    /** It could not be asserted: nothing was wired, the receiver refused, or it was unreachable. */
-    FAILED
-  }
 
   /** What re-asserting the project's dns record against qits-dns came to. */
   public enum DomainOutcome {
@@ -62,25 +53,7 @@ public record ProjectReconciliation(EnvironmentAssertion environment, DomainAsse
     FAILED
   }
 
-  /**
-   * One target's answer: the outcome, plus prose when the outcome alone does not explain itself.
-   */
-  public record EnvironmentAssertion(EnvironmentOutcome outcome, String detail) {
-
-    public static EnvironmentAssertion created() {
-      return new EnvironmentAssertion(EnvironmentOutcome.CREATED, null);
-    }
-
-    public static EnvironmentAssertion alreadyExists() {
-      return new EnvironmentAssertion(EnvironmentOutcome.ALREADY_EXISTS, null);
-    }
-
-    public static EnvironmentAssertion failed(String detail) {
-      return new EnvironmentAssertion(EnvironmentOutcome.FAILED, brief(detail));
-    }
-  }
-
-  /** The registrar's counterpart of {@link EnvironmentAssertion}. */
+  /** The answer: the outcome, plus prose when the outcome alone does not explain itself. */
   public record DomainAssertion(DomainOutcome outcome, String detail) {
 
     public static DomainAssertion registered() {

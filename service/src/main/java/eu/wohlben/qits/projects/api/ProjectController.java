@@ -153,31 +153,25 @@ public class ProjectController {
   }
 
   /**
-   * The manual drift remedy (main-environment-plan.md §5): re-assert this project's stored
-   * deployment facts against qits-cd and qits-dns, synchronously, and answer with what each of them
-   * came to.
+   * The manual drift remedy (main-environment-plan.md §5): re-assert this project's stored dns
+   * record against qits-dns, synchronously, and answer with what it came to.
    *
-   * <p><b>Partial failure is still a 200.</b> The outcomes <em>are</em> the result — a reconcile
-   * whose environment failed and whose domain registered did half its job and has to say so — so
-   * the only error is the one thing that makes the request itself wrong: an unknown project, a 404
-   * like every other project route. Turning a failed target into a 5xx would throw away the half
-   * that worked.
+   * <p><b>A failure is still a 200.</b> The outcome <em>is</em> the result, so the only error is the
+   * one thing that makes the request itself wrong: an unknown project, a 404 like every other
+   * project route.
+   *
+   * <p>It used to re-assert a deployment environment against qits-cd too. qits-cd owns environments
+   * now — deliberate tiers created over its REST surface, not one per project.
    */
   public static record ReconcileProjectRequest() {
     /**
-     * @param environment what re-asserting the {@code main} environment came to
-     * @param environmentDetail why, when the outcome does not say it: a status code, an unreachable
-     *     receiver, or that no notifier is wired at all. Null when there is nothing to add.
      * @param domain what re-asserting the dns record came to — {@code NOT_CONFIGURED} when the
      *     project stores none, which is not a failure
-     * @param domainDetail the same, for the domain: the name no zone contained, the receiver's
-     *     refusal, or null
+     * @param domainDetail why, when the outcome does not say it: the name no zone contained, the
+     *     receiver's refusal, or that no registrar is wired at all. Null when there is nothing to
+     *     add.
      */
-    public record Response(
-        ProjectReconciliation.EnvironmentOutcome environment,
-        String environmentDetail,
-        ProjectReconciliation.DomainOutcome domain,
-        String domainDetail) {}
+    public record Response(ProjectReconciliation.DomainOutcome domain, String domainDetail) {}
   }
 
   /**
@@ -188,27 +182,22 @@ public class ProjectController {
   @POST
   @Path("/{projectId}/reconcile")
   @Operation(
-      summary = "Re-assert a project's environment and domain against qits-cd and qits-dns",
+      summary = "Re-assert a project's domain against qits-dns",
       description =
-          "Project creation announces both facts fire-and-forget, so a receiver that was down when"
-              + " a project was created leaves the environment or the dns record missing with"
-              + " nothing to carry it forward. This re-asserts both synchronously and reports the"
-              + " outcome of each; both receivers are idempotent, so it is safe to repeat, and it"
-              + " is also how a project created before either hook existed gets its environment and"
-              + " record.")
+          "Project creation registers the dns record fire-and-forget, so a receiver that was down"
+              + " when a project was created leaves the record missing with nothing to carry it"
+              + " forward. This re-asserts it synchronously and reports the outcome; the receiver is"
+              + " idempotent, so it is safe to repeat, and it is also how a project created before"
+              + " the hook existed gets its record.")
   @APIResponse(
       responseCode = "200",
       description =
-          "The reconcile ran. Each target reports its own outcome, and a failed one is still a 200"
-              + " — the outcomes are the result.")
+          "The reconcile ran. A failed re-assertion is still a 200 — the outcome is the result.")
   @APIResponse(responseCode = "404", description = "No such project")
   public ReconcileProjectRequest.Response reconcile(@PathParam("projectId") String projectId) {
     var reconciliation = projectReconcileService.reconcile(projectId);
     return new ReconcileProjectRequest.Response(
-        reconciliation.environment().outcome(),
-        reconciliation.environment().detail(),
-        reconciliation.domain().outcome(),
-        reconciliation.domain().detail());
+        reconciliation.domain().outcome(), reconciliation.domain().detail());
   }
 
   public static record DeleteProjectRequest() {

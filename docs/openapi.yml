@@ -235,12 +235,6 @@ components:
       properties:
         submodule:
           $ref: "#/components/schemas/RepositorySubmoduleDto"
-    EnvironmentOutcome:
-      type: string
-      enum:
-      - CREATED
-      - ALREADY_EXISTS
-      - FAILED
     EpicDto:
       type: object
       properties:
@@ -404,10 +398,6 @@ components:
     Response17:
       type: object
       properties:
-        environment:
-          $ref: "#/components/schemas/EnvironmentOutcome"
-        environmentDetail:
-          type: string
         domain:
           $ref: "#/components/schemas/DomainOutcome"
         domainDetail:
@@ -1022,13 +1012,12 @@ paths:
       - Project Epics Controller
   /projects/api/projects/{projectId}/reconcile:
     post:
-      summary: Re-assert a project's environment and domain against qits-cd and qits-dns
-      description: "Project creation announces both facts fire-and-forget, so a receiver\
-        \ that was down when a project was created leaves the environment or the dns\
-        \ record missing with nothing to carry it forward. This re-asserts both synchronously\
-        \ and reports the outcome of each; both receivers are idempotent, so it is\
-        \ safe to repeat, and it is also how a project created before either hook\
-        \ existed gets its environment and record."
+      summary: Re-assert a project's domain against qits-dns
+      description: "Project creation registers the dns record fire-and-forget, so\
+        \ a receiver that was down when a project was created leaves the record missing\
+        \ with nothing to carry it forward. This re-asserts it synchronously and reports\
+        \ the outcome; the receiver is idempotent, so it is safe to repeat, and it\
+        \ is also how a project created before the hook existed gets its record."
       parameters:
       - name: projectId
         in: path
@@ -1037,8 +1026,8 @@ paths:
           type: string
       responses:
         "200":
-          description: "The reconcile ran. Each target reports its own outcome, and\
-            \ a failed one is still a 200 — the outcomes are the result."
+          description: The reconcile ran. A failed re-assertion is still a 200 — the
+            outcome is the result.
           content:
             application/json:
               schema:

@@ -15,8 +15,14 @@ import java.util.Optional;
  * registration instead of writing to a nameserver, and answers the synchronous half with whatever
  * the test scripted.
  *
- * <p>The seam, not the wire — the counterpart of {@link RecordingProjectEnvironmentNotifier}, whose
- * javadoc explains why both are {@code @Alternative @Priority}. Zone resolution, the
+ * <p><b>{@code @Alternative @Priority}, and that is load-bearing in {@code service}'s suite.</b>
+ * There the real {@code DnsDomainRegistrar} is a bean too, so the port would have two
+ * implementations and {@code ProjectReconcileService} — which has one answer to give and so takes
+ * the first candidate — would report whichever the container happened to hand it. A global
+ * alternative makes this the only implementation, which is what lets a controller test script an
+ * outcome and then assert it. In {@code domain}'s own suite there is nothing else to displace.
+ *
+ * <p>The seam, not the wire. Zone resolution, the
  * apex-versus-label spelling, the token header and how a status code becomes an outcome are
  * qits-dns' contract and are pinned by {@code DnsDomainRegistrarTest}; what this proves is that a
  * created project asks at all, with the record it was created with, that one without a record asks
@@ -69,8 +75,9 @@ public class RecordingProjectDomainRegistrar implements ProjectDomainRegistrar {
   }
 
   /**
-   * Forgets everything recorded so far and restores the default answer — see {@link
-   * RecordingProjectEnvironmentNotifier#clear()}.
+   * Forgets everything recorded so far and restores the default answer. {@code @QuarkusTest} shares
+   * one application — and therefore one instance of this bean — across a class, so a test that
+   * counts registrations or scripts an outcome has to start from a known state.
    */
   public synchronized void clear() {
     registrations.clear();

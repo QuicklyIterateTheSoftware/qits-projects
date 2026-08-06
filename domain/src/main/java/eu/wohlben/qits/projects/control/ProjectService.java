@@ -41,10 +41,8 @@ public class ProjectService {
 
   @Inject RepositoryService repositoryService;
 
-  // Fired by #announce after a creation commits. Optional, like every port here — see each
+  // Fired by #announce after a creation commits. Optional, like every port here — see the
   // interface's javadoc for what absent means and why it is a supported configuration.
-  @Inject Instance<ProjectEnvironmentNotifier> environmentNotifiers;
-
   @Inject Instance<ProjectDomainRegistrar> domainRegistrars;
 
   /**
@@ -85,13 +83,13 @@ public class ProjectService {
    * enforcement.
    *
    * <p><b>Every overload lands here, and so every creation announces itself</b> ({@link #announce})
-   * — the REST controller, the self-seed and anything added later get the project's environment and
-   * its domain registration without knowing either port exists. That is the whole reason the hooks
-   * hang off the service rather than off the controller.
+   * — the REST controller, the self-seed and anything added later get the project's domain
+   * registration without knowing the port exists. That is the whole reason the hook hangs off the
+   * service rather than off the controller.
    *
    * <p><b>Not {@code @Transactional}.</b> The row and its wrapper are committed by an explicit
-   * {@link QuarkusTransaction#requiringNew()} block and the ports are called <em>after</em> it, so
-   * an implementation that reads the project back finds it — the arrangement {@code
+   * {@link QuarkusTransaction#requiringNew()} block and the port is called <em>after</em> it, so an
+   * implementation that reads the project back finds it — the arrangement {@code
    * CiRunService.notifyCd} uses for the same reason. An interceptor on this method would put the
    * announcement inside the transaction it is meant to follow, and a self-invoked
    * {@code @Transactional} helper would not be intercepted at all.
@@ -138,26 +136,21 @@ public class ProjectService {
   }
 
   /**
-   * Tells the two creation ports the project exists — its standing deployment target and its domain
-   * (main-environment-plan.md §1).
+   * Tells the creation port the project exists — its domain.
    *
    * <p>Called after the creating transaction commits, so an implementation that reads the project
    * back sees it. <b>Every failure is swallowed</b>: a project must never fail to exist because a
    * sibling service was down, and a caller who gets a 500 from a creation that in fact succeeded is
-   * worse off than one whose environment appears a boot later. Absent implementations are a
-   * supported configuration on both ports.
+   * worse off than one whose record appears a boot later. An absent implementation is a supported
+   * configuration.
    *
    * <p>The registrar is skipped, silently, for a project with no record — that is the documented
    * "no domain" state, not a failure to configure one.
+   *
+   * <p>A project no longer announces a deployment environment. qits-cd owns environments now: they
+   * are deliberate tiers created over its own REST surface, not one per project.
    */
   private void announce(Project project) {
-    for (ProjectEnvironmentNotifier notifier : environmentNotifiers) {
-      try {
-        notifier.onProjectCreated(project.id, project.name, project.slug);
-      } catch (RuntimeException e) {
-        LOG.warnf(e, "Environment announcement for project %s failed", project.id);
-      }
-    }
     if (project.dns == null) {
       return;
     }

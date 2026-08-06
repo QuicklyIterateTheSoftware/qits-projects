@@ -15,7 +15,6 @@ import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import eu.wohlben.qits.projects.persistence.RepositorySubmoduleRepository;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import eu.wohlben.qits.projects.testsupport.RecordingProjectDomainRegistrar;
-import eu.wohlben.qits.projects.testsupport.RecordingProjectEnvironmentNotifier;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -98,14 +97,12 @@ public class SelfSeedServiceTest {
   @Inject RepositoryRepository repositoryRepository;
   @Inject RepositoryNameRepository repositoryNameRepository;
   @Inject RepositorySubmoduleRepository submoduleRepository;
-  @Inject RecordingProjectEnvironmentNotifier environments;
   @Inject RecordingProjectDomainRegistrar domains;
 
   /** A clean slate each method — {@code @QuarkusTest} shares one in-memory DB across the class. */
   @BeforeEach
   void clean() {
     List.copyOf(projectService.list()).forEach(p -> projectService.delete(p.id));
-    environments.clear();
     domains.clear();
   }
 
@@ -431,37 +428,38 @@ public class SelfSeedServiceTest {
 
   /**
    * This profile sets none of {@code qits.startup-seed.dns-domain}/{@code -type}/{@code -value},
-   * which is the SHIPPED default: the seeded project is created with no domain, registers nothing,
-   * and still gets its {@code main} environment (main-environment-plan.md §3). The configured half
-   * is {@link SelfSeedDnsTest}, which needs a profile of its own.
+   * which is the SHIPPED default: the seeded project is created with no domain and registers
+   * nothing (main-environment-plan.md §3). The configured half is {@link SelfSeedDnsTest}, which
+   * needs a profile of its own.
    */
   @Test
-  public void withNoDnsConfiguredTheSeededProjectGetsAnEnvironmentAndNoDomain() {
+  public void withNoDnsConfiguredTheSeededProjectGetsNoDomain() {
     selfSeedService.reconcile();
 
     Project project = qitsProject();
     assertNull(project.dns, "the nullable columns exist for exactly this");
-    assertTrue(environments.announcementFor(project.id).isPresent());
     assertTrue(domains.registrations().isEmpty(), "nothing to register, so nothing was asked");
   }
 
   /**
    * The accepted asymmetry (main-environment-plan.md §3): a reconcile that FINDS the project
-   * creates nothing, so the hooks do not fire for it. Pinned rather than left implicit — it is the
+   * creates nothing, so the hook does not fire for it. Pinned rather than left implicit — it is the
    * one thing about this feature an operator has to know, and a later change that made the
    * reconcile hook-aware should have to edit this assertion on purpose.
+   *
+   * <p>This profile configures no dns, so the registrar records nothing either way; {@link
+   * SelfSeedDnsTest} is where the same asymmetry is visible with a record configured.
    */
   @Test
   public void aReconcileThatFindsTheProjectFiresNoHooksForIt() {
     selfSeedService.reconcile();
     String projectId = qitsProject().id;
-    environments.clear();
     domains.clear();
 
     selfSeedService.reconcile();
 
     assertTrue(
-        environments.announcementFor(projectId).isEmpty(),
+        domains.registrationFor(projectId).isEmpty(),
         "the project was matched by name, not created — one curl closes this per project");
   }
 }

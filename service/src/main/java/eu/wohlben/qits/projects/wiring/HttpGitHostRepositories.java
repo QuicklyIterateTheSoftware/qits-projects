@@ -33,7 +33,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * class adds zero native-image registrations.
  *
  * <p>The {@link HttpClient} is an <b>instance</b> field, not static — the native-image rule
- * qits-artifacts' {@code CiPostReceiveNotifier} carries and this repo's {@code CdEnvironmentNotifier}
+ * qits-artifacts' {@code CiPostReceiveNotifier} carries and this repo's {@code DnsDomainRegistrar}
  * copies: a static client is built at image-build time and native-image refuses the {@code
  * HttpClientFacade} that lands in the heap. {@code @ApplicationScoped} keeps it one client per
  * process.

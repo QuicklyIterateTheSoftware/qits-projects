@@ -77,14 +77,19 @@ public class DnsDomainRegistrar implements ProjectDomainRegistrar {
   /** The zone-relative spelling of a name that <em>is</em> the zone apex. */
   static final String APEX = "@";
 
-  /** Connect and exchange budgets, shared by both paths — see {@link CdEnvironmentNotifier}. */
+  /**
+   * Connect and exchange budgets, shared by both paths. Short: the receiver is a sibling service on
+   * the same network, and the reconcile is waited on by a person.
+   */
   static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
 
   static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
 
   /**
-   * An <b>instance</b> field, not a static one — see {@link CdEnvironmentNotifier}, which carries
-   * the native-image reasoning in full.
+   * An <b>instance</b> field, not a static one — the native-image constraint qits-artifacts' {@code
+   * CiPostReceiveNotifier} documents at length: a static {@code HttpClient} is created at image
+   * build time and native-image refuses the heap it lands in. {@code @ApplicationScoped} keeps it
+   * one client per process.
    */
   private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
@@ -156,9 +161,10 @@ public class DnsDomainRegistrar implements ProjectDomainRegistrar {
    *
    * <p>Every branch of the asynchronous path has a counterpart here, over the same shared helpers —
    * the unreadable zone list, the name no zone contains (no write attempted, exactly as at
-   * creation), the receiver's refusal. The whole 2xx class is {@code REGISTERED} for the reason
-   * {@link CdEnvironmentNotifier#ensureEnvironment} gives: reporting a successful write as a
-   * failure is the more expensive way to be wrong.
+   * creation), the receiver's refusal. The whole 2xx class is {@code REGISTERED} rather than 200
+   * alone: reporting a successful write as a failure because the receiver started answering 201
+   * would send an operator hunting a fault that does not exist — the expensive direction of a wrong
+   * guess.
    */
   @Override
   public DomainAssertion registerNow(

@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 /**
  * The one native-image invariant this package's classes carry, pinned where the JVM suite can still
  * see it — the same rule qits-artifacts' {@code CiPostReceiveNotifier} states and this repo's {@code
- * CdEnvironmentNotifier} already follows: a {@code static} {@link HttpClient} is built at
+ * DnsDomainRegistrar} already follows: a {@code static} {@link HttpClient} is built at
  * image-build time, and native-image refuses the {@code HttpClientFacade} that lands in the heap.
  *
  * <p>Nothing here proves a native image works — that needs the binary. What it prevents is the

@@ -11,9 +11,10 @@ import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
  * deployment with no nameserver of its own stores the record and registers nothing, which is
  * exactly what a project whose domain is managed at a registrar's control panel wants.
  *
- * <p><b>Fire-and-forget</b>, on the same terms as {@link ProjectEnvironmentNotifier}: called after
- * the creating transaction commits, and a throwing implementation is logged rather than failing the
- * creation.
+ * <p><b>Fire-and-forget, and that is a contract on both sides.</b> Called by {@code
+ * ProjectService.create} <em>after</em> the creating transaction commits, so an implementation that
+ * reads the project back sees it; and an implementation that throws is logged and swallowed,
+ * because a project must never fail to exist because a sibling service was down.
  *
  * <p><b>The zone is not this context's to invent.</b> An implementation resolves the name against
  * the zones that exist and, finding none that contains it, must warn and stop — a zone is a
@@ -40,9 +41,19 @@ public interface ProjectDomainRegistrar {
 
   /**
    * Make the same registration <b>now</b>, and answer with what happened — the synchronous half of
-   * this port, driven by {@code ProjectReconcileService} on a request thread and therefore bounded,
-   * total and idempotent on the terms {@link ProjectEnvironmentNotifier#ensureEnvironment} spells
-   * out.
+   * this port, driven by {@code ProjectReconcileService} on a request thread. Three obligations
+   * follow from that thread:
+   *
+   * <ul>
+   *   <li><b>Bounded.</b> An implementation must carry its own connect and request timeouts; a
+   *       person waiting on an answer is the deadline.
+   *   <li><b>Total.</b> Every failure is a {@link ProjectReconciliation.DomainOutcome#FAILED} with a
+   *       reason, not a thrown exception — a receiver being down is the answer, not an error in
+   *       answering. A thrown exception is still caught by the caller, but as a defect rather than
+   *       as the contract.
+   *   <li><b>Idempotent.</b> The receiver being idempotent is what makes re-asserting legitimate at
+   *       all.
+   * </ul>
    *
    * <p>The documented stop becomes a reportable outcome here: no zone containing the name is {@link
    * ProjectReconciliation.DomainOutcome#NO_MATCHING_ZONE} with <b>no write attempted</b>, which is

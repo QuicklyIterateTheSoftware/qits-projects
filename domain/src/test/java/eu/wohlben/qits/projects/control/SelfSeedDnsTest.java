@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
 import eu.wohlben.qits.projects.testsupport.RecordingProjectDomainRegistrar;
-import eu.wohlben.qits.projects.testsupport.RecordingProjectEnvironmentNotifier;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
@@ -50,13 +49,11 @@ public class SelfSeedDnsTest {
 
   @Inject SelfSeedService selfSeedService;
   @Inject ProjectService projectService;
-  @Inject RecordingProjectEnvironmentNotifier environments;
   @Inject RecordingProjectDomainRegistrar domains;
 
   @BeforeEach
   void clean() {
     List.copyOf(projectService.list()).forEach(p -> projectService.delete(p.id));
-    environments.clear();
     domains.clear();
   }
 
@@ -75,7 +72,6 @@ public class SelfSeedDnsTest {
     assertEquals(ProjectDnsRecordType.CNAME, project.dns.type);
     assertEquals(VALUE, project.dns.value);
 
-    assertTrue(environments.announcementFor(project.id).isPresent(), "and its environment too");
     var registration = domains.registrationFor(project.id).orElseThrow();
     assertEquals(DOMAIN, registration.domain());
     assertEquals(ProjectDnsRecordType.CNAME, registration.type());

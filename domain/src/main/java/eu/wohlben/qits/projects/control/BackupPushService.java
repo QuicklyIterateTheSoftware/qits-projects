@@ -1,5 +1,7 @@
 package eu.wohlben.qits.projects.control;
 
+import eu.wohlben.qits.projects.entity.BackupOutcome;
+import eu.wohlben.qits.projects.error.BadRequestException;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -147,20 +149,53 @@ public class BackupPushService {
     try {
       String output = repositoryService.backupToTwin(repoId);
       LOG.debugf("Backed up %s: %s", repoId, output);
+      repositoryService.recordBackupOutcome(repoId, BackupOutcome.SUCCEEDED, null);
+    } catch (BadRequestException noTarget) {
+      // A repository with no forge twin is nothing to do, not something that went wrong — and
+      // recording an outcome for it would put a red line on a row that is behaving correctly.
+      LOG.debugf("Backup of %s skipped: %s", repoId, noTarget.getMessage());
     } catch (RuntimeException e) {
       String message = e.getMessage();
-      if (GitRemoteAuth.isAuthFailure(message)) {
+      BackupOutcome outcome = classify(message);
+      if (outcome == BackupOutcome.AUTH_REQUIRED) {
         LOG.warnf(
             "Backup of %s was refused for want of credentials — sign in to its remote to restore"
-                + " it: %s",
+                + " it, which fixes every repository on that host at once: %s",
             repoId, message);
       } else {
-        LOG.warnf("Backup of %s failed: %s", repoId, message);
+        LOG.warnf("Backup of %s failed (%s): %s", repoId, outcome, message);
       }
+      repositoryService.recordBackupOutcome(repoId, outcome, message);
     } finally {
       state.completed.incrementAndGet();
       state.running.unlock();
     }
+  }
+
+  /**
+   * Which kind of failure this was, from what git said.
+   *
+   * <p>Three outcomes rather than one because they ask three different things of a person: a
+   * credential wall is a sign-in away, an unreachable forge is usually somebody else's outage that
+   * fixes itself, and everything else is worth reading the detail line for. Matching on git's
+   * English is what every other classifier here does ({@code GitRemoteAuth.isAuthFailure}, the
+   * non-fast-forward check) and is why {@code GitExecutor} pins {@code LC_ALL=C}.
+   */
+  static BackupOutcome classify(String message) {
+    if (GitRemoteAuth.isAuthFailure(message)) {
+      return BackupOutcome.AUTH_REQUIRED;
+    }
+    String lower = message == null ? "" : message.toLowerCase(java.util.Locale.ROOT);
+    boolean unreachable =
+        lower.contains("could not resolve host")
+            || lower.contains("couldn't resolve host")
+            || lower.contains("connection refused")
+            || lower.contains("connection timed out")
+            || lower.contains("operation timed out")
+            || lower.contains("network is unreachable")
+            || lower.contains("no route to host")
+            || lower.contains("failed to connect");
+    return unreachable ? BackupOutcome.UNREACHABLE : BackupOutcome.FAILED;
   }
 
   /** {@link #backupQuietly} for a repository the caller names — the suite's and the sweep's seam. */

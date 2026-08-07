@@ -268,6 +268,118 @@ public class ProjectRepositoryControllerTest {
         .body("wrapper.entries[0].name", equalTo("keeper"));
   }
 
+  // --- backup triggers ---
+
+  /**
+   * The button beside a red backup status. 202 and not 200: the answer is "queued", and what it came
+   * to lands on the repository's own {@code lastBackup} rather than in this response.
+   */
+  @Test
+  public void aRepositoryCanBeAskedToBackItselfUpNow() {
+    String projectId = createProject("Backup Trigger One");
+    String repoId =
+        postRepository(projectId, fixtureUrl, null, RepositoryArchetype.SERVICE)
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .path("repository.id");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/projects/api/repositories/" + repoId + "/backup-sync")
+        .then()
+        .statusCode(Response.Status.ACCEPTED.getStatusCode())
+        .body("repositoryId", equalTo(repoId))
+        .body("scheduled", equalTo(true));
+  }
+
+  /** An impatient second click folds into the first run rather than starting a second push. */
+  @Test
+  public void repeatedTriggersAreAcceptedAndCollapse() {
+    String projectId = createProject("Backup Trigger Burst");
+    String repoId =
+        postRepository(projectId, fixtureUrl, null, RepositoryArchetype.SERVICE)
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .path("repository.id");
+
+    for (int i = 0; i < 5; i++) {
+      given()
+          .contentType(ContentType.JSON)
+          .when()
+          .post("/projects/api/repositories/" + repoId + "/backup-sync")
+          .then()
+          .statusCode(Response.Status.ACCEPTED.getStatusCode());
+    }
+  }
+
+  @Test
+  public void triggeringAnUnknownRepositoryIsA404() {
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/projects/api/repositories/no-such-repository/backup-sync")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  /**
+   * The project-wide form, for the case a sign-in has just fixed the credentials every repository
+   * was failing on. The count is what was scheduled, so a row with no twin is not in it.
+   */
+  @Test
+  public void aWholeProjectCanBeAskedToBackItselfUp() {
+    String projectId = createProject("Backup Trigger All");
+    postRepository(projectId, fixtureUrl, null, RepositoryArchetype.SERVICE)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/projects/api/projects/" + projectId + "/repositories/backup-sync")
+        .then()
+        .statusCode(Response.Status.ACCEPTED.getStatusCode())
+        .body("projectId", equalTo(projectId))
+        // The attached repository has a twin; the greenfield wrapper does not, so it is not counted.
+        .body("scheduled", equalTo(1));
+  }
+
+  @Test
+  public void aProjectWithNothingToBackUpSchedulesNothing() {
+    String projectId = createProject("Backup Trigger Empty");
+
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/projects/api/projects/" + projectId + "/repositories/backup-sync")
+        .then()
+        .statusCode(Response.Status.ACCEPTED.getStatusCode())
+        .body("scheduled", equalTo(0));
+  }
+
+  @Test
+  public void triggeringAnUnknownProjectIsA404() {
+    given()
+        .contentType(ContentType.JSON)
+        .when()
+        .post("/projects/api/projects/no-such-project/repositories/backup-sync")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  /** Never attempted is not a status, and the DTO says so by leaving the block off entirely. */
+  @Test
+  public void aFreshRepositoryReportsNoBackupYet() {
+    String projectId = createProject("Backup Dto Shape");
+    postRepository(projectId, null, "untouched", RepositoryArchetype.LIBRARY)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.lastBackup", nullValue());
+  }
+
   /**
    * A repository under the project that the wrapper does not declare. Registered through the domain
    * service rather than the create route, because the create route is precisely what would also add

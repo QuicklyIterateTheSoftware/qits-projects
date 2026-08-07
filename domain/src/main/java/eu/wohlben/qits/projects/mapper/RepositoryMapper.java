@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.mapper;
 
+import eu.wohlben.qits.projects.dto.LastBackupDto;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
@@ -25,9 +26,23 @@ public abstract class RepositoryMapper {
    */
   @Mapping(target = "projectId", source = "project.id")
   @Mapping(target = "backupUrl", source = "url")
+  @Mapping(target = "lastBackup", expression = "java(lastBackupOf(entity))")
   @Mapping(
       target = "name",
       expression = "java(entity == null ? null : repositoryNames.nameFor(entity).orElse(null))")
   @SuppressWarnings("deprecation")
   public abstract RepositoryDto toDto(Repository entity);
+
+  /**
+   * The backup status block, or null when this repository has never been backed up. Null rather than
+   * an object with null fields: "never attempted" is one fact, and a client should not have to read
+   * three fields to learn it.
+   */
+  protected static LastBackupDto lastBackupOf(Repository entity) {
+    if (entity == null || entity.lastBackupOutcome == null) {
+      return null;
+    }
+    return new LastBackupDto(
+        entity.lastBackupOutcome, entity.lastBackupAt, entity.lastBackupDetail);
+  }
 }

@@ -32,6 +32,23 @@ public class Repository extends PanacheEntityBase {
   @Column(name = "config_warning", length = 4000)
   public String configWarning;
 
+  /**
+   * When this repository was last backed up to its forge twin — attempted, not necessarily
+   * succeeded. Null means never attempted, which is a different thing from failing and reads that
+   * way everywhere.
+   */
+  @Column(name = "last_backup_at")
+  public java.time.Instant lastBackupAt;
+
+  /** How that attempt went. Null exactly when {@link #lastBackupAt} is. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "last_backup_outcome")
+  public BackupOutcome lastBackupOutcome;
+
+  /** The short human line behind a non-success outcome; cleared by a success. */
+  @Column(name = "last_backup_detail", length = 1000)
+  public String lastBackupDetail;
+
   // SEAM (migration-plan.md §6): the `workspaces` @OneToMany is gone. The Workspace entity and the
   // `workspace` table belong to qits-workspaces, in a different physical database (§7), so neither
   // a JPA relation nor a foreign key can span the two. Workspaces reach a repository by String id

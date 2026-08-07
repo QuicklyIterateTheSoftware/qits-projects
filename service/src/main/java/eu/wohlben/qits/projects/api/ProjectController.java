@@ -1,8 +1,10 @@
 package eu.wohlben.qits.projects.api;
 
+import eu.wohlben.qits.projects.control.BackupPushService;
 import eu.wohlben.qits.projects.control.ProjectReconcileService;
 import eu.wohlben.qits.projects.control.ProjectReconciliation;
 import eu.wohlben.qits.projects.control.ProjectService;
+import eu.wohlben.qits.projects.control.RepositoryService;
 import eu.wohlben.qits.projects.control.WrapperReconcileService;
 import eu.wohlben.qits.projects.dto.ProjectDto;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
@@ -29,7 +31,10 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.jboss.resteasy.reactive.ResponseStatus;
 
 @Path("/projects")
 @Produces(MediaType.APPLICATION_JSON)
@@ -43,6 +48,11 @@ public class ProjectController {
 
   /** The wrapper-driven repository reconcile — see {@link #reconcileRepositories}. */
   @Inject WrapperReconcileService wrapperReconcileService;
+
+  /** The debounced backup runner the project-wide trigger hands off to. */
+  @Inject BackupPushService backupPushService;
+
+  @Inject RepositoryService repositoryService;
 
   @Inject ProjectMapper projectMapper;
 
@@ -279,6 +289,46 @@ public class ProjectController {
             projectId, request.url(), request.name(), request.archetype());
     return new CreateProjectRepositoryRequest.Response(
         repositoryMapper.toDto(created.repository()), projectId, created.wrapperPath());
+  }
+
+  public static record BackupSyncProjectRequest() {
+    /**
+     * @param scheduled how many repositories were queued — every row of the project that has a forge
+     *     twin. A row without one is not counted, because nothing was scheduled for it.
+     */
+    public record Response(String projectId, int scheduled) {}
+  }
+
+  /**
+   * Back every repository of this project up to its forge twin now — the project-wide form of the
+   * per-repository button, for the case a sign-in has just fixed the credentials all of them were
+   * failing on.
+   *
+   * <p>202: the runs are queued and debounced per repository, so pressing it twice schedules the
+   * same work once. Each outcome lands on its own repository's {@code lastBackup}; there is no
+   * aggregate verdict to wait for, and inventing one would mean holding the request open across
+   * every forge this project pushes to.
+   */
+  @POST
+  @Path("/{projectId}/repositories/backup-sync")
+  @ResponseStatus(202)
+  @Operation(
+      summary = "Back up every repository of this project to its forge twin",
+      description =
+          "Schedules a backup per repository that has a twin, debounced per repository. Outcomes"
+              + " land on each repository's lastBackup rather than in this response.")
+  @APIResponse(
+      responseCode = "202",
+      description = "Queued; the body says how many",
+      content =
+          @Content(schema = @Schema(implementation = BackupSyncProjectRequest.Response.class)))
+  @APIResponse(responseCode = "404", description = "No such project")
+  public BackupSyncProjectRequest.Response backupSyncProject(
+      @PathParam("projectId") String projectId) {
+    projectService.get(projectId); // 404 for an unknown project, like every other project route
+    List<String> repoIds = repositoryService.repositoryIdsWithBackupTwin(projectId);
+    repoIds.forEach(backupPushService::onPush);
+    return new BackupSyncProjectRequest.Response(projectId, repoIds.size());
   }
 
   public static record ReconcileProjectRepositoriesRequest() {

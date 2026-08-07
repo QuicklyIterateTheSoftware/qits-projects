@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.api;
 
+import eu.wohlben.qits.projects.control.BackupPushService;
 import eu.wohlben.qits.projects.control.CommitService;
 import eu.wohlben.qits.projects.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.projects.control.RepositoryService;
@@ -25,6 +26,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.jboss.resteasy.reactive.ResponseStatus;
 
 @Path("/repositories")
 @Produces(MediaType.APPLICATION_JSON)
@@ -32,6 +38,9 @@ import java.util.List;
 public class RepositoryController {
 
   @Inject RepositoryService repositoryService;
+
+  /** The debounced backup runner both trigger routes hand off to. */
+  @Inject BackupPushService backupPushService;
 
   @Inject CommitService commitService;
 
@@ -151,6 +160,43 @@ public class RepositoryController {
   public SyncRepositoryRequest.Response sync(@PathParam("repoId") String repoId) {
     String technicalProcessId = repositoryService.beginSyncRepository(repoId);
     return new SyncRepositoryRequest.Response(technicalProcessId);
+  }
+
+  public static record BackupSyncRequest() {
+    /**
+     * @param scheduled always true — the run is queued, not finished. What it came to lands on the
+     *     repository's {@code lastBackup}, which is what a client polls or refetches.
+     */
+    public record Response(String repositoryId, boolean scheduled) {}
+  }
+
+  /**
+   * Ask for this repository to be backed up to its forge twin now, rather than waiting for its next
+   * push or the hourly sweep — the button beside a red backup status.
+   *
+   * <p>202 and not 200: the answer is "queued", and the run itself is debounced per repository, so
+   * an impatient second click folds into the first rather than starting a second push against the
+   * same mirror. A repository with no twin is accepted and does nothing, for the same reason the
+   * git host's intake accepts one: the caller cannot act on that distinction.
+   */
+  @POST
+  @Path("/{repoId}/backup-sync")
+  @ResponseStatus(202)
+  @Operation(
+      summary = "Back this repository up to its forge twin now",
+      description =
+          "Schedules the same backup the git host's post-receive triggers, debounced per repository."
+              + " The outcome lands on the repository's lastBackup rather than in this response.")
+  @APIResponse(
+      responseCode = "202",
+      description = "Queued",
+      content =
+          @Content(schema = @Schema(implementation = BackupSyncRequest.Response.class)))
+  @APIResponse(responseCode = "404", description = "No such repository")
+  public BackupSyncRequest.Response backupSync(@PathParam("repoId") String repoId) {
+    repositoryService.get(repoId); // 404 for an unknown id, like every other repository route
+    backupPushService.onPush(repoId);
+    return new BackupSyncRequest.Response(repoId, true);
   }
 
   @GET

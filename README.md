@@ -189,6 +189,22 @@ Two triggers keep the twin current, and they are not redundant:
 |---|---|
 | `POST /projects/api/events/post-receive` | qits-artifacts fans its `post-receive` here, so the twin is current within seconds of real work. Debounced per repository, because one `git push` of several branches is several events. Always answers 204 — the sender is a git hook inside somebody's push and can act on nothing else |
 | the hourly sweep | `ScheduledBackupSweep`, packaged runs only. The safety net for what the event path cannot notice: an event lost to a restart, a forge that was down for a minute, a credential that expired between pushes |
+| `POST /projects/api/repositories/{repoId}/backup-sync` | ask for one now — the button beside a red status. 202, debounced like the rest |
+| `POST /projects/api/projects/{projectId}/repositories/backup-sync` | ask for all of them now, `{scheduled: <n>}` — what you press after a sign-in |
+
+Every attempt, whichever trigger made it, is recorded on the row and surfaced as `RepositoryDto`'s
+`lastBackup: {outcome, at, detail}` — absent meaning never attempted, which is deliberately not the
+same as failing. The outcome is one of `SUCCEEDED`, `AUTH_REQUIRED`, `UNREACHABLE`, `FAILED`,
+because those four ask different things of a person: a credential wall is a sign-in away, an
+unreachable forge usually fixes itself, and the rest is worth reading `detail` for. A success clears
+`detail`.
+
+**`AUTH_REQUIRED` is fixed in the browser, once.** The sign-in terminal
+(`/projects/api/repositories/{repoId}/remote-login`) runs an interactive `git push` in a host-side
+PTY; git prompts, and on success `git credential-store` writes the shared file at
+`qits.repositories.credentials-file`. That store is keyed by host, not by repository, and every
+remote git verb here goes through it — so one sign-in against a forge restores the backups of every
+repository on it.
 
 Both go through `BackupPushService`, which swallows every failure — there is no caller left to hand
 one to — and logs an auth wall by name through the same classifier the sign-in terminal uses. The

@@ -35,6 +35,13 @@ components:
       - CREATE
       - UPDATE
       - DELETE
+    BackupOutcome:
+      type: string
+      enum:
+      - SUCCEEDED
+      - AUTH_REQUIRED
+      - UNREACHABLE
+      - FAILED
     BranchDto:
       type: object
       properties:
@@ -283,6 +290,15 @@ components:
       format: date-time
       examples:
       - 2022-03-10T16:15:50Z
+    LastBackupDto:
+      type: object
+      properties:
+        outcome:
+          $ref: "#/components/schemas/BackupOutcome"
+        at:
+          $ref: "#/components/schemas/Instant"
+        detail:
+          type: string
     Outcome:
       type: string
       enum:
@@ -362,6 +378,8 @@ components:
           $ref: "#/components/schemas/RepositoryArchetype"
         projectId:
           type: string
+        lastBackup:
+          $ref: "#/components/schemas/LastBackupDto"
     Response:
       type: object
       properties:
@@ -481,18 +499,21 @@ components:
     Response25:
       type: object
       properties:
+        projectId:
+          type: string
+        scheduled:
+          type: integer
+          format: int32
+    Response26:
+      type: object
+      properties:
         technicalProcessId:
           type: string
-    Response26:
+    Response27:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response27:
-      type: object
-      properties:
-        technicalProcessId:
-          type: string
     Response28:
       type: object
       properties:
@@ -501,8 +522,8 @@ components:
     Response29:
       type: object
       properties:
-        repository:
-          $ref: "#/components/schemas/RepositoryDto"
+        technicalProcessId:
+          type: string
     Response3:
       type: object
       properties:
@@ -511,8 +532,8 @@ components:
     Response30:
       type: object
       properties:
-        success:
-          type: boolean
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
     Response31:
       type: object
       properties:
@@ -521,11 +542,23 @@ components:
     Response32:
       type: object
       properties:
+        success:
+          type: boolean
+    Response33:
+      type: object
+      properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response33:
+    Response34:
+      type: object
+      properties:
+        repositoryId:
+          type: string
+        scheduled:
+          type: boolean
+    Response35:
       type: object
       properties:
         technicalProcessId:
@@ -1116,6 +1149,29 @@ paths:
       summary: Create Repository
       tags:
       - Project Controller
+  /projects/api/projects/{projectId}/repositories/backup-sync:
+    post:
+      summary: Back up every repository of this project to its forge twin
+      description: "Schedules a backup per repository that has a twin, debounced per\
+        \ repository. Outcomes land on each repository's lastBackup rather than in\
+        \ this response."
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "202":
+          description: Queued; the body says how many
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response25"
+        "404":
+          description: No such project
+      tags:
+      - Project Controller
   /projects/api/projects/{projectId}/repositories/reconcile:
     post:
       summary: Bring a project's repositories in line with its wrapper's .gitmodules
@@ -1159,7 +1215,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response29"
+                $ref: "#/components/schemas/Response30"
       summary: Get
       tags:
       - Repository Controller
@@ -1176,7 +1232,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response31"
+                $ref: "#/components/schemas/Response32"
       summary: Delete
       tags:
       - Repository Controller
@@ -1194,8 +1250,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response33"
+                $ref: "#/components/schemas/Response35"
       summary: Active Process
+      tags:
+      - Repository Controller
+  /projects/api/repositories/{repoId}/backup-sync:
+    post:
+      summary: Back this repository up to its forge twin now
+      description: "Schedules the same backup the git host's post-receive triggers,\
+        \ debounced per repository. The outcome lands on the repository's lastBackup\
+        \ rather than in this response."
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response34"
+        "404":
+          description: No such repository
       tags:
       - Repository Controller
   /projects/api/repositories/{repoId}/branches:
@@ -1218,7 +1297,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response30"
+                $ref: "#/components/schemas/Response31"
       summary: Delete Branch
       tags:
       - Repository Controller
@@ -1235,7 +1314,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response32"
+                $ref: "#/components/schemas/Response33"
       summary: Branches
       tags:
       - Repository Controller
@@ -1343,7 +1422,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response26"
+                $ref: "#/components/schemas/Response27"
         "400":
           description: Bad Request
       summary: Set Main Branch
@@ -1363,7 +1442,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response28"
+                $ref: "#/components/schemas/Response29"
       summary: Pull
       tags:
       - Repository Controller
@@ -1381,7 +1460,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response27"
+                $ref: "#/components/schemas/Response28"
       summary: Push
       tags:
       - Repository Controller
@@ -1399,7 +1478,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response25"
+                $ref: "#/components/schemas/Response26"
       summary: Sync
       tags:
       - Repository Controller

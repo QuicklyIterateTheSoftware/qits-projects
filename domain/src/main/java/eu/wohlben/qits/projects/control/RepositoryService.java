@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.control;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
 import eu.wohlben.qits.projects.error.NotFoundException;
+import eu.wohlben.qits.projects.entity.BackupOutcome;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.dto.BranchDto;
 import eu.wohlben.qits.projects.dto.SyncStatusDto;
@@ -469,6 +470,56 @@ public class RepositoryService {
     return repositoryRepository.find("url is not null and url <> ''").stream()
         .map(repo -> repo.id)
         .toList();
+  }
+
+  /** {@link #repositoryIdsWithBackupTwin()} narrowed to one project — the manual trigger's list. */
+  public List<String> repositoryIdsWithBackupTwin(String projectId) {
+    return repositoryRepository
+        .find("project.id = ?1 and url is not null and url <> ''", projectId)
+        .stream()
+        .map(repo -> repo.id)
+        .toList();
+  }
+
+  /** The longest {@code last_backup_detail} the column takes — see V5. */
+  private static final int MAX_BACKUP_DETAIL = 1000;
+
+  /**
+   * Records how a backup attempt went, on the row itself.
+   *
+   * <p>Written after <em>every</em> attempt, whichever trigger made it, because the value of the
+   * record is that it is complete: a repository whose twin has been failing for a week has to look
+   * different from one nobody has tried. A success clears the detail — a stale reason sitting beside
+   * a green outcome is worse than no reason at all.
+   *
+   * <p>A row that has since been deleted is not an error to report to anyone: the attempt was
+   * against a repository that no longer exists, and there is nothing left to write on.
+   */
+  @Transactional
+  public void recordBackupOutcome(String repoId, BackupOutcome outcome, String detail) {
+    Repository repo = repositoryRepository.findByIdOptional(repoId).orElse(null);
+    if (repo == null) {
+      return;
+    }
+    repo.lastBackupAt = java.time.Instant.now();
+    repo.lastBackupOutcome = outcome;
+    repo.lastBackupDetail =
+        outcome == BackupOutcome.SUCCEEDED ? null : shortDetail(detail);
+  }
+
+  /**
+   * The first line of a git failure, capped to the column. git's own message is many lines of
+   * progress and advice; the first line is the sentence, and the rest is what the log keeps.
+   */
+  private static String shortDetail(String detail) {
+    if (detail == null || detail.isBlank()) {
+      return null;
+    }
+    String first = detail.strip().lines().findFirst().orElse("").strip();
+    if (first.isEmpty()) {
+      first = detail.strip();
+    }
+    return first.length() > MAX_BACKUP_DETAIL ? first.substring(0, MAX_BACKUP_DETAIL) : first;
   }
 
   /**

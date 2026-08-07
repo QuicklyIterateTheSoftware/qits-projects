@@ -222,4 +222,157 @@ public class BackupPushServiceTest {
     assertEquals(
         in(hostOf(repo.id), "git", "rev-parse", "swept"), in(twin, "git", "rev-parse", "swept"));
   }
+
+  // -------------------------------------------------------------------------------------------
+  // what the attempt left on the row
+  // -------------------------------------------------------------------------------------------
+
+  private eu.wohlben.qits.projects.entity.BackupOutcome outcomeOf(String repoId) {
+    return io.quarkus.narayana.jta.QuarkusTransaction.requiringNew()
+        .call(() -> repositoryService.get(repoId).lastBackupOutcome);
+  }
+
+  private String detailOf(String repoId) {
+    return io.quarkus.narayana.jta.QuarkusTransaction.requiringNew()
+        .call(() -> repositoryService.get(repoId).lastBackupDetail);
+  }
+
+  private java.time.Instant atOf(String repoId) {
+    return io.quarkus.narayana.jta.QuarkusTransaction.requiringNew()
+        .call(() -> repositoryService.get(repoId).lastBackupAt);
+  }
+
+  /** Repoints a row at a twin that is not there, so the next backup really fails. */
+  private void breakTheTwin(Repository repo) {
+    io.quarkus.narayana.jta.QuarkusTransaction.requiringNew()
+        .run(
+            () ->
+                repositoryService.get(repo.id).url =
+                    Path.of("/nonexistent", "no-such-twin.git").toString());
+  }
+
+  private void pointAtTwin(Repository repo, Path twin) {
+    io.quarkus.narayana.jta.QuarkusTransaction.requiringNew()
+        .run(() -> repositoryService.get(repo.id).url = twin.toString());
+  }
+
+  @Test
+  public void aRepositoryThatHasNeverBeenBackedUpSaysNothingAtAll() {
+    var project = projectService.create("Backup Never", "backup-never", null);
+    var wrapper = projectService.findWrapper(project.id).orElseThrow();
+
+    assertEquals(null, outcomeOf(wrapper.id), "never attempted is not a status");
+    assertEquals(null, atOf(wrapper.id));
+  }
+
+  @Test
+  public void aSuccessfulBackupIsRecordedWithNoDetail() throws Exception {
+    var project = projectService.create("Backup Records Ok", "backup-rec-ok", null);
+    var repo = repositoryBackedUpTo(project, twin("testing-repo"));
+
+    backupPushService.backupNow(repo.id);
+
+    assertEquals(eu.wohlben.qits.projects.entity.BackupOutcome.SUCCEEDED, outcomeOf(repo.id));
+    assertEquals(null, detailOf(repo.id), "there is nothing to explain about a success");
+    assertNotEquals(null, atOf(repo.id));
+  }
+
+  /**
+   * The case the whole record exists for: a repository whose twin has been failing has to look
+   * different from one that is fine — and has to stop looking that way the moment it is fixed.
+   */
+  @Test
+  public void aSuccessClearsAPriorFailureAndItsDetail() throws Exception {
+    var project = projectService.create("Backup Recovers", "backup-recovers", null);
+    Path twin = twin("testing-repo");
+    var repo = repositoryBackedUpTo(project, twin);
+    breakTheTwin(repo);
+
+    backupPushService.backupNow(repo.id);
+    assertNotEquals(
+        eu.wohlben.qits.projects.entity.BackupOutcome.SUCCEEDED,
+        outcomeOf(repo.id),
+        "the broken twin was recorded as a failure");
+    assertNotEquals(null, detailOf(repo.id), "with git's own first line to read");
+
+    pointAtTwin(repo, twin);
+    backupPushService.backupNow(repo.id);
+
+    assertEquals(eu.wohlben.qits.projects.entity.BackupOutcome.SUCCEEDED, outcomeOf(repo.id));
+    assertEquals(null, detailOf(repo.id), "a stale reason beside a green outcome is worse than none");
+  }
+
+  /** Every trigger records, not just the manual one — a record with holes in it teaches nobody. */
+  @Test
+  public void aPushTriggeredBackupRecordsToo() throws Exception {
+    var project = projectService.create("Backup Records Push", "backup-rec-push", null);
+    var repo = repositoryBackedUpTo(project, twin("testing-repo"));
+    long before = backupPushService.completedRuns(repo.id);
+
+    backupPushService.onPush(repo.id);
+    awaitRuns(repo.id, before + 1);
+
+    assertEquals(eu.wohlben.qits.projects.entity.BackupOutcome.SUCCEEDED, outcomeOf(repo.id));
+  }
+
+  @Test
+  public void aSweptBackupRecordsToo() throws Exception {
+    var project = projectService.create("Backup Records Sweep", "backup-rec-sweep", null);
+    var repo = repositoryBackedUpTo(project, twin("testing-repo"));
+
+    backupPushService.backupAll();
+
+    assertEquals(eu.wohlben.qits.projects.entity.BackupOutcome.SUCCEEDED, outcomeOf(repo.id));
+  }
+
+  /** A repository with no twin is behaving correctly; it must not collect a red status line. */
+  @Test
+  public void aRepositoryWithNoTwinRecordsNothing() {
+    var project = projectService.create("Backup No Twin Record", "backup-ntr", null);
+    var wrapper = projectService.findWrapper(project.id).orElseThrow();
+
+    backupPushService.backupNow(wrapper.id);
+
+    assertEquals(null, outcomeOf(wrapper.id), "nothing to do is not a failure");
+  }
+
+  /**
+   * The classifier, against the sentences git actually prints. Three outcomes rather than one,
+   * because each asks something different of a person — and matching on git's English is only safe
+   * because {@code GitExecutor} pins {@code LC_ALL=C}.
+   */
+  @Test
+  public void gitsOwnSentencesAreSortedIntoTheThreeKindsOfFailure() {
+    assertEquals(
+        eu.wohlben.qits.projects.entity.BackupOutcome.AUTH_REQUIRED,
+        BackupPushService.classify("fatal: Authentication failed for 'https://github.com/o/r.git/'"));
+    assertEquals(
+        eu.wohlben.qits.projects.entity.BackupOutcome.AUTH_REQUIRED,
+        BackupPushService.classify("fatal: could not read Username for 'https://github.com'"));
+    assertEquals(
+        eu.wohlben.qits.projects.entity.BackupOutcome.UNREACHABLE,
+        BackupPushService.classify("fatal: unable to access '...': Could not resolve host: github.com"));
+    assertEquals(
+        eu.wohlben.qits.projects.entity.BackupOutcome.UNREACHABLE,
+        BackupPushService.classify("ssh: connect to host forge port 22: Connection refused"));
+    assertEquals(
+        eu.wohlben.qits.projects.entity.BackupOutcome.FAILED,
+        BackupPushService.classify("! [rejected] main -> main (non-fast-forward)"));
+    assertEquals(
+        eu.wohlben.qits.projects.entity.BackupOutcome.FAILED, BackupPushService.classify(null));
+  }
+
+  /** The detail column is 1000 characters and git's message is many lines; the first is the one. */
+  @Test
+  public void theRecordedDetailIsGitsFirstLine() throws Exception {
+    var project = projectService.create("Backup Detail", "backup-detail", null);
+    var repo = repositoryBackedUpTo(project, twin("testing-repo"));
+    breakTheTwin(repo);
+
+    backupPushService.backupNow(repo.id);
+
+    String detail = detailOf(repo.id);
+    assertTrue(detail.length() <= 1000, "it fits the column: " + detail.length());
+    assertTrue(!detail.contains("\n"), "one line, not a transcript: " + detail);
+  }
 }

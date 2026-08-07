@@ -421,7 +421,7 @@ public class SelfSeedServiceTest {
             "qits-spa-observability",
             "qits-spa-events",
             "qits-spa-ci",
-            "qits-spa-cd")) {
+            "qits-platform-spa-deployments")) {
       assertEquals(RepositoryArchetype.APPLICATION, entries.get(frontend), frontend);
     }
   }

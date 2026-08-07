@@ -253,7 +253,7 @@ public class SelfSeedService {
         new PlatformRepository("qits-repositories", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-events", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-ci", RepositoryArchetype.SERVICE),
-        new PlatformRepository("qits-cd", RepositoryArchetype.SERVICE),
+        new PlatformRepository("qits-platform-deployments", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-idp", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-dns", RepositoryArchetype.SERVICE),
         new PlatformRepository("qits-stt", RepositoryArchetype.SERVICE),
@@ -275,7 +275,7 @@ public class SelfSeedService {
         new PlatformRepository("qits-spa-observability", RepositoryArchetype.APPLICATION),
         new PlatformRepository("qits-spa-events", RepositoryArchetype.APPLICATION),
         new PlatformRepository("qits-spa-ci", RepositoryArchetype.APPLICATION),
-        new PlatformRepository("qits-spa-cd", RepositoryArchetype.APPLICATION),
+        new PlatformRepository("qits-platform-spa-deployments", RepositoryArchetype.APPLICATION),
         // images/ — build definitions consumed through their published OCI images.
         new PlatformRepository("qits-oci", RepositoryArchetype.LIBRARY));
   }

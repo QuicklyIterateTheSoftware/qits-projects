@@ -381,8 +381,7 @@ public class ProjectService {
           "A repository cannot be created with archetype PROJECT: that archetype is reserved for"
               + " the project's wrapper repository, which is created with the project.");
     }
-    RepositoryArchetype normalized = archetype.normalize();
-    if (!normalized.isPlaceable()) {
+    if (!archetype.isPlaceable()) {
       throw new BadRequestException(
           "Archetype "
               + archetype
@@ -402,8 +401,8 @@ public class ProjectService {
 
     Repository repo =
         trimmedName != null
-            ? repositoryService.createBlankRepository(project, trimmedName, normalized)
-            : repositoryService.cloneRepository(trimmedUrl, normalized, project);
+            ? repositoryService.createBlankRepository(project, trimmedName, archetype)
+            : repositoryService.cloneRepository(trimmedUrl, archetype, project);
 
     // The name the wrapper records has to be the name the git host serves this repository under —
     // that is the whole contract of a relative submodule url. cloneRepository may have had to
@@ -426,7 +425,7 @@ public class ProjectService {
                             + "' branch for "
                             + memberName
                             + " yet, so there is no commit for the wrapper's gitlink to pin."));
-    String wrapperPath = wrapperSubmoduleWriter.addToWrapper(wrapper, memberName, normalized, head);
+    String wrapperPath = wrapperSubmoduleWriter.addToWrapper(wrapper, memberName, archetype, head);
     return new CreatedRepository(repo, wrapperPath);
   }
 

@@ -25,14 +25,13 @@ import java.util.Set;
  * extraction target. {@link #PROJECT} is unplaceable for the opposite reason — it <em>is</em> the
  * tree.
  *
- * <p>{@link #INTEGRATION} and {@link #APPLICATION} are <b>deprecated aliases</b> kept only so
- * Hibernate can read rows written before the taxonomy was reworked. They are unplaceable, nothing
- * writes them any more ({@link #normalize()} runs on every write path), and they are deleted in
- * release B together with the row updates that retire the last of them.
+ * <p>These nine are the whole set. {@code INTEGRATION} and {@code APPLICATION} were carried through
+ * release A as deprecated, unplaceable aliases so Hibernate could read rows written before the
+ * rework; V4 retired the last of those rows and they are gone.
  *
  * <p>Adding a value here also requires a Flyway migration: {@code Repository.archetype} carries a
  * DB check constraint over the value set (V44 rebuilt V1's inline one as the named {@code
- * CK_repository_archetype}; V3 widened it for this rework).
+ * CK_repository_archetype}; V3 widened it for this rework and V4 tightened it to these nine).
  */
 public enum RepositoryArchetype {
   /** The project's wrapper repository — the root superproject. At most one per project. */
@@ -52,19 +51,7 @@ public enum RepositoryArchetype {
   /** Scaffolding a component is generated <em>from</em>, not part of the application. */
   SERVICE_TEMPLATE(null),
   /** A downstream fork — an external repository, never inline. */
-  FORK(null),
-
-  /**
-   * @deprecated merged into {@link #LIBRARY}. Readable, never written — see {@link #normalize()}.
-   */
-  @Deprecated
-  INTEGRATION(null),
-
-  /**
-   * @deprecated renamed to {@link #FRONTEND}. Readable, never written — see {@link #normalize()}.
-   */
-  @Deprecated
-  APPLICATION(null);
+  FORK(null);
 
   private final String directory;
 
@@ -101,27 +88,6 @@ public enum RepositoryArchetype {
       }
     }
     return null;
-  }
-
-  /**
-   * This archetype in the current taxonomy: {@code INTEGRATION} → {@link #LIBRARY}, {@code
-   * APPLICATION} → {@link #FRONTEND}, everything else unchanged (null included).
-   *
-   * <p>Called on <b>every write path</b>, so release A never writes a deprecated value while still
-   * reading the rows release B's migration retires.
-   */
-  @SuppressWarnings("deprecation")
-  public RepositoryArchetype normalize() {
-    return switch (this) {
-      case INTEGRATION -> LIBRARY;
-      case APPLICATION -> FRONTEND;
-      default -> this;
-    };
-  }
-
-  /** {@link #normalize()} for a possibly-null value. */
-  public static RepositoryArchetype normalize(RepositoryArchetype archetype) {
-    return archetype == null ? null : archetype.normalize();
   }
 
   /**

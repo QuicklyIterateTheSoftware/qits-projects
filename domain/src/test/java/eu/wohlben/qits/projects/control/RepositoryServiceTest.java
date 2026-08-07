@@ -165,7 +165,7 @@ public class RepositoryServiceTest {
             project,
             "qits-adopt-twice",
             "https://example.com/second.git",
-            RepositoryArchetype.APPLICATION);
+            RepositoryArchetype.FRONTEND);
 
     assertEquals(first.id, second.id, "the same row, matched by id");
     assertEquals(

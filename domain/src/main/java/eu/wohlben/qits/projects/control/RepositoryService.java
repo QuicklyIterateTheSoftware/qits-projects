@@ -194,9 +194,7 @@ public class RepositoryService {
     Repository repo = new Repository();
     repo.id = UUID.randomUUID().toString();
     repo.url = trimmedUrl;
-    // normalize(): release A reads the deprecated archetypes and never writes one.
-    repo.archetype =
-        archetype != null ? archetype.normalize() : RepositoryArchetype.SERVICE;
+    repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
     repo.project = project;
     repositoryRepository.persist(repo);
 
@@ -334,7 +332,7 @@ public class RepositoryService {
               + " characters of letters, digits, dots, dashes and underscores, starting with a"
               + " letter or a digit.");
     }
-    if (archetype == null || !archetype.normalize().isPlaceable()) {
+    if (archetype == null || !archetype.isPlaceable()) {
       throw new BadRequestException(
           "A repository created under a project must have a placeable archetype; "
               + archetype
@@ -357,7 +355,7 @@ public class RepositoryService {
     Repository repo = new Repository();
     repo.id = UUID.randomUUID().toString();
     repo.url = null;
-    repo.archetype = archetype.normalize();
+    repo.archetype = archetype;
     repo.project = project;
     repo.mainBranch = WRAPPER_DEFAULT_BRANCH;
     repositoryRepository.persist(repo);
@@ -648,7 +646,7 @@ public class RepositoryService {
     Repository repo = new Repository();
     repo.id = repoId;
     repo.url = trimmedUrl;
-    repo.archetype = archetype != null ? archetype.normalize() : RepositoryArchetype.SERVICE;
+    repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
     repo.project = project;
     // Read from what the host reports rather than assumed: the bootstrap's `main` is a convention,
     // and a repository whose host-side default branch says otherwise should say so too.

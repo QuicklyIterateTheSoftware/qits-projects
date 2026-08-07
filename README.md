@@ -24,7 +24,6 @@ Concretely:
 | `Project` | the aggregate root: name, an immutable git-safe `slug`, its repositories |
 | `Repository` | a git remote as an entity — a private mirror under `qits.projects.data-dir`, cloned/pulled/pushed/synced host-side against the git host and the row's own backup remote |
 | `repository_name` | addressable `(project, name) → repository` aliases, which is what makes a committed relative submodule url (`../<name>.git`) resolve natively |
-| `repository_submodule` | **unused** — the old import's edge table. The wrapper's `.gitmodules` is the submodule graph now; the table drops in release B |
 | the wrapper | every project owns exactly one `PROJECT`-archetype repository named `<slug>-<slug>`, seeded from `project-template/` |
 | the project's domain | a `{domain, type, value}` dns record embedded on `Project` — required when a project is created, handed to qits-dns through a port, and a **declared placeholder**: when a service owns domain configuration the embeddable and its three columns go (`ProjectDnsRecord`, `main-environment-plan.md` §1) |
 | `.qits-config.yml` | ingestion of the repository's own committed configuration, degrading loudly and never blocking |
@@ -147,11 +146,11 @@ A packaged run reconciles a `qits` project (slug `qits`) on every boot — `Star
 is the reconcile. It is additive and per-item idempotent: nothing is deleted, nothing already there
 is modified, and one failing item never denies the rest.
 
-The in-code manifest is **two entries**: the wrapper repository (`qits-qits`) and the pre-split
-monorepo (`qits-backend`, a `FORK` — unplaceable, so it is neither expected in the wrapper nor
-deregistered for being missing from it). Everything else comes from the wrapper: the project is
-created from the wrapper url so its `.gitmodules` actually arrives, and `WrapperReconcileService`
-then registers one repository per entry.
+The in-code manifest is **one entry**: the wrapper repository (`qits-qits`), which is the one thing
+the wrapper's own `.gitmodules` cannot name. Everything else comes from it — the project is created
+from the wrapper url so its `.gitmodules` actually arrives, and `WrapperReconcileService` then
+registers one repository per entry. The entry is also re-asserted onto its row on every boot, which
+is how a wrapper pointed at the wrong forge namespace healed itself.
 
 It used to carry a second, hand-maintained list naming every platform repository the git host serves
 with its archetype spelled out beside it. That list is gone. The superproject's own `.gitmodules` is
@@ -173,11 +172,12 @@ skipped, with a warning, on every boot until the day that origin appears.
 
 Its own named datasource `projects`, its own persistence unit, its own Flyway lineage at
 `classpath:db/projects/migration` — a file H2 under `~/.qits/data/projects` by default. `V1__init.sql`
-is the monorepo's shared V1–V45 squashed to the four tables above (schema as of V45, not a replay).
-`V3` widens the archetype check constraint to the old set ∪ the new one; release B tightens it and
-drops `repository_submodule`.
+is the monorepo's shared V1–V45 squashed to the tables above (schema as of V45, not a replay). `V3`
+widened the archetype check constraint to the old set ∪ the new one and `V4` tightened it to the
+final nine, retiring the last legacy rows and dropping `repository_submodule` — the import's edge
+table, which nothing has read since the wrapper's `.gitmodules` became the submodule graph.
 
-Those four tables live in **one** database and keep **real foreign keys** between them; that is
+Those three tables live in **one** database and keep **real foreign keys** between them; that is
 where the split was cut, and it is why `Repository.project` is still a JPA relation. Everything
 outside them is another context's database and is referenced by string id through a port — never a
 join, because a foreign key cannot span two databases.

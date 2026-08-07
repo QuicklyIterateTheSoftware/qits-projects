@@ -34,15 +34,13 @@ import org.junit.jupiter.api.Test;
  * {@code qits-qits.git} fixture carries a real one, whose relative entries fold against the fixtures
  * directory and land on the sibling bares — the same resolution a forge performs.
  *
- * <p>The {@code qits-backend} slot is a {@code FORK}: unplaceable, so it is neither expected in the
- * wrapper nor deregistered for being missing from it.
+ * <p>The in-code manifest is down to the wrapper alone. The pre-split monorepo used to sit beside
+ * it and is out of the platform: a repository qits does not build, deploy or provision from has no
+ * business in a list that describes qits.
  */
 @QuarkusTest
 @TestProfile(SelfSeedServiceTest.TestProfile.class)
 public class SelfSeedServiceTest {
-
-  /** The qits-backend slot — the pre-split monorepo, registered as a FORK and nothing more. */
-  static final String QITS_BACKEND_FIXTURE = "submodule-super.git";
 
   /**
    * The wrapper slot. Its basename must be exactly {@code qits-qits} or the adopt check rejects it,
@@ -63,10 +61,10 @@ public class SelfSeedServiceTest {
             // of this profile's own temp dir.
             "qits.projects.data-dir", projectsDataDir.toString(),
             // Padded on purpose (a trailing newline is how an env file / k8s ConfigMap value
-            // arrives) so the whole suite exercises the manifest-side trim: without it the second
-            // reconcile in reRunIsAFullNoOp would re-clone a duplicate qits-backend.
-            "qits.startup-seed.repo-url", "  " + fixturePath(QITS_BACKEND_FIXTURE) + "\n",
-            "qits.startup-seed.wrapper-url", fixturePath(QITS_WRAPPER_FIXTURE));
+            // arrives) so the whole suite exercises the manifest-side trim: without it the manifest
+            // would never re-match the row it stored trimmed, and every boot would think the
+            // wrapper had drifted.
+            "qits.startup-seed.wrapper-url", "  " + fixturePath(QITS_WRAPPER_FIXTURE) + "\n");
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
@@ -119,34 +117,25 @@ public class SelfSeedServiceTest {
     assertEquals(
         Set.of(
             "qits-qits", // the wrapper itself
-            "submodule-super", // the qits-backend slot, a FORK
             "submodule-shared", // libs/ in the wrapper's .gitmodules
             "submodule-grandchild"), // services/ in the wrapper's .gitmodules
         repos.keySet(),
-        "the wrapper, the monorepo fork, and one repository per resolvable wrapper entry — and"
-            + " nothing for the entry under a directory no archetype claims");
+        "the wrapper and one repository per resolvable wrapper entry — and nothing for the entry"
+            + " under a directory no archetype claims");
 
     assertEquals(RepositoryArchetype.LIBRARY, repos.get("submodule-shared").archetype, "libs/");
     assertEquals(
         RepositoryArchetype.SERVICE, repos.get("submodule-grandchild").archetype, "services/");
-    assertEquals(
-        RepositoryArchetype.FORK,
-        repos.get("submodule-super").archetype,
-        "the pre-split monorepo is not a component of qits, and FORK is the honest way to say so");
   }
 
-  /** The manifest is two lines now, and the platform list it replaced must not creep back. */
+  /** The manifest is one line, and the platform list it replaced must not creep back. */
   @Test
-  public void theInCodeManifestIsJustTheWrapperAndTheMonorepo() {
-    assertEquals(2, selfSeedService.manifest().size());
-    assertTrue(
-        selfSeedService.manifest().stream()
-            .anyMatch(e -> e.archetype() == RepositoryArchetype.PROJECT),
+  public void theInCodeManifestIsJustTheWrapper() {
+    assertEquals(1, selfSeedService.manifest().size());
+    assertEquals(
+        RepositoryArchetype.PROJECT,
+        selfSeedService.manifest().get(0).archetype(),
         "the wrapper, which is where every other repository comes from");
-    assertTrue(
-        selfSeedService.manifest().stream()
-            .anyMatch(e -> e.archetype() == RepositoryArchetype.FORK),
-        "the pre-split monorepo, deliberately unplaceable");
   }
 
   @Test
@@ -169,20 +158,18 @@ public class SelfSeedServiceTest {
   }
 
   @Test
-  public void aWhitespacePaddedOverrideDoesNotReCloneADuplicate() {
-    // Regression (review finding): the profile's repo-url override carries a trailing newline,
-    // which cloneOne stores trimmed. The manifest must trim its match key too — otherwise the
-    // untrimmed override never re-matches its own stored row and a fresh qits-backend is cloned
-    // every boot.
+  public void aWhitespacePaddedOverrideStillMatchesTheRowItStored() throws Exception {
+    // Regression (review finding): the profile's wrapper-url override carries a trailing newline,
+    // which the creation path stores trimmed. The manifest must trim its own copy too, or every
+    // boot would read the row as drifted and repoint it to the padded value.
     selfSeedService.reconcile();
     selfSeedService.reconcile();
 
-    long superRows =
-        repositoryRepository.find("project.id", qitsProject().id).list().stream()
-            .filter(r -> r.url != null)
-            .filter(r -> Path.of(r.url).getFileName().toString().equals("submodule-super.git"))
-            .count();
-    assertEquals(1, superRows, "the padded override matched its trimmed row — exactly one clone");
+    String wrapperId = projectService.findWrapper(qitsProject().id).orElseThrow().id;
+    assertEquals(
+        1,
+        repositoryRepository.count("id = ?1 and url = ?2", wrapperId, fixture(QITS_WRAPPER_FIXTURE)),
+        "the padded override matched its trimmed row — the url was never rewritten");
   }
 
   @Test
@@ -193,8 +180,8 @@ public class SelfSeedServiceTest {
     selfSeedService.reconcile();
 
     Map<String, Repository> repos = reposByName(qitsProject().id);
-    assertTrue(repos.containsKey("submodule-super"), "the missing qits-backend entry was added");
-    assertTrue(repos.containsKey("submodule-shared"), "and the wrapper's components with it");
+    assertTrue(repos.containsKey("submodule-shared"), "the wrapper's components were registered");
+    assertTrue(repos.containsKey("submodule-grandchild"));
   }
 
   /**
@@ -224,29 +211,53 @@ public class SelfSeedServiceTest {
   }
 
   /**
-   * The live case this healing exists for: {@code qits-backend} was seeded as a {@code SERVICE}
-   * before the archetype rework, which makes it placeable — so the first wrapper reconcile would
-   * deregister the monolith for not being a submodule of a wrapper it was never meant to be in. The
-   * seed asserts its own manifest onto the row first, and the row survives as a {@code FORK}.
+   * A manifest entry whose row says something else is drift to heal, not a decision to respect —
+   * the reason seeding is no longer create-or-skip.
+   *
+   * <p>Driven with a synthetic entry rather than through {@code reconcile()}: the shipped manifest
+   * is the wrapper alone now, and the wrapper's archetype cannot drift (a row is the wrapper by
+   * being {@code PROJECT}). The live case that forced this into existence was {@code qits-backend},
+   * seeded as a placeable {@code SERVICE} before the archetype rework and therefore one reconcile
+   * away from being deregistered for not being a submodule of a wrapper it was never meant to be
+   * in. That repository is out of the platform now; the behaviour it bought is not, and it is what
+   * the next entry added here will rely on.
    */
   @Test
-  public void aRowWhoseArchetypeDriftedFromTheManifestIsCorrectedBeforeTheReconcileSeesIt()
-      throws Exception {
+  public void aRowWhoseArchetypeDriftedFromItsManifestEntryIsCorrected() throws Exception {
     Project project =
         projectService.create("qits", "qits", "pre-existing", fixture(QITS_WRAPPER_FIXTURE));
-    Repository monorepo =
+    Repository drifted =
         projectService.createRepositoryUnderProject(
-            project.id, fixture(QITS_BACKEND_FIXTURE), RepositoryArchetype.SERVICE);
+            project.id, fixture("submodule-super.git"), RepositoryArchetype.SERVICE);
 
-    selfSeedService.reconcile();
+    selfSeedService.assertManifestOntoExistingRow(
+        project,
+        new SelfSeedService.SeedRepository(
+            fixture("submodule-super.git"), RepositoryArchetype.FORK));
 
     // A count query rather than a field read: this test's persistence context still holds the
     // instance it created, and reading its field would answer from that copy rather than the row.
     assertEquals(
         1,
-        repositoryRepository.count("id = ?1 and archetype = ?2", monorepo.id, RepositoryArchetype.FORK),
-        "the manifest says FORK, so the row does");
-    assertEquals(1, repositoryRepository.count("id = ?1", monorepo.id), "and it was not swept away");
+        repositoryRepository.count(
+            "id = ?1 and archetype = ?2", drifted.id, RepositoryArchetype.FORK),
+        "the entry says FORK, so the row does");
+  }
+
+  /** An entry that names no row heals nothing and, above all, throws nothing. */
+  @Test
+  public void aManifestEntryWithNoRowIsANoOp() throws Exception {
+    Project project =
+        projectService.create("qits", "qits", "pre-existing", fixture(QITS_WRAPPER_FIXTURE));
+
+    selfSeedService.assertManifestOntoExistingRow(
+        project,
+        new SelfSeedService.SeedRepository(
+            "https://example.com/never-registered.git", RepositoryArchetype.LIBRARY));
+
+    assertEquals(
+        0, repositoryRepository.count("project.id = ?1 and archetype = ?2", project.id,
+            RepositoryArchetype.LIBRARY));
   }
 
   /**

@@ -105,8 +105,8 @@ is optional; if you ever add a mandatory one, say why in its javadoc, the way qi
 
 Never add a JPA relation to another context's entity. `Project ↔ Repository ↔ repository_name` are
 real relations with real foreign keys because those tables are in **this** database. Anything else
-is a string id through a port. (`repository_submodule` is still in the schema and no longer mapped:
-the wrapper's `.gitmodules` is the submodule graph, and the table drops in release B.)
+is a string id through a port. (`repository_submodule` was the fourth such table; the wrapper's
+`.gitmodules` is the submodule graph now, and V4 dropped it.)
 
 Prefer widening an existing port over adding a synchronous call into another context. Where a port
 call is a genuine ordering precondition — `createMainWorkspace` before a clone returns,

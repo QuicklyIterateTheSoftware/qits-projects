@@ -58,16 +58,13 @@ public class RepositoryArchetypeTemplateSyncTest {
     }
   }
 
-  @SuppressWarnings("deprecation")
   @Test
   public void theUnplaceableArchetypesHaveNoDirectory() {
     for (RepositoryArchetype archetype :
         Set.of(
             RepositoryArchetype.PROJECT,
             RepositoryArchetype.SERVICE_TEMPLATE,
-            RepositoryArchetype.FORK,
-            RepositoryArchetype.INTEGRATION,
-            RepositoryArchetype.APPLICATION)) {
+            RepositoryArchetype.FORK)) {
       assertEquals(null, archetype.directory(), archetype + " must not be placeable");
     }
   }
@@ -84,20 +81,26 @@ public class RepositoryArchetypeTemplateSyncTest {
     assertEquals(null, RepositoryArchetype.fromDirectory(null));
   }
 
-  /** Release A reads the deprecated values and writes their replacements. */
-  @SuppressWarnings("deprecation")
+  /**
+   * The taxonomy is these nine and no more. INTEGRATION and APPLICATION rode through release A as
+   * deprecated aliases so Hibernate could read pre-rework rows; V4 retired those rows and dropped
+   * them, and this is what stops one being reintroduced without a migration to widen the check
+   * constraint for it.
+   */
   @Test
-  public void theDeprecatedAliasesNormalizeOntoTheirReplacements() {
-    assertEquals(RepositoryArchetype.LIBRARY, RepositoryArchetype.INTEGRATION.normalize());
-    assertEquals(RepositoryArchetype.FRONTEND, RepositoryArchetype.APPLICATION.normalize());
-    assertEquals(RepositoryArchetype.SERVICE, RepositoryArchetype.SERVICE.normalize());
-    assertEquals(null, RepositoryArchetype.normalize(null));
-    for (RepositoryArchetype archetype : RepositoryArchetype.values()) {
-      assertTrue(
-          archetype.normalize() != RepositoryArchetype.INTEGRATION
-              && archetype.normalize() != RepositoryArchetype.APPLICATION,
-          "normalize() must never answer a deprecated value: " + archetype);
-    }
+  public void theTaxonomyIsExactlyTheNineValuesTheCheckConstraintAllows() {
+    assertEquals(
+        List.of(
+            "PROJECT",
+            "SERVICE",
+            "DAEMON",
+            "LIBRARY",
+            "FRONTEND",
+            "CLI",
+            "IMAGE",
+            "SERVICE_TEMPLATE",
+            "FORK"),
+        Stream.of(RepositoryArchetype.values()).map(Enum::name).toList());
   }
 
   /**

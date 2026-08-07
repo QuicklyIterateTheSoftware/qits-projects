@@ -133,10 +133,7 @@ public class QitsConfigParser {
           "repository.archetype: PROJECT is reserved for a project's wrapper repository and cannot"
               + " be declared in .qits-config.yml");
     }
-    // A config committed before the taxonomy rework still spells INTEGRATION/APPLICATION. Reading
-    // it is fine; carrying the old value onward is not, so it is normalized here — the one place
-    // every committed archetype passes through.
-    return new RepositorySection(str(m, "main-branch"), RepositoryArchetype.normalize(archetype));
+    return new RepositorySection(str(m, "main-branch"), archetype);
   }
 
   private List<FrameworkDecl> frameworks(Object raw) {

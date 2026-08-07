@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.notNullValue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
+import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.api.ProjectRequests;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
@@ -56,7 +57,8 @@ class EpicApiTest {
   private String createRepository(String projectId) {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, false))
+        .body(new ProjectController.CreateProjectRepositoryRequest(
+                fixtureUrl, null, RepositoryArchetype.SERVICE))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()

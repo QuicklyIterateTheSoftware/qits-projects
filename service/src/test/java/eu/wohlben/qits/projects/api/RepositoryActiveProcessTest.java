@@ -52,7 +52,7 @@ public class RepositoryActiveProcessTest {
         .contentType(ContentType.JSON)
         .body(
             new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRepositoryRequest(
-                fixtureUrl, null, null))
+                fixtureUrl, null, eu.wohlben.qits.projects.entity.RepositoryArchetype.SERVICE))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()

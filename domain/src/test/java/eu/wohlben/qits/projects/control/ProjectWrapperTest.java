@@ -169,7 +169,7 @@ public class ProjectWrapperTest {
         BadRequestException.class,
         () ->
             projectService.createRepositoryUnderProject(
-                project.id, "https://example.com/x.git", RepositoryArchetype.PROJECT, false),
+                project.id, "https://example.com/x.git", RepositoryArchetype.PROJECT),
         "PROJECT is rejected at the ordinary repositories path");
   }
 
@@ -230,10 +230,10 @@ public class ProjectWrapperTest {
 
   @Test
   public void adoptingAnEmptyUpstreamSeedsTheSkeletonOnMain() throws Exception {
-    var project = projectService.create("Qits Like", "qits", null, fixture("qits-qits.git"));
+    var project = projectService.create("Empty Upstream", "empty", null, fixture("empty-empty.git"));
     var wrapper = wrapperOf(project);
 
-    assertEquals(fixture("qits-qits.git"), wrapper.url);
+    assertEquals(fixture("empty-empty.git"), wrapper.url);
     assertEquals("main", wrapper.mainBranch);
     assertEquals(
         SKELETON,
@@ -304,7 +304,7 @@ public class ProjectWrapperTest {
 
     var plain =
         projectService.createRepositoryUnderProject(
-            project.id, fixture("demo-demo.git"), RepositoryArchetype.SERVICE, false);
+            project.id, fixture("demo-demo.git"), RepositoryArchetype.SERVICE);
 
     var promoted = projectService.adoptWrapperRepository(project.id, fixture("demo-demo.git"));
 
@@ -334,23 +334,6 @@ public class ProjectWrapperTest {
     var status = repositoryService.syncStatus(wrapper.id);
     assertEquals("main", status.branch());
     assertNull(status.ahead(), "there is no remote branch to be ahead of");
-  }
-
-  /**
-   * Pre-serving a submodule backend folds ../<name>.git against the superproject's real backend.
-   */
-  @Test
-  public void preServingASubmoduleBackendNeedsTheSuperprojectsRemote() {
-    var project = projectService.create("No Fold", "no-fold", null);
-    var wrapper = wrapperOf(project);
-
-    var error =
-        assertThrows(
-            BadRequestException.class,
-            () ->
-                repositoryService.prepareSubmoduleBackend(
-                    wrapper.id, "https://github.com/wohlben/qits-gateway.git"));
-    assertTrue(error.getMessage().contains("backup remote"), error.getMessage());
   }
 
   // ------------------------------------------------- publish push options (⚖3)

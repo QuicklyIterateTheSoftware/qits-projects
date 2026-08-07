@@ -8,14 +8,12 @@ import eu.wohlben.qits.projects.dto.BranchDto;
 import eu.wohlben.qits.projects.dto.SyncStatusDto;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
-import eu.wohlben.qits.projects.entity.RepositorySubmodule;
 import eu.wohlben.qits.projects.gitmirror.GitMirrorException;
 import eu.wohlben.qits.projects.gitmirror.MergeOutcome;
 import eu.wohlben.qits.projects.gitmirror.PushOutcome;
 import eu.wohlben.qits.projects.gitmirror.RepoMirror;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
-import eu.wohlben.qits.projects.persistence.RepositorySubmoduleRepository;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -25,6 +23,7 @@ import jakarta.transaction.Transactional;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -84,11 +83,12 @@ public class RepositoryService {
 
   @Inject GitSubmoduleParser submoduleParser;
 
-  @Inject RepositorySubmoduleRepository repositorySubmoduleRepository;
-
   @Inject RepositoryNameRepository repositoryNameRepository;
 
   @Inject ProjectTemplate projectTemplate;
+
+  /** The wrapper's .gitmodules writer — the membership guard reads through it too. */
+  @Inject WrapperSubmoduleWriter wrapperWriter;
 
   /**
    * SEAM (migration-plan.md §6): the technical-process framework is a port here (see {@link
@@ -116,39 +116,22 @@ public class RepositoryService {
     processExecutor.shutdownNow();
   }
 
-  /** Clones without importing submodules — the plain primitive (also what child imports use). */
+  /**
+   * Clones an existing external repository under {@code project} — the <b>attach</b> half of the
+   * create flow. Its submodules are not followed: the wrapper's {@code .gitmodules} is the project's
+   * manifest, so what belongs to the project is what the wrapper says, not what a clone happened to
+   * reference.
+   */
   @Transactional
   public Repository cloneRepository(String url, RepositoryArchetype archetype, Project project) {
     return cloneOne(url, archetype, project, true);
   }
 
   /**
-   * Clones and, when {@code importSubmodules}, imports the repository's <b>full submodule
-   * closure</b> as sibling repositories under the same project (recursive, dedup + cycle-guarded,
-   * depth-capped). The whole closure is imported because provisioning materializes submodules by
-   * native relative resolution, so every submodule git resolves — at every depth — must already be
-   * a servable sibling.
-   */
-  @Transactional
-  public Repository cloneRepository(
-      String url, RepositoryArchetype archetype, Project project, boolean importSubmodules) {
-    Repository repo = cloneOne(url, archetype, project, true);
-    if (importSubmodules) {
-      importDirectSubmodules(repo);
-    }
-    return repo;
-  }
-
-  /**
    * Clones one repository under {@code project} and registers its project-scoped name alias (its
-   * url basename) — no submodule handling here; that is {@link #importDirectSubmodules}'s job (the
-   * full closure, recursively). Runs within the caller's transaction.
+   * url basename). Runs within the caller's transaction.
    *
-   * @param createMainWorkspace whether to give the repository its default main-branch workspace —
-   *     {@code true} for a user-created repository, {@code false} for an imported child (a
-   *     submodule materializes inside its superproject's container, not as an independent sibling
-   *     workspace; the child stays usable standalone since {@code createMainWorkspace} is
-   *     idempotent).
+   * @param createMainWorkspace whether to give the repository its default main-branch workspace
    */
   private Repository cloneOne(
       String url, RepositoryArchetype archetype, Project project, boolean createMainWorkspace) {
@@ -317,205 +300,102 @@ public class RepositoryService {
   }
 
   /**
-   * Imports {@code repoId}'s <b>full submodule closure</b> as sibling repositories under the same
-   * project (every level, recursively), each linked by a {@link RepositorySubmodule} edge, and
-   * returns {@code repoId}'s direct edge list afterwards. The whole closure is imported because
-   * provisioning clones with native {@code --recurse-submodules}: every submodule git resolves, at
-   * any depth, must already be a servable sibling. Idempotent: children dedup by resolved url
-   * within the project, edges by (parent, path), so re-invoking imports only what's missing.
-   * Cycle-guarded (a visited set — the mutual {@code submodule-cycle-a/b} pair links back to the
-   * existing row) and depth-capped.
+   * A blank component repository's addressable name. It becomes a git path segment, a wrapper
+   * directory entry and the {@code <name>} in {@code ../<name>.git}, so it has to survive all three
+   * unchanged — which rules out slashes, leading dots and dashes, and anything git would read as an
+   * option.
    */
-  @Transactional
-  public List<RepositorySubmodule> importDirectSubmodules(String repoId) {
-    Repository repo = get(repoId);
-    importSubmoduleClosure(repo, new HashSet<>(), 0);
-    return repositorySubmoduleRepository.findByParentId(repoId);
-  }
-
-  private void importDirectSubmodules(Repository repo) {
-    importSubmoduleClosure(repo, new HashSet<>(), 0);
-  }
+  private static final Pattern BLANK_REPOSITORY_NAME =
+      Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
 
   /**
-   * Recursively imports {@code repo}'s submodule closure. {@code visited} (by repository id) makes
-   * a cyclic import graph terminate — a repo already visited on this walk is not re-descended — and
-   * {@code depth} is the backstop cap. For each {@code .gitmodules} entry: resolve the child url,
-   * dedup-or-create the sibling repository (which registers its own url-basename alias via {@code
-   * cloneOne}), register the referencing name as an alias of the child (idempotent; usually equals
-   * the child's own basename, but the link table supports a child addressed by more than one name),
-   * link the edge, and descend.
-   */
-  private void importSubmoduleClosure(Repository repo, Set<String> visited, int depth) {
-    if (depth >= MAX_SUBMODULE_DEPTH || !visited.add(repo.id)) {
-      return;
-    }
-    RepoMirror mirror = requireMirror(repo.id);
-    for (GitSubmoduleParser.Submodule sub :
-        submoduleParser.readSubmodules(mirror.gitDir().toFile(), repo.mainBranch)) {
-      // A RELATIVE url folds against the superproject's real backend; with no backup remote
-      // configured there is nothing to fold it against, and resolveSubmoduleUrl would NPE. An
-      // absolute url ignores the superproject's url entirely, so those keep importing normally.
-      if (!hasBackupRemote(repo) && isRelativeSubmoduleUrl(sub.url())) {
-        throw new BadRequestException(
-            "Submodule '"
-                + sub.name()
-                + "' uses a relative url ("
-                + sub.url()
-                + ") but repository '"
-                + repoLabel(repo)
-                + "' has no backup remote configured, so there is nothing to resolve it against."
-                + " Configure the backup remote first, or commit an absolute url.");
-      }
-      String childUrl = submoduleParser.resolveSubmoduleUrl(repo.url, sub.url());
-
-      // A submodule whose url resolves to qits' own git host would make the imported sister clone
-      // from qits itself (a caching loop) rather than the real backend. Fail loudly with the
-      // onboarding convention: commit a relative url (../name.git, which folds against the
-      // superproject's real backend) or pre-serve the backend and reference it relatively. See
-      // docs/epics/qits-project-repository-submodules/features/2026-07-25_submodule-backend-onboarding.md.
-      if (submoduleParser.isQitsHostUrl(childUrl)) {
-        throw new BadRequestException(
-            "Submodule '"
-                + sub.name()
-                + "' resolves to the qits git host ("
-                + childUrl
-                + "). Reference it with a relative url (../"
-                + RepositoryNameRepository.basename(childUrl)
-                + ".git) so it folds against the real backend, not qits' cache.");
-      }
-
-      // Dedup within the project: reuse an existing sibling with the same url (the diamond case —
-      // and what terminates a cyclic pair: its second import finds the first repo already there).
-      // Panache auto-flushes before this query, so a child imported earlier in this same
-      // transaction is already visible.
-      Repository child =
-          repositoryRepository.findByUrlInProject(childUrl, repo.project.id).orElse(null);
-      if (child == null) {
-        child = cloneOne(childUrl, RepositoryArchetype.SERVICE, repo.project, false);
-      }
-
-      // Register the referencing name as an alias of the child so /git/<projectId>/<name> resolves
-      // it; native `../<name>.git` from this superproject then lands on the sibling with no
-      // override.
-      repositoryNameRepository.ensureAlias(
-          repo.project, RepositoryNameRepository.basename(childUrl), child);
-
-      if (!repositorySubmoduleRepository.existsByParentAndPath(repo.id, sub.path())) {
-        RepositorySubmodule edge = new RepositorySubmodule();
-        edge.parent = repo;
-        edge.child = child;
-        edge.path = sub.path();
-        edge.name = sub.name();
-        repositorySubmoduleRepository.persist(edge);
-      }
-
-      importSubmoduleClosure(child, visited, depth + 1);
-    }
-  }
-
-  /** The served sibling a {@link #prepareSubmoduleBackend} onboarding produced. */
-  public record PreparedSubmoduleBackend(
-      String repositoryId, String name, String relativeUrl, String backendUrl) {}
-
-  /**
-   * Pre-serves a submodule's backend as a sibling repository so an in-container {@code git
-   * submodule add ../<name>.git <path>} resolves <em>before</em> the {@code .gitmodules} reference
-   * is committed — breaking the submodule chicken-and-egg (the sibling must be servable at {@code
-   * /git/<projectId>/<name>} for the add, but is only imported after the commit).
+   * Creates a <b>blank</b> repository on the platform's own git host, seeded with the repository
+   * template — the greenfield half of the create flow, and the sibling of {@link #cloneOne} for a
+   * component that has no upstream at all.
    *
-   * <p>The sibling is cloned from the <b>canonical</b> url the superproject's own re-import will
-   * resolve for {@code ../<name>.git} ({@link GitSubmoduleParser#resolveSubmoduleUrl} against the
-   * superproject's real backend), <em>not</em> the raw {@code backendUrl} string — so a later
-   * {@code importDirectSubmodules} dedups onto this very sibling (dedup is by exact url) instead of
-   * creating a duplicate. For the common case (a submodule that is a sibling of the superproject's
-   * backend, e.g. {@code qits-gateway} alongside {@code qits-backend} under one org) the canonical
-   * url equals {@code backendUrl}; the returned {@code backendUrl} surfaces the resolved value so a
-   * cross-host mismatch is visible. {@code backendUrl} is used only to name the sibling (its
-   * basename). Idempotent: an existing project sibling with the canonical url is reused.
+   * <p>{@code url} stays null: this repository <em>is</em> hosted here, and the row's url names a
+   * backup remote at some external forge, which a blank one does not have yet.
+   *
+   * <p>The alias is {@code name} <b>exactly</b>, never the disambiguated fallback: the wrapper
+   * records {@code url = ../<name>.git}, and a repository served under a different name is a
+   * submodule that resolves nowhere. A taken name is a hard failure instead.
+   *
+   * <p>Adding it to the wrapper is the caller's next step and deliberately not part of this
+   * transaction — see {@code ProjectService.createRepository}.
    */
   @Transactional
-  public PreparedSubmoduleBackend prepareSubmoduleBackend(
-      String superprojectId, String backendUrl) {
-    Repository superproject = get(superprojectId);
-    if (backendUrl == null || backendUrl.isBlank()) {
-      throw new BadRequestException("backendUrl is required");
-    }
-    String trimmed = backendUrl.trim();
-    if (submoduleParser.isQitsHostUrl(trimmed)) {
+  public Repository createBlankRepository(
+      Project project, String name, RepositoryArchetype archetype) {
+    if (name == null || !BLANK_REPOSITORY_NAME.matcher(name).matches()) {
       throw new BadRequestException(
-          "backendUrl must be the submodule's real backend, not the qits git host: " + trimmed);
+          "Invalid repository name '"
+              + name
+              + "': it becomes a git path segment and a repository basename, so it must be 1-64"
+              + " characters of letters, digits, dots, dashes and underscores, starting with a"
+              + " letter or a digit.");
     }
-    String name = RepositoryNameRepository.basename(trimmed);
-    if (name.isBlank()) {
+    if (archetype == null || !archetype.normalize().isPlaceable()) {
       throw new BadRequestException(
-          "Could not derive a submodule name from backendUrl: " + trimmed);
+          "A repository created under a project must have a placeable archetype; "
+              + archetype
+              + " has no directory in the wrapper.");
     }
-    String relativeUrl = "../" + name + ".git";
-    // The pre-serve clones from the canonical url the superproject's own re-import will resolve for
-    // ../<name>.git — which only exists if the superproject has a backend to fold it against.
-    if (!hasBackupRemote(superproject)) {
-      throw new BadRequestException(
-          "Cannot pre-serve a submodule backend under '"
-              + repoLabel(superproject)
-              + "': it has no backup remote configured, so "
-              + relativeUrl
-              + " has nothing to resolve against. Configure the backup remote first.");
+    repositoryNameRepository
+        .findRepositoryByProjectAndName(project.id, name)
+        .ifPresent(
+            owner -> {
+              throw new BadRequestException(
+                  "The name '"
+                      + name
+                      + "' is already taken in this project by repository "
+                      + owner.id
+                      + "; a component's name is what ../"
+                      + name
+                      + ".git resolves to, so it must be free.");
+            });
+
+    Repository repo = new Repository();
+    repo.id = UUID.randomUUID().toString();
+    repo.url = null;
+    repo.archetype = archetype.normalize();
+    repo.project = project;
+    repo.mainBranch = WRAPPER_DEFAULT_BRANCH;
+    repositoryRepository.persist(repo);
+    repositoryNameRepository.registerSelfName(repo, name);
+
+    RepoMirror mirror = gitMirrors.of(repo.id);
+    try {
+      mirror.initEmpty(WRAPPER_DEFAULT_BRANCH);
+    } catch (GitMirrorException e) {
+      throw new InternalServerErrorException(
+          "Failed to initialize the repository's mirror: " + e.getMessage());
     }
-    String canonicalUrl = submoduleParser.resolveSubmoduleUrl(superproject.url, relativeUrl);
-    Repository sibling =
-        repositoryRepository
-            .findByUrlInProject(canonicalUrl, superproject.project.id)
-            .orElseGet(
-                () ->
-                    cloneOne(
-                        canonicalUrl, RepositoryArchetype.SERVICE, superproject.project, true));
-    // Re-assert the basename alias (cloneOne already registered it for a fresh clone; harmless and
-    // needed on the reuse path).
-    repositoryNameRepository.ensureAlias(superproject.project, name, sibling);
-    return new PreparedSubmoduleBackend(sibling.id, name, relativeUrl, canonicalUrl);
+
+    String skeletonCommit = seedTemplate(mirror, projectTemplate.repositoryEntries(), "repository");
+    gitHostRepositories.ensure(repo.id, WRAPPER_DEFAULT_BRANCH);
+    // No `-o qits.no-ci`: the skeleton carries no pipeline config, so qits-ci discards the run it
+    // fires for want of one — cheaper than special-casing this push.
+    publishSingleRef(mirror, skeletonCommit, WRAPPER_DEFAULT_BRANCH, "the repository's skeleton commit");
+
+    if (!workspaceLifecycle.isUnsatisfied()) {
+      workspaceLifecycle.get().createMainWorkspace(repo.id, repo.mainBranch);
+    }
+    return repo;
   }
 
   /**
-   * The DIRECT {@code .gitmodules} submodules of {@code repoId} that are not yet imported (no edge
-   * at their path) — what the repository detail view's "import submodules" action offers. Urls come
-   * back resolved (relative names folded against the repository's own url).
+   * The sha the <b>git host</b> holds for a repository's main branch — what a wrapper gitlink is
+   * pinned to. Read with {@code ls-remote} rather than out of the mirror, because the gitlink names
+   * a commit every clone has to be able to fetch, and the host is the only authority on that.
    */
-  public List<GitSubmoduleParser.Submodule> listUnimportedSubmodules(String repoId) {
+  public Optional<String> mainBranchHeadOnHost(String repoId) {
     Repository repo = get(repoId);
-    Set<String> importedPaths =
-        repositorySubmoduleRepository.findByParentId(repoId).stream()
-            .map(edge -> edge.path)
-            .collect(java.util.stream.Collectors.toSet());
-    return submoduleParser
-        .readSubmodules(requireMirror(repo.id).gitDir().toFile(), repo.mainBranch)
-        .stream()
-        .filter(sub -> !importedPaths.contains(sub.path()))
-        .map(
-            sub ->
-                new GitSubmoduleParser.Submodule(
-                    sub.name(), sub.path(), resolveAgainst(repo, sub.url()), sub.branch()))
-        .toList();
-  }
-
-  /**
-   * {@link GitSubmoduleParser#resolveSubmoduleUrl} for read paths: a relative url under a
-   * repository with no backup remote has nothing to fold against, so the raw value is surfaced
-   * unresolved rather than throwing. Listing what a repository declares must never fail on it.
-   */
-  private String resolveAgainst(Repository repo, String rawUrl) {
-    if (!hasBackupRemote(repo) && isRelativeSubmoduleUrl(rawUrl)) {
-      return rawUrl;
+    try {
+      return gitMirrors.of(repoId).remoteBranchSha(resolveMainBranch(repo, originPath(repoId)));
+    } catch (GitMirrorException e) {
+      throw new InternalServerErrorException(
+          "Could not read the head of " + repoLabel(repo) + " on the git host: " + e.getMessage());
     }
-    return submoduleParser.resolveSubmoduleUrl(repo.url, rawUrl);
-  }
-
-  /**
-   * Whether a committed submodule url is relative, i.e. resolved against the superproject's url.
-   */
-  private static boolean isRelativeSubmoduleUrl(String rawUrl) {
-    String trimmed = rawUrl == null ? "" : rawUrl.trim();
-    return trimmed.startsWith("./") || trimmed.startsWith("../");
   }
 
   /**
@@ -852,7 +732,12 @@ public class RepositoryService {
    * into existing history.
    */
   private String seedProjectTemplate(RepoMirror mirror) {
-    List<ProjectTemplate.TemplateEntry> entries = projectTemplate.entries();
+    return seedTemplate(mirror, projectTemplate.entries(), "project");
+  }
+
+  /** {@link #seedProjectTemplate} for any committed skeleton — see {@link ProjectTemplate}. */
+  private String seedTemplate(
+      RepoMirror mirror, List<ProjectTemplate.TemplateEntry> entries, String what) {
     List<RepoMirror.TreeEntry> treeEntries =
         entries.stream()
             .map(entry -> new RepoMirror.TreeEntry(entry.path(), entry.mode(), entry.content()))
@@ -863,15 +748,15 @@ public class RepositoryService {
           mirror.commitTree(
               treeSha,
               List.of(),
-              "Initialize the project template skeleton",
+              "Initialize the " + what + " template skeleton",
               gitIdentity.asCommitIdentity());
       LOG.infof(
-          "Built the project template skeleton commit %s for repository %s",
-          commitSha, mirror.repoId());
+          "Built the %s template skeleton commit %s for repository %s",
+          what, commitSha, mirror.repoId());
       return commitSha;
     } catch (GitMirrorException e) {
       throw new InternalServerErrorException(
-          "Failed to build the project template skeleton: " + e.getMessage());
+          "Failed to build the " + what + " template skeleton: " + e.getMessage());
     }
   }
 
@@ -910,6 +795,7 @@ public class RepositoryService {
    * origin via the git host) fails with "Server does not allow request for unadvertised object".
    */
   public String pullRepository(String repoId) {
+    requireMembership(repoId);
     return pullRepository(repoId, new HashSet<>(), null, null, new HashSet<>());
   }
 
@@ -933,7 +819,12 @@ public class RepositoryService {
     // repo's url basename — Repository has no display name; this is the identity the WARNING lines
     // (and reposByName in tests) already use.
     String rootSegment =
-        QuarkusTransaction.requiringNew().call(() -> "pull:" + repoLabel(get(repoId)));
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  requireWrapperMembership(get(repoId));
+                  return "pull:" + repoLabel(get(repoId));
+                });
     return switch (beginForRepository(repoId, "pull")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
@@ -1210,11 +1101,22 @@ public class RepositoryService {
   }
 
   /**
-   * Pulls each imported submodule child after {@code repoId}'s own successful pull, appending their
-   * outputs. A child failure (diverged, unreachable remote) degrades loudly, never blocks: the
-   * superproject's pull already succeeded, so the child's error becomes a WARNING line in the
-   * returned output (for the synchronous callers) and, when streaming, settles the child's segment
-   * {@code failed} while the walk continues to the remaining children.
+   * Pulls each submodule child after {@code repoId}'s own successful pull, appending their outputs.
+   * A child failure (diverged, unreachable remote) degrades loudly, never blocks: the superproject's
+   * pull already succeeded, so the child's error becomes a WARNING line in the returned output (for
+   * the synchronous callers) and, when streaming, settles the child's segment {@code failed} while
+   * the walk continues to the remaining children.
+   *
+   * <p><b>The children come from the repository's own {@code .gitmodules}, not from a table.</b>
+   * There used to be a {@code repository_submodule} edge table, written by an import that walked the
+   * whole closure; the wrapper's manifest replaced the import, and the edges with it. Reading the
+   * file on the fly is also simply more correct: it can never be stale, it handles absolute and
+   * relative urls alike (a basename is a basename either way), and a submodule whose basename names
+   * no sibling in this project is skipped rather than conjuring a row for it — the wrapper decides
+   * what belongs to the project, and this walk only decides what to pull.
+   *
+   * <p>The visited and depth guards are unchanged, because the graph they guard is unchanged: a
+   * cyclic pair still terminates, and a diamond is still pulled once.
    */
   private String withImportedChildPulls(
       String repoId,
@@ -1222,13 +1124,7 @@ public class RepositoryService {
       Set<String> visited,
       TechnicalProcess process,
       Set<String> usedSegments) {
-    List<ChildEdge> edges =
-        QuarkusTransaction.requiringNew()
-            .call(
-                () ->
-                    repositorySubmoduleRepository.findByParentId(repoId).stream()
-                        .map(e -> new ChildEdge(e.path, e.child.id, e.child.url))
-                        .toList());
+    List<ChildEdge> edges = QuarkusTransaction.requiringNew().call(() -> childEdgesOf(repoId));
     StringBuilder output = new StringBuilder(ownOutput.trim());
     for (ChildEdge edge : edges) {
       String childSegment = allocateSegment("pull:" + edge.path(), usedSegments);
@@ -1257,6 +1153,38 @@ public class RepositoryService {
       }
     }
     return output.toString();
+  }
+
+  /**
+   * {@code repoId}'s {@code .gitmodules} entries resolved to sibling repositories of the same
+   * project, by the name each one is addressable under — {@code ../qits-gateway.git} and {@code
+   * https://forge/org/qits-gateway.git} both name {@code qits-gateway}, which is exactly the alias
+   * the git host serves that sibling at. An entry naming nothing in this project is skipped: it is a
+   * dependency of this repository, not a part of this project.
+   *
+   * <p>Read off the mirror as it stands, with no refresh: the caller has just pulled this repository
+   * and refreshed its mirror, so this is the file that arrived with the commit being pulled.
+   */
+  private List<ChildEdge> childEdgesOf(String repoId) {
+    Repository repo = get(repoId);
+    Path gitDir = originPath(repoId);
+    if (!Files.exists(gitDir)) {
+      return List.of();
+    }
+    List<ChildEdge> edges = new ArrayList<>();
+    Set<String> seen = new HashSet<>();
+    for (GitSubmoduleParser.Submodule sub :
+        submoduleParser.readSubmodules(gitDir.toFile(), resolveMainBranch(repo, gitDir))) {
+      String childName = RepositoryNameRepository.basename(sub.url());
+      if (childName.isBlank() || !seen.add(sub.path())) {
+        continue;
+      }
+      repositoryNameRepository
+          .findRepositoryByProjectAndName(repo.project.id, childName)
+          .filter(child -> !child.id.equals(repo.id))
+          .ifPresent(child -> edges.add(new ChildEdge(sub.path(), child.id, child.url)));
+    }
+    return edges;
   }
 
   private static String shortSha(String sha) {
@@ -1433,6 +1361,7 @@ public class RepositoryService {
    * streamed sync ({@link #beginSyncRepository}) calls it there.
    */
   public String pushRepository(String repoId) {
+    requireMembership(repoId);
     PushSpec ctx = pushSpec(repoId);
     // Nothing to push TO: a greenfield wrapper has no backup remote until one is attached. Report
     // it
@@ -1564,7 +1493,13 @@ public class RepositoryService {
     // Validate in-request (unknown id → plain 404, not a process) and derive the url basename
     // shared
     // by the root pull segment and the final push segment.
-    String basename = QuarkusTransaction.requiringNew().call(() -> repoLabel(get(repoId)));
+    String basename =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  requireWrapperMembership(get(repoId));
+                  return repoLabel(get(repoId));
+                });
     return switch (beginForRepository(repoId, "sync")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
@@ -1627,7 +1562,12 @@ public class RepositoryService {
     // Validate in-request (unknown id → plain 404, not a process) and name the sole segment by the
     // repo's url basename, matching the sync's push segment shape.
     String rootSegment =
-        QuarkusTransaction.requiringNew().call(() -> "push:" + repoLabel(get(repoId)));
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  requireWrapperMembership(get(repoId));
+                  return "push:" + repoLabel(get(repoId));
+                });
     return switch (beginForRepository(repoId, "push")) {
       case RepoProcessLease.Reused r -> r.processId();
       case RepoProcessLease.Conflict c -> throw repositoryBusy(c.runningKind());
@@ -1833,10 +1773,88 @@ public class RepositoryService {
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
   }
 
-  /** The submodule edges whose superproject is {@code repoId} (its imported child repositories). */
-  public List<RepositorySubmodule> listSubmodules(String repoId) {
-    get(repoId); // verify the repository exists
-    return repositorySubmoduleRepository.findByParentId(repoId);
+  // -----------------------------------------------------------------------------------------
+  // wrapper membership — a repository the wrapper does not name is not part of the project
+  // -----------------------------------------------------------------------------------------
+
+  /**
+   * Refuses a write to a placeable repository that the project's wrapper does not declare.
+   *
+   * <p>The rule the whole feature rests on is that a project <em>is</em> its wrapper repository, so
+   * a repository missing from {@code .gitmodules} is not a component of it — and writing to one
+   * (pulling into it, pushing it, deleting its branches) would be operating on something the project
+   * has no record of. Reads stay open, because seeing a stray repository is how you find out it is
+   * one.
+   *
+   * <p>Three exemptions, each for its own reason:
+   *
+   * <ul>
+   *   <li>the wrapper itself and every <b>unplaceable</b> archetype ({@code FORK}, {@code
+   *       SERVICE_TEMPLATE}) — they have no directory to be mounted under, so membership is not a
+   *       question that applies to them;
+   *   <li>a project whose wrapper declares <b>no submodules at all</b>. An empty manifest is not a
+   *       manifest: a project that has not started declaring members has nothing to be a member of,
+   *       and enforcing against it would brick every repository of every project the day this ships.
+   *       The first entry is what turns the wrapper into the project's configuration;
+   *   <li>a wrapper this service cannot read right now. Refusing a push because a mirror refresh
+   *       failed would trade a real operation for a guard's own outage, so the failure is a WARN and
+   *       the write goes ahead.
+   * </ul>
+   */
+  private void requireWrapperMembership(Repository repo) {
+    if (repo.archetype == null || !repo.archetype.isPlaceable()) {
+      return;
+    }
+    Repository wrapper = repositoryRepository.findWrapperByProject(repo.project.id).orElse(null);
+    if (wrapper == null || wrapper.id.equals(repo.id)) {
+      return;
+    }
+    List<WrapperGitmodules.Entry> declared;
+    try {
+      declared = WrapperGitmodules.entries(wrapperWriter.readGitmodules(wrapper));
+    } catch (RuntimeException e) {
+      LOG.warnf(
+          "Could not read the wrapper's .gitmodules for project %s (%s) — letting the write through"
+              + " rather than failing it on the guard's own outage.",
+          repo.project.id, e.getMessage());
+      return;
+    }
+    if (declared.isEmpty()) {
+      return;
+    }
+    Set<String> mine = new HashSet<>(repositoryNameRepository.namesFor(repo));
+    mine.add(repo.id);
+    for (WrapperGitmodules.Entry entry : declared) {
+      if (mine.contains(entry.name()) || mine.contains(basenameOfPath(entry.path()))) {
+        return;
+      }
+    }
+    throw new BadRequestException(
+        "Repository '"
+            + repoLabel(repo)
+            + "' is not a submodule of this project's wrapper, so it is not part of the project and"
+            + " cannot be written to. Add it to the wrapper's .gitmodules and push, then run"
+            + " POST /projects/api/projects/"
+            + repo.project.id
+            + "/repositories/reconcile.");
+  }
+
+  /** {@link #requireWrapperMembership} by id, in its own short transaction. */
+  private void requireMembership(String repoId) {
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              requireWrapperMembership(get(repoId));
+            });
+  }
+
+  /** The last segment of a {@code .gitmodules} path — {@code services/foo} names {@code foo}. */
+  private static String basenameOfPath(String path) {
+    if (path == null) {
+      return "";
+    }
+    int slash = path.lastIndexOf('/');
+    return slash >= 0 ? path.substring(slash + 1) : path;
   }
 
   /**
@@ -1898,9 +1916,7 @@ public class RepositoryService {
    */
   @Transactional
   public void deleteBranch(String repoId, String branch) {
-    repositoryRepository
-        .findByIdOptional(repoId)
-        .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+    requireWrapperMembership(get(repoId));
 
     // `branch` is user-supplied: reject blank or dash-leading names so a value like
     // "-D"/"--force" can't be smuggled to git as a flag (argv flag injection).
@@ -1941,16 +1957,81 @@ public class RepositoryService {
    * Deletes a repository, <b>refusing the project's wrapper</b>: the wrapper is the project root
    * and goes with the project, not on its own. {@code ProjectService.delete} tears it down through
    * {@link #deleteInternal}.
+   *
+   * <p>A member of the wrapper leaves the wrapper first, in its own commit and push. That ordering
+   * is the point: a {@code .gitmodules} entry pointing at a repository nobody serves any more breaks
+   * every clone of the project, whereas an entry removed a moment before the teardown is simply the
+   * project having one component fewer.
+   *
+   * <p>Not {@code @Transactional}: the wrapper commit is network work, and holding a database
+   * transaction open across a push to another service is how a slow host becomes a lock timeout.
+   * {@link #deleteInternal} owns the row transaction.
    */
-  @Transactional
   public void delete(String repoId) {
-    Repository repo = get(repoId);
+    Repository repo = QuarkusTransaction.requiringNew().call(() -> get(repoId));
     if (repo.archetype == RepositoryArchetype.PROJECT) {
       throw new BadRequestException(
           "This is the project's wrapper repository — the project root — and cannot be deleted on"
               + " its own; delete the project instead.");
     }
+    removeFromWrapper(repo);
     deleteInternal(repoId);
+  }
+
+  /**
+   * Takes {@code repo} out of its project's wrapper, if it is in it. Every name the repository
+   * answers to is tried, because the wrapper records one of them and this service does not get to
+   * assume which.
+   */
+  private void removeFromWrapper(Repository repo) {
+    if (repo.archetype == null || !repo.archetype.isPlaceable()) {
+      return;
+    }
+    Repository wrapper =
+        QuarkusTransaction.requiringNew()
+            .call(() -> repositoryRepository.findWrapperByProject(repo.project.id).orElse(null));
+    if (wrapper == null || wrapper.id.equals(repo.id)) {
+      return;
+    }
+    List<String> names =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  List<String> all =
+                      new ArrayList<>(repositoryNameRepository.namesFor(get(repo.id)));
+                  all.add(repo.id);
+                  return all;
+                });
+    for (String name : names) {
+      if (wrapperWriter.removeFromWrapper(wrapper, name).isPresent()) {
+        return;
+      }
+    }
+  }
+
+  /**
+   * Drops the row for a repository the wrapper no longer declares, and <b>nothing more</b> — the
+   * reconcile's deregistration.
+   *
+   * <p>Deliberately lighter than {@link #deleteInternal}: the workspaces go, because a workspace on
+   * a repository the project has no record of is a container nobody can reach, but the git host's
+   * repository and this service's mirror both stay. Deregistering is a statement about membership,
+   * not about the history — put the entry back in the wrapper and the next reconcile adopts the very
+   * same repository again, with everything still there.
+   */
+  @Transactional
+  public void deregisterRow(String repoId) {
+    Repository repo = get(repoId);
+    if (!workspaceLifecycle.isUnsatisfied()) {
+      try {
+        workspaceLifecycle.get().releaseRepository(repoId);
+      } catch (RuntimeException e) {
+        LOG.warnf(
+            "Workspace teardown failed while deregistering repository %s: %s",
+            repoId, e.getMessage());
+      }
+    }
+    repositoryRepository.delete(repo);
   }
 
   /**

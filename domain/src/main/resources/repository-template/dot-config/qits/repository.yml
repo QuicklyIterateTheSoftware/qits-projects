@@ -1,0 +1,32 @@
+# This repository's qits configuration — the single source of truth for its services, actions and
+# bootstrap chain. It is read in-container per workspace from your branch's checkout, so changing it
+# is an ordinary commit and takes effect in every workspace whose branch carries it.
+#
+# A blank component has nothing to run yet. Uncomment and fill in the sections below as it grows.
+#
+# `repository.archetype` is deliberately absent: the directory this repository is mounted under in
+# its project's wrapper decides that, and a value here would only be a second opinion.
+version: 1
+
+repository:
+  main-branch: main
+
+# Long-running processes a workspace can start — dev servers, watchers. `web-view` makes one
+# viewable in the browser through qits' proxy.
+# services:
+#   - name: dev server
+#     description: The component's dev server.
+#     start: ./run-dev.sh
+#     web-view:
+#       port: 8080
+#       entry-path: /
+
+# One-shot commands runnable from the workspace — builds, test suites, linters.
+# actions:
+#   - name: build
+#     execute: ./build.sh
+
+# Commands run once when a workspace container is first provisioned, in order.
+# bootstrap:
+#   - name: install dependencies
+#     execute: ./install.sh

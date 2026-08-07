@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.api;
 import eu.wohlben.qits.projects.control.ProjectReconcileService;
 import eu.wohlben.qits.projects.control.ProjectReconciliation;
 import eu.wohlben.qits.projects.control.ProjectService;
+import eu.wohlben.qits.projects.control.WrapperReconcileService;
 import eu.wohlben.qits.projects.dto.ProjectDto;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecord;
@@ -39,6 +40,9 @@ public class ProjectController {
 
   /** The manual drift remedy's orchestration — see {@link #reconcile}. */
   @Inject ProjectReconcileService projectReconcileService;
+
+  /** The wrapper-driven repository reconcile — see {@link #reconcileRepositories}. */
+  @Inject WrapperReconcileService wrapperReconcileService;
 
   @Inject ProjectMapper projectMapper;
 
@@ -214,7 +218,13 @@ public class ProjectController {
   // --- Repository associations ---
 
   public static record ListProjectRepositoriesRequest() {
-    public record Response(List<Entry> entries) {
+    /**
+     * @param wrapper the project's manifest as the wrapper's {@code .gitmodules} declares it, or
+     *     null for a project with no wrapper repository (only projects predating wrappers). An
+     *     entry with no {@code repositoryId}, or a repository named by no entry, is exactly the
+     *     drift the reconcile action resolves.
+     */
+    public record Response(List<Entry> entries, WrapperReconcileService.WrapperView wrapper) {
       public record Entry(RepositoryDto repository) {}
     }
   }
@@ -228,32 +238,89 @@ public class ProjectController {
         repos.stream()
             .map(r -> new ListProjectRepositoriesRequest.Response.Entry(repositoryMapper.toDto(r)))
             .toList();
-    return new ListProjectRepositoriesRequest.Response(entries);
+    return new ListProjectRepositoriesRequest.Response(
+        entries, wrapperReconcileService.view(projectId));
   }
 
   /**
-   * {@code importSubmodules} (default true) imports the repository's DIRECT {@code .gitmodules}
-   * submodules as sibling repositories — one level only; deeper levels are imported layer by layer
-   * via the repository's own {@code POST /submodules/import} action.
+   * Adds a component to the project — and to its wrapper repository, which is the same statement
+   * made twice.
+   *
+   * @param url an existing repository to attach, mirrored in and published to the platform's git
+   *     host. Exactly one of this and {@code name}.
+   * @param name a blank repository to create on the platform's git host, seeded with the repository
+   *     template. It becomes the component's addressable name, so it is what {@code ../<name>.git}
+   *     resolves to.
+   * @param archetype which kind of component this is — it decides the wrapper directory the
+   *     submodule is mounted under, so it must be a placeable one.
    */
   public static record CreateProjectRepositoryRequest(
-      @NotBlank String url,
-      eu.wohlben.qits.projects.entity.RepositoryArchetype archetype,
-      Boolean importSubmodules) {
-    public record Response(RepositoryDto repository, String projectId) {}
+      String url,
+      String name,
+      @NotNull eu.wohlben.qits.projects.entity.RepositoryArchetype archetype) {
+    /**
+     * @param wrapperPath where the wrapper now mounts it, e.g. {@code services/checkout}
+     */
+    public record Response(RepositoryDto repository, String projectId, String wrapperPath) {}
   }
 
   @POST
   @Path("/{projectId}/repositories")
+  @APIResponse(responseCode = "200", description = "The repository exists and the wrapper names it")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "Neither or both of url/name, an unplaceable archetype, a name already taken in the"
+              + " project, or a wrapper commit the git host refused")
   public CreateProjectRepositoryRequest.Response createRepository(
       @PathParam("projectId") String projectId, @Valid CreateProjectRepositoryRequest request) {
-    var repo =
-        projectService.createRepositoryUnderProject(
-            projectId,
-            request.url(),
-            request.archetype(),
-            request.importSubmodules() == null || request.importSubmodules());
-    return new CreateProjectRepositoryRequest.Response(repositoryMapper.toDto(repo), projectId);
+    var created =
+        projectService.createRepository(
+            projectId, request.url(), request.name(), request.archetype());
+    return new CreateProjectRepositoryRequest.Response(
+        repositoryMapper.toDto(created.repository()), projectId, created.wrapperPath());
+  }
+
+  public static record ReconcileProjectRepositoriesRequest() {
+    /**
+     * @param entries one line per wrapper entry, plus one per row the wrapper no longer names
+     */
+    public record Response(
+        String projectId,
+        String wrapperRepositoryId,
+        String branch,
+        List<WrapperReconcileService.EntryOutcome> entries) {}
+  }
+
+  /**
+   * Distinct from {@code POST /{projectId}/reconcile}, which re-asserts the project's dns record.
+   * This one reconciles the project's <em>repositories</em> against its wrapper.
+   */
+  @POST
+  @Path("/{projectId}/repositories/reconcile")
+  @Operation(
+      summary = "Bring a project's repositories in line with its wrapper's .gitmodules",
+      description =
+          "The wrapper repository is the project's configuration: every submodule entry gets a"
+              + " repository (adopted when the git host already serves it, cloned from the entry's"
+              + " backend otherwise), the directory an entry sits under decides its archetype, and"
+              + " a repository no entry names is deregistered — its row goes, its history on the"
+              + " git host stays. Idempotent, and the way a project imported from a wrapper url is"
+              + " materialized.")
+  @APIResponse(
+      responseCode = "200",
+      description =
+          "The reconcile ran. A per-entry failure is still a 200 — the outcomes are the result.")
+  @APIResponse(responseCode = "400", description = "The project has no wrapper repository")
+  @APIResponse(responseCode = "404", description = "No such project")
+  public ReconcileProjectRepositoriesRequest.Response reconcileRepositories(
+      @PathParam("projectId") String projectId) {
+    var reconciliation = wrapperReconcileService.reconcile(projectId);
+    return new ReconcileProjectRepositoriesRequest.Response(
+        reconciliation.projectId(),
+        reconciliation.wrapperRepositoryId(),
+        reconciliation.branch(),
+        reconciliation.entries());
   }
 
   // SEAM (migration-plan.md §6, project <-> featureflow). The two feature-flow sub-resources

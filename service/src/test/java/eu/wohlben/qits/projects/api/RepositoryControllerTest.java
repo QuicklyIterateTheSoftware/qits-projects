@@ -42,7 +42,7 @@ public class RepositoryControllerTest {
         .contentType(ContentType.JSON)
         .body(
             new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRepositoryRequest(
-                url, null, null))
+                url, null, eu.wohlben.qits.projects.entity.RepositoryArchetype.SERVICE))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()

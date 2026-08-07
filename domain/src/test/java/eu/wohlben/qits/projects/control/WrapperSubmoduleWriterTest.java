@@ -52,7 +52,7 @@ public class WrapperSubmoduleWriterTest {
   /** A child repository under the project, already published to the host, and its main head. */
   private Repository child(Project project, String fixture) throws Exception {
     return repositoryService.cloneRepository(
-        GitFixtures.path(fixture), RepositoryArchetype.SERVICE, project, false);
+        GitFixtures.path(fixture), RepositoryArchetype.SERVICE, project);
   }
 
   private String headOf(Repository repo) throws Exception {

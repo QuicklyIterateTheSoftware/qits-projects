@@ -18,24 +18,37 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
- * The <b>project template skeleton</b> every wrapper repository's first commit is made of: the
- * empty polyrepo layout the project will grow into, so a wrapper's {@code main} is never unborn and
- * the archetype taxonomy is visible on disk from the first clone.
+ * The committed skeletons a repository's first commit is made of, and the one reader that walks
+ * them off the classpath.
  *
- * <p>It lives as ordinary committed files under {@code src/main/resources/project-template/} rather
- * than as strings in Java, so it stays reviewable, can grow without touching code, and can be
- * checked against {@link
- * eu.wohlben.qits.projects.entity.RepositoryArchetype#skeletonDirectories()} by a test.
- * Nothing in it is project-specific, so it is committed <b>verbatim</b> — no placeholders, no
- * template engine.
+ * <p>Two of them, for the two greenfield creation paths:
+ *
+ * <ul>
+ *   <li><b>{@code project-template/}</b> — every wrapper repository's first commit: the empty
+ *       polyrepo layout the project will grow into, so a wrapper's {@code main} is never unborn and
+ *       the archetype taxonomy is visible on disk from the first clone. Checked against {@link
+ *       eu.wohlben.qits.projects.entity.RepositoryArchetype#skeletonDirectories()} by a test.
+ *   <li><b>{@code repository-template/}</b> — a blank component repository's first commit. Far
+ *       smaller, and deliberately so: what a component contains is the author's business, and all
+ *       this has to do is give {@code main} a commit for the wrapper's gitlink to pin and a
+ *       workspace container's clone to land on.
+ * </ul>
+ *
+ * <p>Both live as ordinary committed files rather than as strings in Java, so they stay reviewable
+ * and can grow without touching code. Nothing in either is project-specific, so both are committed
+ * <b>verbatim</b> — no placeholders, no template engine.
  */
 @ApplicationScoped
 public class ProjectTemplate {
 
   static final String RESOURCE_ROOT = "project-template";
+
+  /** The blank-component skeleton — see the class doc. */
+  static final String REPOSITORY_RESOURCE_ROOT = "repository-template";
 
   /**
    * Marks a resource whose <em>content</em> is a symlink target rather than file content. Maven
@@ -74,39 +87,39 @@ public class ProjectTemplate {
   public record TemplateEntry(String path, String mode, byte[] content) {}
 
   /**
-   * Read once per JVM: the template is immutable, on the classpath, and read on every project
+   * Read once per JVM per root: a template is immutable, on the classpath, and read on every
    * creation — including ~100 times across a test suite run.
    */
-  private volatile List<TemplateEntry> cached;
+  private final java.util.Map<String, List<TemplateEntry>> cached = new ConcurrentHashMap<>();
 
-  /** The skeleton's entries, sorted by path so a seeded tree is deterministic. */
+  /** The wrapper skeleton's entries, sorted by path so a seeded tree is deterministic. */
   public List<TemplateEntry> entries() {
-    List<TemplateEntry> local = cached;
-    if (local == null) {
-      synchronized (this) {
-        if (cached == null) {
-          cached = read();
-        }
-        local = cached;
-      }
-    }
-    return local;
+    return entriesOf(RESOURCE_ROOT);
   }
 
-  private List<TemplateEntry> read() {
+  /** The blank-component skeleton's entries, same ordering rule. */
+  public List<TemplateEntry> repositoryEntries() {
+    return entriesOf(REPOSITORY_RESOURCE_ROOT);
+  }
+
+  private List<TemplateEntry> entriesOf(String resourceRoot) {
+    return cached.computeIfAbsent(resourceRoot, ProjectTemplate::read);
+  }
+
+  private static List<TemplateEntry> read(String resourceRoot) {
     List<TemplateEntry> entries = new ArrayList<>();
     try {
       ClassLoader loader = Thread.currentThread().getContextClassLoader();
-      for (URL url : Collections.list(loader.getResources(RESOURCE_ROOT))) {
+      for (URL url : Collections.list(loader.getResources(resourceRoot))) {
         entries.addAll(readFromRootOf(url.toURI()));
       }
     } catch (IOException | URISyntaxException e) {
       throw new InternalServerErrorException(
-          "Failed to read the project template from the classpath: " + e.getMessage());
+          "Failed to read " + resourceRoot + " from the classpath: " + e.getMessage());
     }
     if (entries.isEmpty()) {
       throw new InternalServerErrorException(
-          "The project template is missing from the classpath (" + RESOURCE_ROOT + ")");
+          "The template is missing from the classpath (" + resourceRoot + ")");
     }
     entries.sort(Comparator.comparing(TemplateEntry::path));
     return List.copyOf(entries);

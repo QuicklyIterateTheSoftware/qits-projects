@@ -41,6 +41,8 @@ public class ProjectService {
 
   @Inject RepositoryService repositoryService;
 
+  @Inject WrapperSubmoduleWriter wrapperSubmoduleWriter;
+
   // Fired by #announce after a creation commits. Optional, like every port here — see the
   // interface's javadoc for what absent means and why it is a supported configuration.
   @Inject Instance<ProjectDomainRegistrar> domainRegistrars;
@@ -312,9 +314,14 @@ public class ProjectService {
     return repositoryRepository.find("project.id", projectId).list();
   }
 
+  /**
+   * Clones an existing repository under {@code project} and <b>does not touch the wrapper</b> — the
+   * primitive, and the right call for a repository that is deliberately not a component of the
+   * project (an unplaceable {@code FORK}, the self-seed's monorepo entry).
+   */
   @Transactional
   public Repository createRepositoryUnderProject(
-      String projectId, String url, RepositoryArchetype archetype, boolean importSubmodules) {
+      String projectId, String url, RepositoryArchetype archetype) {
     Project project = get(projectId);
     // The wrapper is never created through the ordinary repositories path: it is derived from the
     // project's slug and owned by adoptWrapperRepository, which is the single seam that may mint or
@@ -325,7 +332,102 @@ public class ProjectService {
               + " the project's wrapper repository, which is created with the project.");
     }
 
-    return repositoryService.cloneRepository(url, archetype, project, importSubmodules);
+    return repositoryService.cloneRepository(url, archetype, project);
+  }
+
+  /**
+   * A repository and the wrapper entry that makes it part of the project.
+   *
+   * @param wrapperPath where the wrapper mounts it, e.g. {@code services/checkout}
+   */
+  public record CreatedRepository(Repository repository, String wrapperPath) {}
+
+  /**
+   * The create flow: one of two ways to get a repository, then one way to make it a component.
+   *
+   * <ul>
+   *   <li><b>{@code name}</b> — a blank repository on the platform's own git host, seeded with the
+   *       repository template. Nothing external is involved and the name is exactly what {@code
+   *       ../<name>.git} will resolve to.
+   *   <li><b>{@code url}</b> — an existing external repository, mirrored in and published to the
+   *       host. Its submodules are not followed: the wrapper says what belongs to the project.
+   * </ul>
+   *
+   * <p>Exactly one of the two, because they are different intentions and a request carrying both
+   * says neither. The archetype must be placeable — an unplaceable one has no directory to be
+   * mounted under, and a component that is not in the wrapper is not a component.
+   *
+   * <p><b>The wrapper commit runs last and outside the row's transaction.</b> It is a push to
+   * another service and can fail on its own; when it does, the request fails loudly with the row
+   * already created, retrying is idempotent (the entry is added once), and a reconcile heals a
+   * straggler nobody retried. The alternative — holding a database transaction open across a network
+   * write — trades a visible failure for an invisible one.
+   */
+  public CreatedRepository createRepository(
+      String projectId, String url, String name, RepositoryArchetype archetype) {
+    Project project = get(projectId);
+    String trimmedUrl = url == null || url.isBlank() ? null : url.trim();
+    String trimmedName = name == null || name.isBlank() ? null : name.trim();
+    if ((trimmedUrl == null) == (trimmedName == null)) {
+      throw new BadRequestException(
+          "Give exactly one of 'url' (attach an existing repository) or 'name' (create a blank one"
+              + " on the platform's git host).");
+    }
+    if (archetype == null) {
+      throw new BadRequestException("archetype is required");
+    }
+    if (archetype == RepositoryArchetype.PROJECT) {
+      throw new BadRequestException(
+          "A repository cannot be created with archetype PROJECT: that archetype is reserved for"
+              + " the project's wrapper repository, which is created with the project.");
+    }
+    RepositoryArchetype normalized = archetype.normalize();
+    if (!normalized.isPlaceable()) {
+      throw new BadRequestException(
+          "Archetype "
+              + archetype
+              + " has no directory in the wrapper, so a repository cannot be created under a project"
+              + " with it. Placeable archetypes: "
+              + RepositoryArchetype.skeletonDirectories());
+    }
+    Repository wrapper =
+        findWrapper(projectId)
+            .orElseThrow(
+                () ->
+                    new BadRequestException(
+                        "Project '"
+                            + project.name
+                            + "' has no wrapper repository, so there is nothing to add a component"
+                            + " to. Projects created before wrappers existed have none."));
+
+    Repository repo =
+        trimmedName != null
+            ? repositoryService.createBlankRepository(project, trimmedName, normalized)
+            : repositoryService.cloneRepository(trimmedUrl, normalized, project);
+
+    // The name the wrapper records has to be the name the git host serves this repository under —
+    // that is the whole contract of a relative submodule url. cloneRepository may have had to
+    // disambiguate a taken basename, so the registered alias is read back rather than assumed.
+    String memberName =
+        repositoryNameRepository
+            .nameFor(repo)
+            .orElseThrow(
+                () ->
+                    new BadRequestException(
+                        "Repository " + repo.id + " has no addressable name to mount it under."));
+    String head =
+        repositoryService
+            .mainBranchHeadOnHost(repo.id)
+            .orElseThrow(
+                () ->
+                    new BadRequestException(
+                        "The git host holds no '"
+                            + repo.mainBranch
+                            + "' branch for "
+                            + memberName
+                            + " yet, so there is no commit for the wrapper's gitlink to pin."));
+    String wrapperPath = wrapperSubmoduleWriter.addToWrapper(wrapper, memberName, normalized, head);
+    return new CreatedRepository(repo, wrapperPath);
   }
 
   /** Creates the project's wrapper as the last step of project creation. */

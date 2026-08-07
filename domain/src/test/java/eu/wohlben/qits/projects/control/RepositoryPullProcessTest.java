@@ -67,6 +67,18 @@ public class RepositoryPullProcessTest {
   }
 
   /**
+   * Registers each fixture as a sibling repository of the project. Its url basename becomes its
+   * addressable name, which is exactly what a superproject's committed {@code ../<name>.git}
+   * resolves to — so registering a sibling is all it takes for the pull walk to find it.
+   */
+  private void cloneSiblings(eu.wohlben.qits.projects.entity.Project project, String... fixtures)
+      throws Exception {
+    for (String name : fixtures) {
+      repositoryService.cloneRepository(fixture(name), null, project);
+    }
+  }
+
+  /**
    * The repositories in a project keyed by the trailing bare-repo name of their url, <b>excluding
    * the project's wrapper</b> — it is created with every project and has no url to key on.
    */
@@ -152,7 +164,7 @@ public class RepositoryPullProcessTest {
   @Test
   public void aSecondPullReusesTheLiveWalkWhileASyncConflicts() throws Exception {
     var project = projectService.create("Pull Single Flight", null);
-    var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project, false);
+    var repo = repositoryService.cloneRepository(fixture("testing-repo.git"), null, project);
 
     // Simulate a live pull holding the repo's origin.
     TechnicalProcess active =
@@ -173,11 +185,12 @@ public class RepositoryPullProcessTest {
   public void pullStreamsOneSegmentPerRepoAndDedupsTheDiamond() throws Exception {
     var project = projectService.create("Pull Diamond", null);
     var superRepo =
-        repositoryService.cloneRepository(fixture("submodule-super.git"), null, project, true);
-    // Recurse one level so the full diamond exists: super -> {child-a, shared}, child-a -> {shared,
-    // grandchild}. The shared child is reached by two edges.
-    repositoryService.importDirectSubmodules(
-        reposByName(project.id).get("submodule-child-a.git").id);
+        repositoryService.cloneRepository(fixture("submodule-super.git"), null, project);
+    // The whole diamond as sibling repositories: super -> {child-a, shared}, child-a -> {shared,
+    // grandchild}. Registering them is all it takes — the walk derives the edges from each
+    // repository's own .gitmodules, matching a submodule url's basename against a sibling's name.
+    cloneSiblings(project, "submodule-child-a.git", "submodule-shared.git",
+        "submodule-grandchild.git");
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(superRepo.id)));
 
@@ -203,11 +216,9 @@ public class RepositoryPullProcessTest {
   public void aCycleTerminatesWithoutReopeningASegment() throws Exception {
     var project = projectService.create("Pull Cycle", null);
     var cycleA =
-        repositoryService.cloneRepository(fixture("submodule-cycle-a.git"), null, project, true);
-    // Close the loop: import cycle-b's submodule (which points back at cycle-a, deduped to the
-    // existing row) so the pull recursion actually walks a->b->a.
-    repositoryService.importDirectSubmodules(
-        reposByName(project.id).get("submodule-cycle-b.git").id);
+        repositoryService.cloneRepository(fixture("submodule-cycle-a.git"), null, project);
+    // Close the loop: cycle-b references cycle-a right back, so the walk really does try a->b->a.
+    cloneSiblings(project, "submodule-cycle-b.git");
 
     Replay replay = replayOf(awaitTerminal(repositoryService.beginPullRepository(cycleA.id)));
 
@@ -222,9 +233,9 @@ public class RepositoryPullProcessTest {
   public void aChildFailureSettlesFailedWhileLaterChildrenStillPull() throws Exception {
     var project = projectService.create("Pull Child Failure", null);
     var superRepo =
-        repositoryService.cloneRepository(fixture("submodule-super.git"), null, project, true);
-    Map<String, Repository> repos = reposByName(project.id);
-    repositoryService.importDirectSubmodules(repos.get("submodule-child-a.git").id);
+        repositoryService.cloneRepository(fixture("submodule-super.git"), null, project);
+    cloneSiblings(project, "submodule-child-a.git", "submodule-shared.git",
+        "submodule-grandchild.git");
 
     // Break the shared child's git-host bare so its own pull throws. It cannot be broken in the
     // mirror any more: a pull refreshes the mirror from the host first, which would repair any

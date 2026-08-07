@@ -5,6 +5,7 @@ import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryName;
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.util.List;
 import java.util.Optional;
 import org.jboss.logging.Logger;
 
@@ -56,6 +57,15 @@ public class RepositoryNameRepository implements PanacheRepositoryBase<Repositor
   /** Any name that resolves to {@code repository} — the name its container clones itself under. */
   public Optional<String> nameFor(Repository repository) {
     return find("repository.id", repository.id).firstResultOptional().map(alias -> alias.name);
+  }
+
+  /**
+   * <b>Every</b> name that resolves to {@code repository}. A repository can be addressed by more
+   * than one, so matching a wrapper's {@code .gitmodules} entry against a single one would miss a
+   * member declared under an alias it also owns.
+   */
+  public List<String> namesFor(Repository repository) {
+    return find("repository.id", repository.id).stream().map(alias -> alias.name).toList();
   }
 
   /**

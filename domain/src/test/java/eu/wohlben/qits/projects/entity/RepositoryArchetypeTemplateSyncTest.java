@@ -58,14 +58,45 @@ public class RepositoryArchetypeTemplateSyncTest {
     }
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void theUnplaceableArchetypesHaveNoDirectory() {
     for (RepositoryArchetype archetype :
         Set.of(
             RepositoryArchetype.PROJECT,
             RepositoryArchetype.SERVICE_TEMPLATE,
-            RepositoryArchetype.FORK)) {
+            RepositoryArchetype.FORK,
+            RepositoryArchetype.INTEGRATION,
+            RepositoryArchetype.APPLICATION)) {
       assertEquals(null, archetype.directory(), archetype + " must not be placeable");
+    }
+  }
+
+  /** Directory → archetype is the reconcile's derivation, and it is the exact inverse. */
+  @Test
+  public void everyTemplateDirectoryDerivesBackToItsArchetype() throws Exception {
+    for (String directory : templateDirectories()) {
+      RepositoryArchetype derived = RepositoryArchetype.fromDirectory(directory);
+      assertEquals(
+          directory, derived == null ? null : derived.directory(), directory + " must round-trip");
+    }
+    assertEquals(null, RepositoryArchetype.fromDirectory("nope"));
+    assertEquals(null, RepositoryArchetype.fromDirectory(null));
+  }
+
+  /** Release A reads the deprecated values and writes their replacements. */
+  @SuppressWarnings("deprecation")
+  @Test
+  public void theDeprecatedAliasesNormalizeOntoTheirReplacements() {
+    assertEquals(RepositoryArchetype.LIBRARY, RepositoryArchetype.INTEGRATION.normalize());
+    assertEquals(RepositoryArchetype.FRONTEND, RepositoryArchetype.APPLICATION.normalize());
+    assertEquals(RepositoryArchetype.SERVICE, RepositoryArchetype.SERVICE.normalize());
+    assertEquals(null, RepositoryArchetype.normalize(null));
+    for (RepositoryArchetype archetype : RepositoryArchetype.values()) {
+      assertTrue(
+          archetype.normalize() != RepositoryArchetype.INTEGRATION
+              && archetype.normalize() != RepositoryArchetype.APPLICATION,
+          "normalize() must never answer a deprecated value: " + archetype);
     }
   }
 

@@ -112,17 +112,65 @@ public final class GitFixtures {
     git(work, "add", "-A");
     git(work, "commit", "-q", "-m", "docs: add README explaining fixture purpose and structure");
 
-    // The three derived bares the monorepo's derive-fixture-bares.sh produced for this context.
-    // demo-demo.git and qits-qits.git carry names no other fixture can stand in for: a project
-    // wrapper may only be adopted from a url whose basename is <slug>-<slug>.
+    // The derived bares the monorepo's derive-fixture-bares.sh produced for this context.
+    // demo-demo.git, empty-empty.git and qits-qits.git carry names no other fixture can stand in
+    // for: a project wrapper may only be adopted from a url whose basename is <slug>-<slug>.
     pushBare(work, dir.resolve("testing-repo.git"), "master");
     // A NON-empty upstream for the adopt path (project slug `demo`): real history adoption must
     // leave completely untouched.
     pushBare(work, dir.resolve("demo-demo.git"), "master");
-    // An EMPTY upstream: no refs at all, HEAD dangling at an unborn `main` — a forge repository
-    // created and never pushed to. Adopting it must yield the project template skeleton.
-    emptyBare(dir.resolve("qits-qits.git"), "main");
+    // An EMPTY upstream (project slug `empty`): no refs at all, HEAD dangling at an unborn `main` —
+    // a forge repository created and never pushed to. Adopting it must yield the project template
+    // skeleton.
+    emptyBare(dir.resolve("empty-empty.git"), "main");
+    // A WRAPPER upstream (project slug `qits`) carrying a real .gitmodules: the manifest a whole
+    // project is restored from. Its entries are relative, so they fold against this very directory
+    // and land on the sibling bares beside it — the same resolution a forge and the platform's
+    // name-addressed git route both perform.
+    wrapperBare(dir.resolve("qits-qits.git"));
 
+    deleteRecursively(work);
+  }
+
+  /**
+   * A bare wrapper repository on {@code main} whose single commit is a {@code .gitmodules}: one
+   * entry per placeable directory that resolves to a sibling fixture, plus one under a directory no
+   * archetype claims (the reconcile must skip that one and say why).
+   */
+  private static void wrapperBare(Path bare) {
+    deleteRecursively(bare);
+    git(bare.getParent(), "init", "-q", "--bare", bare.getFileName().toString());
+    Path work = bare.getParent().resolve(".build-wrapper");
+    deleteRecursively(work);
+    try {
+      Files.createDirectories(work);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    git(work, "init", "-q", "-b", "main", ".");
+    git(work, "config", "user.email", "fixtures@qits.local");
+    git(work, "config", "user.name", "qits fixtures");
+    write(
+        work.resolve(".gitmodules"),
+        """
+        [submodule "submodule-shared"]
+        \tpath = libs/submodule-shared
+        \turl = ../submodule-shared.git
+        \tbranch = main
+        [submodule "submodule-grandchild"]
+        \tpath = services/submodule-grandchild
+        \turl = ../submodule-grandchild.git
+        \tbranch = main
+        [submodule "vendored"]
+        \tpath = vendor/vendored
+        \turl = ../submodule-simple-super.git
+        \tbranch = main
+        """);
+    write(work.resolve("README.md"), "# qits-qits — wrapper fixture\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "Declare the project's components");
+    git(work, "push", "-q", bare.toString(), "main:refs/heads/main");
+    git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
     deleteRecursively(work);
   }
 

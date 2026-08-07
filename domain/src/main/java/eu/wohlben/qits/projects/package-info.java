@@ -1,6 +1,6 @@
 /**
- * The repository domain: {@code Repository} rows (with their submodule sibling graph) and the
- * workspaces + containers that iterate on them. Read this before reasoning about "what could go
+ * The repository domain: {@code Repository} rows (the components its project's wrapper declares)
+ * and the workspaces + containers that iterate on them. Read this before reasoning about "what could go
  * wrong" in the submodule / provisioning code here — the intended model collapses a lot of apparent
  * blast radius. Full narrative: {@code docs/guides/project-model.md}.
  *
@@ -9,14 +9,16 @@
  * A {@link eu.wohlben.qits.projects.entity.Project} is <b>one application, organized as a
  * polyrepository</b> — its repositories are the parts of that single app (microservices, shared
  * libraries, extracted fixtures), curated together by <b>one maintainer/team</b>. They are
- * <b>not</b> an aggregation of arbitrary third-party repos. Repositories are the domain qits exists
+ * <b>not</b> an aggregation of arbitrary third-party repos, and the list of them is not inferred:
+ * the project's <b>wrapper repository</b> declares it, one {@code .gitmodules} entry per component,
+ * under the directory that names the component's archetype. Repositories are the domain qits exists
  * to manage. A configured git <b>remote is only a backup</b>: git is distributed, so a periodic
  * {@code push}/{@code pull} to {@code origin} is the cheapest disaster-recovery — the <b>local
  * clones on the qits instance are authoritative</b>, and {@code origin} is pulled from only
- * deliberately, to recover if the instance is lost. <b>Project grouping + submodule import</b>
- * ({@link eu.wohlben.qits.projects.entity.RepositorySubmodule}, sibling repos served under
- * {@code /git/<projectId>/<name>}) is the <b>technical necessity that lets a local workspace
- * materialize the whole curated repo graph offline</b> from qits' own git host — nothing more.
+ * deliberately, to recover if the instance is lost. <b>Project grouping + name aliases</b> (sibling
+ * repos served under {@code /git/<projectId>/<name>}, which is what a committed {@code
+ * ../<name>.git} resolves to) is the <b>technical necessity that lets a local workspace materialize
+ * the whole curated repo graph offline</b> from qits' own git host — nothing more.
  *
  * <h2>Trust / blast-radius calibration</h2>
  *
@@ -34,9 +36,9 @@
  * </ul>
  *
  * This calibrates severity; it does not hide real divergences from the model — where an
- * implementation genuinely differs (e.g. the workspace-daemon's autonomous self-clone materializing
- * submodules from {@code .gitmodules} rather than the DB imported-edge closure), that is documented
- * at the source. See {@code docs/guides/project-model.md} and {@code
+ * implementation genuinely differs, that is documented at the source. (The workspace-daemon's
+ * autonomous self-clone materializes submodules from {@code .gitmodules}; so, now, does everything
+ * here — the divergence that note described is closed.) See {@code docs/guides/project-model.md} and {@code
  * docs/epics/qits-project-repository-submodules/}.
  */
 package eu.wohlben.qits.projects;

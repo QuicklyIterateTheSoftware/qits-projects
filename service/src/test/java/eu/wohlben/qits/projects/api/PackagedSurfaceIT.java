@@ -36,7 +36,9 @@ import org.junit.jupiter.api.condition.OS;
  *       warm-up, before binding a port, so <em>any</em> assertion against a running server catches
  *       it.
  *   <li>{@code project-template/} not being in the image, so project creation — the first thing
- *       anyone does with this service — failed with "missing from the classpath".
+ *       anyone does with this service — failed with "missing from the classpath". {@code
+ *       repository-template/} is the second such tree and is covered the same way, by creating a
+ *       blank repository.
  *   <li>{@code RepositoryMetadata} unregistered for reflection, so startup discovery could not read
  *       a sidecar it had itself written.
  * </ul>
@@ -129,6 +131,19 @@ public class PackagedSurfaceIT {
     assertEquals("packaged.test.eu", response.path("project.dns.domain"));
     assertEquals("A", response.path("project.dns.type"));
     assertEquals("203.0.113.9", response.path("project.dns.value"));
+
+    // The second classpath tree, read the only way anything reads it: creating a blank component.
+    // A wrapper path back means the skeleton was read, the repository was published to the git host
+    // and the wrapper commit landed — the whole create flow, in the packaged process.
+    given()
+        .contentType("application/json")
+        .body("{\"name\":\"blank-component\",\"archetype\":\"LIBRARY\"}")
+        .when()
+        .post("/projects/api/projects/" + response.path("project.id") + "/repositories")
+        .then()
+        .statusCode(200)
+        .body("repository.name", org.hamcrest.Matchers.equalTo("blank-component"))
+        .body("wrapperPath", org.hamcrest.Matchers.equalTo("libs/blank-component"));
   }
 
   /**
@@ -166,7 +181,7 @@ public class PackagedSurfaceIT {
     String repoId =
         given()
             .contentType("application/json")
-            .body("{\"url\":\"" + origin + "\",\"importSubmodules\":false}")
+            .body("{\"url\":\"" + origin + "\",\"archetype\":\"SERVICE\"}")
             .when()
             .post("/projects/api/projects/" + projectId + "/repositories")
             .then()

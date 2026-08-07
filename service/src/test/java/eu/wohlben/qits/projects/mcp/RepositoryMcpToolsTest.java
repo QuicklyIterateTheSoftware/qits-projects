@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
+import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.api.ProjectRequests;
 import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
@@ -51,7 +52,8 @@ public class RepositoryMcpToolsTest {
   private String createRepository(String projectId) {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRepositoryRequest(fixtureUrl, null, null))
+        .body(new ProjectController.CreateProjectRepositoryRequest(
+                fixtureUrl, null, RepositoryArchetype.SERVICE))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
@@ -255,8 +257,8 @@ public class RepositoryMcpToolsTest {
   @Test
   public void exposesExactlyTheRepositoryContextToolset() {
     // The repository server must expose only the repository tools — nothing from other contexts —
-    // so the model stays on task. Submodule edges (RepositorySubmoduleMcpTools) belong to this
-    // surface too.
+    // so the model stays on task. The submodule tools are gone with the import they served: the
+    // wrapper's .gitmodules is the project's manifest now, and it is read over REST.
     String project = createProject("Tools");
     client(project)
         .when()
@@ -274,9 +276,7 @@ public class RepositoryMcpToolsTest {
                       "listBranches",
                       "listCommits",
                       "listCommitChanges",
-                      "getCommitFileDiff",
-                      "listSubmodules",
-                      "prepareSubmoduleBackend"),
+                      "getCommitFileDiff"),
                   java.util.Set.copyOf(names),
                   "unexpected tool surface: " + names);
             })

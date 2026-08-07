@@ -16,9 +16,15 @@ when it comes back as a submodule.
 | Directory | Archetype | What belongs here |
 |---|---|---|
 | `services/` | `SERVICE` | Deployable components — the things that run in production. |
+| `daemons/` | `DAEMON` | Long-running background agents nobody calls. |
 | `libs/` | `LIBRARY` | Shared technical code consumed by the components. |
-| `integrations/` | `INTEGRATION` | Adapters and clients toward other systems. |
-| `apps/` | `APPLICATION` | End-user-facing apps — a SPA, a CLI. |
+| `frontends/` | `FRONTEND` | Anything served to a user at a URL. |
+| `cli/` | `CLI` | Command-line entry points. |
+| `images/` | `IMAGE` | Build definitions for published OCI images. |
+
+The directory an entry sits under is **authoritative**: `.gitmodules` is this project's
+configuration, so moving a submodule between these directories is how you change what kind of
+component it is.
 
 Start by putting code directly in the directory that fits. Nothing has to become its own repository
 until it earns it — that decision is meant to be deferred, not made on day one.

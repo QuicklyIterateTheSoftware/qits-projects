@@ -16,7 +16,7 @@ repository:
 #   - kind: java-quarkus
 #     root: services/my-service
 #   - kind: ts-angular
-#     root: apps/my-spa
+#     root: frontends/my-spa
 
 # Long-running processes a workspace can start — dev servers, watchers. `web-view` makes one
 # viewable in the browser through qits' proxy.

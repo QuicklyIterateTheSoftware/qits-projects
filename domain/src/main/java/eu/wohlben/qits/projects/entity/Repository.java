@@ -23,6 +23,15 @@ public class Repository extends PanacheEntityBase {
   @Enumerated(EnumType.STRING)
   public RepositoryArchetype archetype;
 
+  /**
+   * The last committed-configuration problem, or null when there is none. Config ingestion degrades
+   * loudly and never blocks, so a disagreement lands here rather than changing the row: the wrapper
+   * directory is what decides {@link #archetype}, and a {@code repository.yml} that says otherwise
+   * is a message to its author.
+   */
+  @Column(name = "config_warning", length = 4000)
+  public String configWarning;
+
   // SEAM (migration-plan.md §6): the `workspaces` @OneToMany is gone. The Workspace entity and the
   // `workspace` table belong to qits-workspaces, in a different physical database (§7), so neither
   // a JPA relation nor a foreign key can span the two. Workspaces reach a repository by String id

@@ -20,9 +20,9 @@ public abstract class RepositoryMapper {
   @Inject RepositoryNameRepository repositoryNames;
 
   /**
-   * {@code url} and {@code backupUrl} are the same column, deliberately: the entity's {@code url}
-   * has always been the backup twin and never a clone source, and the DTO carries both spellings for
-   * one release so a client in flight keeps working. The deprecated one goes next release.
+   * The entity's column is still called {@code url}; the DTO's field is {@code backupUrl}, which is
+   * what it has always meant. The column keeps its name because renaming it is a migration that buys
+   * nothing — this mapping is where the two spellings meet.
    */
   @Mapping(target = "projectId", source = "project.id")
   @Mapping(target = "backupUrl", source = "url")
@@ -30,7 +30,6 @@ public abstract class RepositoryMapper {
   @Mapping(
       target = "name",
       expression = "java(entity == null ? null : repositoryNames.nameFor(entity).orElse(null))")
-  @SuppressWarnings("deprecation")
   public abstract RepositoryDto toDto(Repository entity);
 
   /**

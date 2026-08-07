@@ -378,4 +378,125 @@ class RepoMirrorTest {
     assertEquals(List.of("shared.txt"), preview.conflictedPaths());
     assertEquals(mainBefore, TestBare.refIn(bare, "main"), "nothing was pushed for a conflicted preview");
   }
+
+  // -----------------------------------------------------------------------------------------
+  // amendTree — the wrapper commit's plumbing
+  // -----------------------------------------------------------------------------------------
+
+  /** The tree entries of a tree-ish, one {@code <mode> <type> <sha>\t<path>} line per entry. */
+  private List<String> lsTree(String rev) throws Exception {
+    return List.of(
+            TestBare.output(bare.toFile(), "git", "ls-tree", "-r", "-t", rev).trim().split("\n"))
+        .stream()
+        .filter(line -> !line.isBlank())
+        .toList();
+  }
+
+  @Test
+  void amendTreeKeepsEveryEntryItWasNotAskedAbout() throws Exception {
+    RepoMirror mirror = mirrors.of(repoId);
+    mirror.refreshNow();
+    String base = TestBare.refIn(bare, "main");
+
+    String treeSha =
+        mirror.amendTree(
+            base,
+            List.of(new RepoMirror.TreeEntry(".gitmodules", "100644", "[submodule \"a\"]\n".getBytes())),
+            List.of(),
+            List.of());
+    String commitSha = mirror.commitTree(treeSha, List.of(base), "add .gitmodules", QITS);
+    assertTrue(mirror.push(PushSpec.of(PushSpec.Ref.branch(commitSha, "main"))).accepted());
+
+    assertEquals(
+        "[submodule \"a\"]",
+        TestBare.output(bare.toFile(), "git", "show", "main:.gitmodules").trim());
+    // README.md and main.txt came from the base tree untouched — an amendment is not a rewrite.
+    assertEquals("# fixture", TestBare.output(bare.toFile(), "git", "show", "main:README.md").trim());
+    assertEquals("main side", TestBare.output(bare.toFile(), "git", "show", "main:main.txt").trim());
+  }
+
+  /**
+   * The property the whole wrapper feature rests on: a {@code 160000} entry records a sha the
+   * repository does not hold and never has to resolve.
+   */
+  @Test
+  void amendTreeRecordsAGitlinkForACommitThisRepositoryDoesNotHave() throws Exception {
+    RepoMirror mirror = mirrors.of(repoId);
+    mirror.refreshNow();
+    String base = TestBare.refIn(bare, "main");
+    String foreign = "0123456789012345678901234567890123456789";
+    assertEquals(
+        1,
+        mirror.local("git", "cat-file", "-e", foreign).exitCode(),
+        "the sha really is absent from this object store");
+
+    String treeSha =
+        mirror.amendTree(
+            base, List.of(), List.of(new RepoMirror.Gitlink("services/child", foreign)), List.of());
+    String commitSha = mirror.commitTree(treeSha, List.of(base), "mount services/child", QITS);
+    assertTrue(mirror.push(PushSpec.of(PushSpec.Ref.branch(commitSha, "main"))).accepted());
+
+    assertTrue(
+        lsTree("main").stream()
+            .anyMatch(line -> line.startsWith("160000 commit " + foreign) && line.endsWith("services/child")),
+        "the gitlink is a 160000 commit entry at its path: " + lsTree("main"));
+  }
+
+  @Test
+  void amendTreeRemovesBlobsAndGitlinksAndToleratesAPathThatIsNotThere() throws Exception {
+    RepoMirror mirror = mirrors.of(repoId);
+    mirror.refreshNow();
+    String base = TestBare.refIn(bare, "main");
+    String foreign = "0123456789012345678901234567890123456789";
+
+    String withChild =
+        mirror.commitTree(
+            mirror.amendTree(
+                base, List.of(), List.of(new RepoMirror.Gitlink("libs/shared", foreign)), List.of()),
+            List.of(base),
+            "mount libs/shared",
+            QITS);
+
+    String withoutChild =
+        mirror.commitTree(
+            mirror.amendTree(
+                withChild, List.of(), List.of(), List.of("libs/shared", "main.txt", "never-there")),
+            List.of(withChild),
+            "unmount libs/shared",
+            QITS);
+    assertTrue(mirror.push(PushSpec.of(PushSpec.Ref.branch(withoutChild, "main"))).accepted());
+
+    List<String> entries = lsTree("main");
+    assertTrue(entries.stream().noneMatch(line -> line.contains("libs/shared")), entries.toString());
+    assertTrue(entries.stream().noneMatch(line -> line.endsWith("main.txt")), entries.toString());
+    assertTrue(entries.stream().anyMatch(line -> line.endsWith("README.md")), entries.toString());
+  }
+
+  /** Amending twice with the same content answers the same tree — what makes a retry a no-op. */
+  @Test
+  void amendTreeIsDeterministicAndLeavesNoScratchBehind() throws Exception {
+    RepoMirror mirror = mirrors.of(repoId);
+    mirror.refreshNow();
+    String base = TestBare.refIn(bare, "main");
+    List<RepoMirror.TreeEntry> blobs =
+        List.of(new RepoMirror.TreeEntry("docs/note.md", "100644", "note\n".getBytes()));
+
+    String first = mirror.amendTree(base, blobs, List.of(), List.of());
+    String second = mirror.amendTree(base, blobs, List.of(), List.of());
+
+    assertEquals(first, second);
+    assertNotEquals(first, TestBare.refIn(bare, "main^{tree}"));
+    assertFalse(
+        Files.exists(tmp.resolve("projects-data").resolve("skeleton").resolve(repoId)),
+        "the scratch index and blobs are removed on every path");
+  }
+
+  @Test
+  void amendTreeRefusesABaseItCannotRead() throws Exception {
+    RepoMirror mirror = mirrors.of(repoId);
+    mirror.refreshNow();
+    assertThrows(
+        GitMirrorException.class,
+        () -> mirror.amendTree("refs/heads/no-such-branch", List.of(), List.of(), List.of()));
+  }
 }

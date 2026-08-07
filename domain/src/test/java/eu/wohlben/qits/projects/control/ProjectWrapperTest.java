@@ -42,8 +42,10 @@ public class ProjectWrapperTest {
           "AGENTS.md",
           "CLAUDE.md",
           "README.md",
-          "apps/README.md",
-          "integrations/README.md",
+          "cli/README.md",
+          "daemons/README.md",
+          "frontends/README.md",
+          "images/README.md",
           "libs/README.md",
           "services/README.md");
 

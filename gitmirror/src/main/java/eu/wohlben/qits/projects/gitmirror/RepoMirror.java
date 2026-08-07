@@ -25,9 +25,10 @@ import java.util.function.Consumer;
  *   <li><b>Local reads</b> — {@link #isAncestor}, {@link #aheadBehind}, {@link #previewMerge}. They
  *       need objects, so they run in the mirror and the caller refreshes it first. A slightly stale
  *       answer is a slightly stale number on a screen; that is the whole exposure.
- *   <li><b>Plumbing</b> — {@link #writeTree} and {@link #commitTree}. No working tree at all: this
- *       service only ever manufactures a commit with no checkout involved (a project template's
- *       root commit, a diverged pull's merge commit), so there is no worktree in this module.
+ *   <li><b>Plumbing</b> — {@link #writeTree}, {@link #amendTree} and {@link #commitTree}. No working
+ *       tree at all: this service only ever manufactures a commit with no checkout involved (a
+ *       project template's root commit, a diverged pull's merge commit, a wrapper's submodule
+ *       add/remove), so there is no worktree in this module.
  *   <li><b>Writes</b> — {@link #push} and nothing else. Every ref this service moves is moved by a
  *       push, which is the property the whole module exists to establish.
  * </ul>
@@ -459,6 +460,121 @@ public final class RepoMirror {
     } finally {
       deleteQuietly(skeletonRoot);
     }
+  }
+
+  /**
+   * One submodule gitlink to place in a tree built by {@link #amendTree}: the path it is mounted at
+   * and the commit of the child repository it is pinned to.
+   */
+  public record Gitlink(String path, String commitSha) {}
+
+  /**
+   * Builds a tree that is {@code baseRev}'s tree with a few entries changed — the wrapper commit's
+   * plumbing, and the one operation {@link #writeTree} cannot do because it starts from nothing.
+   *
+   * <p>Same no-worktree rule as everything else here: {@code read-tree} loads the base into a
+   * scratch index named by {@code GIT_INDEX_FILE}, {@code hash-object -w} writes the new blobs,
+   * {@code update-index --cacheinfo} places blobs ({@code 100644}) and gitlinks ({@code 160000}),
+   * {@code --force-remove} drops what is going, and {@code write-tree} derives the subtrees. The
+   * scratch lives under this mirror's own {@code skeleton/<repoId>/} and is removed on every path.
+   *
+   * <p><b>A {@code 160000} entry needs no object present.</b> That is what makes a wrapper commit
+   * possible at all: the child's commit lives in the child's repository, never in the wrapper's
+   * object store, and git records the gitlink by sha without ever resolving it.
+   *
+   * @param baseRev the commit or tree the amendment starts from
+   * @param blobUpserts regular files to add or replace, with their own modes
+   * @param gitlinkUpserts submodule mounts to add or re-pin
+   * @param removals paths to drop, whether blob or gitlink; a path that is not there is not an error
+   * @return the written tree's sha
+   */
+  public String amendTree(
+      String baseRev,
+      List<TreeEntry> blobUpserts,
+      List<Gitlink> gitlinkUpserts,
+      List<String> removals) {
+    requireRefName("baseRev", baseRev);
+    Path treeDir = skeletonRoot.resolve("amend");
+    Path index = skeletonRoot.resolve("amend-index");
+    Map<String, String> indexEnv = Map.of("GIT_INDEX_FILE", index.toAbsolutePath().toString());
+    try {
+      Files.createDirectories(treeDir);
+      GitCli.Result read = local(indexEnv, "git", "read-tree", "--end-of-options", baseRev);
+      if (read.exitCode() != 0) {
+        throw new GitMirrorException(
+            "Could not read '" + baseRev + "' into a scratch index: " + read.output());
+      }
+
+      List<String> shas = hashBlobs(treeDir, blobUpserts);
+
+      List<String> stage = new ArrayList<>(List.of("git", "update-index", "--add"));
+      for (int i = 0; i < blobUpserts.size(); i++) {
+        stage.add("--cacheinfo");
+        stage.add(blobUpserts.get(i).mode() + "," + shas.get(i) + "," + blobUpserts.get(i).path());
+      }
+      for (Gitlink gitlink : gitlinkUpserts) {
+        stage.add("--cacheinfo");
+        stage.add("160000," + gitlink.commitSha() + "," + gitlink.path());
+      }
+      if (stage.size() > 3) {
+        GitCli.Result staged = local(indexEnv, stage.toArray(String[]::new));
+        if (staged.exitCode() != 0) {
+          throw new GitMirrorException("Could not stage the amended entries: " + staged.output());
+        }
+      }
+
+      if (!removals.isEmpty()) {
+        List<String> remove = new ArrayList<>(List.of("git", "update-index", "--force-remove"));
+        remove.addAll(removals);
+        // `--force-remove` refuses outright in a bare repository ("this operation must be run in a
+        // work tree"), even though it only ever touches the index. Pointing GIT_WORK_TREE at the
+        // scratch directory satisfies the check; nothing is ever written there.
+        Map<String, String> removeEnv =
+            Map.of(
+                "GIT_INDEX_FILE", index.toAbsolutePath().toString(),
+                "GIT_WORK_TREE", treeDir.toAbsolutePath().toString());
+        GitCli.Result removed = local(removeEnv, remove.toArray(String[]::new));
+        if (removed.exitCode() != 0) {
+          throw new GitMirrorException("Could not remove the dropped entries: " + removed.output());
+        }
+      }
+
+      GitCli.Result written = local(indexEnv, "git", "write-tree");
+      if (written.exitCode() != 0) {
+        throw new GitMirrorException("Could not write the amended tree: " + written.output());
+      }
+      return written.output().trim();
+    } catch (IOException e) {
+      throw new GitMirrorException("Could not materialize the amended blobs under " + treeDir, e);
+    } finally {
+      deleteQuietly(skeletonRoot);
+    }
+  }
+
+  /** {@code hash-object -w} every entry's content, in order, and return the shas in that order. */
+  private List<String> hashBlobs(Path treeDir, List<TreeEntry> entries) throws IOException {
+    if (entries.isEmpty()) {
+      return List.of();
+    }
+    List<String> argv = new ArrayList<>(List.of("git", "hash-object", "-w", "--no-filters"));
+    for (int i = 0; i < entries.size(); i++) {
+      // Flat, index-numbered scratch names: the entry's own path may repeat a directory that
+      // another entry is a file at, and none of it reaches the tree — update-index names the path.
+      Path file = treeDir.resolve("blob-" + i);
+      Files.write(file, entries.get(i).content());
+      argv.add(file.toAbsolutePath().toString());
+    }
+    GitCli.Result hashed = local(argv.toArray(String[]::new));
+    if (hashed.exitCode() != 0) {
+      throw new GitMirrorException("Could not hash the amended blobs: " + hashed.output());
+    }
+    List<String> shas =
+        hashed.output().lines().map(String::trim).filter(line -> !line.isEmpty()).toList();
+    if (shas.size() != entries.size()) {
+      throw new GitMirrorException(
+          "Expected " + entries.size() + " blob(s), git hashed " + shas.size());
+    }
+    return shas;
   }
 
   /**

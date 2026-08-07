@@ -367,9 +367,6 @@ components:
           type: string
         name:
           type: string
-        url:
-          type: string
-          deprecated: true
         backupUrl:
           type: string
         mainBranch:

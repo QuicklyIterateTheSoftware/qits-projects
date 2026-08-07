@@ -90,9 +90,11 @@ things about that are easy to get wrong:
   matches nothing at all and is indistinguishable from leaving the key unset. The remote-login
   websocket needs no entry only because its literal sits under `/projects/api`.
 
-Path parameters naming a repository are `{repoId}` everywhere, including the submodule routes, which
-used `{repositoryId}` until the segment change. Parameter names are visible in the generated client,
-so keep them uniform.
+Path parameters naming a repository are `{repoId}` everywhere. Parameter names are visible in the
+generated client, so keep them uniform. Note the two reconciles under a project are deliberately
+different routes: `POST /{projectId}/reconcile` re-asserts the dns record, and
+`POST /{projectId}/repositories/reconcile` reconciles the project's repositories against its
+wrapper.
 
 ## Adding a dependency on another context
 
@@ -101,9 +103,10 @@ supported configuration with a documented behaviour — see the table in the REA
 is optional; if you ever add a mandatory one, say why in its javadoc, the way qits-workspaces'
 `RepositoryLookup` does.
 
-Never add a JPA relation to another context's entity. `Project ↔ Repository ↔ repository_name ↔
-repository_submodule` are real relations with real foreign keys because all four tables are in
-**this** database. Anything else is a string id through a port.
+Never add a JPA relation to another context's entity. `Project ↔ Repository ↔ repository_name` are
+real relations with real foreign keys because those tables are in **this** database. Anything else
+is a string id through a port. (`repository_submodule` is still in the schema and no longer mapped:
+the wrapper's `.gitmodules` is the submodule graph, and the table drops in release B.)
 
 Prefer widening an existing port over adding a synchronous call into another context. Where a port
 call is a genuine ordering precondition — `createMainWorkspace` before a clone returns,
@@ -138,6 +141,24 @@ passing the whole time.
 Do not lift `projects/security` into a shared `libs/qits-auth`. Every repo builds from a clone of
 itself alone, so ~115 lines duplicated per service is cheaper than a jar that has to travel to all of
 them; the duplication is the decision, not an oversight.
+
+## The wrapper is the project
+
+A project's wrapper repository (`PROJECT` archetype, named `<slug>-<slug>`) carries the project's
+configuration in its `.gitmodules`: one submodule per component, under the directory its archetype
+names, with a relative url. Three rules follow, and every one of them is enforced in code:
+
+- **The directory is the archetype.** `RepositoryArchetype.fromDirectory` is the derivation and the
+  reconcile applies it — moving a submodule between directories is how a component changes kind.
+- **A repository the wrapper does not name is not part of the project.** Write paths refuse it
+  (`requireWrapperMembership`) and the reconcile deregisters its row, keeping its history on the git
+  host so re-adding the entry re-adopts it.
+- **An empty `.gitmodules` is not a manifest.** A wrapper declaring no submodules enforces nothing
+  and deregisters nothing. Without that, shipping either rule would have bricked every project that
+  had not adopted the model yet.
+
+`WrapperSubmoduleWriter` is the only writer of that file and `WrapperGitmodules` the only editor —
+textual, one section at a time, every other byte where it was, because this is a file people review.
 
 ## Schema changes
 
@@ -192,8 +213,9 @@ injection therefore needs `@PersistenceUnit("projects")`.
   reads main's `application.properties` and none of the test overrides: config reaches it through
   `quarkus.test.arg-line`, which is why the test resources carry that key.
 - **Anything read off the classpath by walking is a native-image question.** `ProjectTemplate` is
-  the one such reader, and it handles three URI schemes: `file:` (tests), `jar:` (fast-jar) and
-  `resource:` (native). Quarkus' own `ClassPathUtils.consumeAsPaths` handles the first two and
+  the one such reader — it serves both committed skeletons, `project-template/` (a wrapper's first
+  commit) and `repository-template/` (a blank component's) — and it handles three URI schemes:
+  `file:` (tests), `jar:` (fast-jar) and `resource:` (native). Quarkus' own `ClassPathUtils.consumeAsPaths` handles the first two and
   rejects the third, which is how the binary came to fail every project creation while the suite was
   green. Anything new that enumerates a resource directory needs the same three, plus an entry in
   `quarkus.native.resources.includes` — a native image carries no resource it was not told about.

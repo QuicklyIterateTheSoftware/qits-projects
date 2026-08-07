@@ -5,11 +5,17 @@ extracted from the monorepo with its history (see `migration-plan.md` §3.1 ther
 
 ## What it owns
 
-A **project** is one application that starts as a single wrapper repository and grows into a
-polyrepository. Its repositories are the parts of that one app — services, libraries, extracted
-fixtures — curated by one maintainer, not an aggregation of arbitrary third-party repos. That
-framing is load-bearing wherever this code treats a name collision as the maintainer's own choice,
-or `origin` as a backup rather than an authority.
+A **project is its wrapper repository.** It starts as a single repository and grows into a
+polyrepository, and the wrapper's `.gitmodules` is the project's configuration: every component is a
+submodule under a directory that names its type, and a repository the wrapper does not name is not
+part of the project. Importing a wrapper url restores the whole project. Submodule urls are
+**relative** (`../<name>.git`), so the same wrapper resolves its siblings at a forge and on this
+platform's name-addressed git route with nothing to rewrite in between.
+
+Its repositories are the parts of that one app — services, daemons, libraries, frontends — curated
+by one maintainer, not an aggregation of arbitrary third-party repos. That framing is load-bearing
+wherever this code treats a name collision as the maintainer's own choice, or `origin` as a backup
+rather than an authority.
 
 Concretely:
 
@@ -18,7 +24,7 @@ Concretely:
 | `Project` | the aggregate root: name, an immutable git-safe `slug`, its repositories |
 | `Repository` | a git remote as an entity — a private mirror under `qits.projects.data-dir`, cloned/pulled/pushed/synced host-side against the git host and the row's own backup remote |
 | `repository_name` | addressable `(project, name) → repository` aliases, which is what makes a committed relative submodule url (`../<name>.git`) resolve natively |
-| `repository_submodule` | the submodule graph between repositories of one project, deduped per project |
+| `repository_submodule` | **unused** — the old import's edge table. The wrapper's `.gitmodules` is the submodule graph now; the table drops in release B |
 | the wrapper | every project owns exactly one `PROJECT`-archetype repository named `<slug>-<slug>`, seeded from `project-template/` |
 | the project's domain | a `{domain, type, value}` dns record embedded on `Project` — required when a project is created, handed to qits-dns through a port, and a **declared placeholder**: when a service owns domain configuration the embeddable and its three columns go (`ProjectDnsRecord`, `main-environment-plan.md` §1) |
 | `.qits-config.yml` | ingestion of the repository's own committed configuration, degrading loudly and never blocking |
@@ -141,30 +147,35 @@ A packaged run reconciles a `qits` project (slug `qits`) on every boot — `Star
 is the reconcile. It is additive and per-item idempotent: nothing is deleted, nothing already there
 is modified, and one failing item never denies the rest.
 
-It reconciles **two manifests**, because there are two ways a qits repository comes to exist.
+The in-code manifest is **two entries**: the wrapper repository (`qits-qits`) and the pre-split
+monorepo (`qits-backend`, a `FORK` — unplaceable, so it is neither expected in the wrapper nor
+deregistered for being missing from it). Everything else comes from the wrapper: the project is
+created from the wrapper url so its `.gitmodules` actually arrives, and `WrapperReconcileService`
+then registers one repository per entry.
 
-| Manifest | What it does | Id |
-|---|---|---|
-| `manifest()` | clones an upstream this service does not otherwise hold — the wrapper through the adopt seam, the rest through `createRepositoryUnderProject` | a fresh UUID, and the clone lands at `<data-dir>/<id>/origin` |
-| `platformManifest()` | **adopts** an origin already on the shared volume, one entry per superproject submodule, archetype from the directory it is mounted under | **the directory name** (`qits-ci`, `qits-spa-ui-components`, …) |
+It used to carry a second, hand-maintained list naming every platform repository the git host serves
+with its archetype spelled out beside it. That list is gone. The superproject's own `.gitmodules` is
+that list, it is committed where the repositories live, and a repository joins qits by being added
+to the wrapper rather than to a Java file that has to be deployed to take effect.
 
-The second exists because the platform's own repositories reach the git host without passing
-through this service: the bootstrap runs `git init --bare -b main /repos/qits-<name>/origin`
-directly, and qits-artifacts serves `<data-dir>/<repoId>/origin` id-addressed. They then accumulate
-pushes, ci runs and deployments while no `Repository` row names them — and every one of those facts
-is keyed on that directory name (`CiRun.repoId` carries it; so do qits-cd's applications). So
-adoption takes the id rather than minting one: a UUID row would be attached to nothing.
+Adoption is still how the platform's own repositories get their rows, and still keyed by the
+directory name: they reach the git host without passing through this service — the bootstrap runs
+`git init --bare -b main /repos/qits-<name>/origin` directly — and then accumulate pushes, ci runs
+and deployments while no `Repository` row names them. Every one of those facts is keyed on that
+directory name (`CiRun.repoId` carries it; so do qits-cd's applications), so adoption takes the id
+rather than minting one: a UUID row would be attached to nothing.
 `RepositoryService.adoptExistingOrigin` is the seam, and its javadoc carries what it deliberately
 does not do — no clone, no `origin` remote (so pull and push are not wired for an adopted
-repository), no name alias, no workspace. An entry with no origin on this host is skipped on every
-boot until the day that origin appears, which is what lets the manifest be the superproject's module
-list rather than a snapshot of one deployment.
+repository), no workspace. A wrapper entry with no origin on this host and no reachable backend is
+skipped, with a warning, on every boot until the day that origin appears.
 
 ## Persistence
 
 Its own named datasource `projects`, its own persistence unit, its own Flyway lineage at
 `classpath:db/projects/migration` — a file H2 under `~/.qits/data/projects` by default. `V1__init.sql`
 is the monorepo's shared V1–V45 squashed to the four tables above (schema as of V45, not a replay).
+`V3` widens the archetype check constraint to the old set ∪ the new one; release B tightens it and
+drops `repository_submodule`.
 
 Those four tables live in **one** database and keep **real foreign keys** between them; that is
 where the split was cut, and it is why `Repository.project` is still a JPA relation. Everything

@@ -78,10 +78,23 @@ public class WrapperReconcileService {
   /**
    * One line of the reconcile's answer.
    *
-   * @param path the wrapper path this is about, or the row's name for a deregistration
+   * <p>Most lines are about a wrapper entry and carry all six fields. Two shapes are not, and a
+   * client has to read {@code outcome} to tell them apart:
+   *
+   * <ul>
+   *   <li>a <b>{@code DEREGISTERED}</b> line is about a row the wrapper does <em>not</em> name, so
+   *       there is no path: {@code path} is null, {@code name} is the row's alias, {@code
+   *       repositoryId} is the row that was removed and {@code archetype} is the one it carried.
+   *   <li>a wrapper that declares nothing answers with a <b>single {@code SKIPPED}</b> line about
+   *       the wrapper itself: {@code path}, {@code name} and {@code archetype} are all null and
+   *       {@code repositoryId} is the wrapper's own id.
+   * </ul>
+   *
+   * @param path the wrapper path this is about, or null when the line is not about an entry
    * @param name the addressable name, which is what {@code ../<name>.git} resolves to
    * @param repositoryId the repository the entry now maps to, or null when there is none
-   * @param archetype the archetype the directory decided, or the row's own for a deregistration
+   * @param archetype the archetype the entry's directory decided, or the row's own when the line is
+   *     about a row the wrapper does not name
    * @param warning why an outcome is what it is, when the outcome does not say it; else null
    */
   public record EntryOutcome(

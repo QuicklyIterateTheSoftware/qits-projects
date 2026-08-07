@@ -9,6 +9,7 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -229,19 +230,10 @@ public class RemoteLoginSessions {
       String[] git =
           remoteAuth.gitWithCredentials(
               "push", spec.url(), "refs/heads/" + spec.branch() + ":refs/heads/" + spec.branch());
-      // `setsid --ctty` is what pty4j did for us in C: put the child in its own session and make
-      // the slave device its CONTROLLING terminal. Without it git opens /dev/tty, finds nothing,
-      // and fails non-interactively instead of prompting — which is the entire point of this
-      // session. It is also what makes the terminal's SIGHUP and SIGWINCH reach the right process
-      // group. (util-linux; /usr/bin/setsid on every distribution this host runs on.)
-      String[] argv = new String[git.length + 2];
-      argv[0] = "setsid";
-      argv[1] = "--ctty";
-      System.arraycopy(git, 0, argv, 2, git.length);
       // pushSpec no longer carries a path (projects-volume-decoupling-plan.md §3.5) — the mirror's
       // git dir comes from the registry directly, by repo id.
       ProcessBuilder builder =
-          new ProcessBuilder(argv).directory(gitMirrors.of(repoId).gitDir().toFile());
+          terminalProcess(pty.slavePath(), git).directory(gitMirrors.of(repoId).gitDir().toFile());
       // Strip inherited prompt-diverting vars: an ambient GIT_ASKPASS (VS Code's integrated
       // terminal — the documented quarkus:dev launch — sets it), SSH_ASKPASS, or
       // GIT_TERMINAL_PROMPT=0
@@ -252,17 +244,7 @@ public class RemoteLoginSessions {
       env.remove("GIT_ASKPASS");
       env.remove("SSH_ASKPASS");
       env.remove("GIT_TERMINAL_PROMPT");
-      // The child's stdio IS the terminal's slave device; opening it by path is what makes git see
-      // a TTY on all three descriptors. stderr goes to the same device rather than being merged in
-      // Java, so git's progress and its prompts stay in one interleaved stream, as on a real
-      // terminal.
-      File slave = new File(pty.slavePath());
-      Process process =
-          builder
-              .redirectInput(slave)
-              .redirectOutput(slave)
-              .redirectError(slave)
-              .start();
+      Process process = builder.start();
 
       RemoteLoginSession session =
           new RemoteLoginSession(
@@ -279,6 +261,63 @@ public class RemoteLoginSessions {
       pty.close();
       throw new InternalServerErrorException("Failed to start sign-in terminal: " + e.getMessage());
     }
+  }
+
+  /** Where the parent's own stdio goes: anywhere that can never become a controlling terminal. */
+  private static final File NOT_A_TERMINAL = new File("/dev/null");
+
+  /**
+   * The child process that runs {@code gitArgv} on the terminal's slave device — and, just as
+   * important, <b>opens that device itself</b>.
+   *
+   * <p>This used to be {@code new ProcessBuilder("setsid", "--ctty", …)} with {@code
+   * redirectInput/Output/Error(new File(slavePath))}, and that is what killed the service in
+   * production. Those redirects are not a request the child carries out: {@code ProcessBuilder}
+   * opens the file <em>in the calling process</em> and passes the descriptors down. The call has no
+   * {@code O_NOCTTY}, and opening a pts from a <b>session leader with no controlling terminal makes
+   * that pts its controlling terminal</b> — which the service is, because it runs as PID 1 in its
+   * container. So the service adopted the sign-in terminal, and closing the master at the end of the
+   * session hung it up: SIGHUP to the terminal's session, which was now the service's own. Quarkus
+   * treats SIGHUP as a stop signal, so the container shut down gracefully and exited 129, ~20-30
+   * seconds into every life somebody opened the dialog in.
+   *
+   * <p>It never reproduced anywhere else because the JVM running the suite is not a session leader,
+   * and for a process that is not one the same {@code open} is harmless.
+   *
+   * <p>So the open moves into the child, where it is safe: a child is not a session leader either
+   * when {@code sh} runs the redirect, and by the time {@code setsid --ctty} has made it one, {@code
+   * TIOCSCTTY} is claiming the terminal deliberately and for the child's own new session. {@code
+   * exec} throughout, so no shell lingers and the pid this returns is still git's — which is what
+   * keeps {@code destroy()} aimed at the right process.
+   *
+   * <p>The parent's own stdio goes to {@code /dev/null}: it has to point somewhere, and that is the
+   * one destination that can never become anybody's terminal.
+   *
+   * <p>Package-private so a test can assert the shape rather than the symptom — the symptom needs a
+   * session leader, and a test JVM is not one.
+   */
+  static ProcessBuilder terminalProcess(String slavePath, String[] gitArgv) {
+    List<String> argv = new ArrayList<>();
+    argv.add("sh");
+    argv.add("-c");
+    // $0 is the slave device, "$@" is the command. `0<>` opens it read-write, then 1 and 2 are
+    // duplicates of it — one interleaved stream, as on a real terminal, and stderr is not merged in
+    // Java. Quoting "$@" is what keeps an argument with spaces (the credential-helper flag) one
+    // argument.
+    argv.add("exec 0<>\"$0\" 1>&0 2>&0; exec \"$@\"");
+    argv.add(slavePath);
+    // `setsid --ctty` is what pty4j did for us in C: put the child in its own session and make the
+    // slave device its CONTROLLING terminal. Without it git opens /dev/tty, finds nothing, and fails
+    // non-interactively instead of prompting — which is the entire point of this session. It is also
+    // what makes the terminal's SIGHUP and SIGWINCH reach the right process group. (util-linux;
+    // /usr/bin/setsid on every distribution this host runs on.)
+    argv.add("setsid");
+    argv.add("--ctty");
+    argv.addAll(List.of(gitArgv));
+    return new ProcessBuilder(argv)
+        .redirectInput(NOT_A_TERMINAL)
+        .redirectOutput(NOT_A_TERMINAL)
+        .redirectError(NOT_A_TERMINAL);
   }
 
   /**

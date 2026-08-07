@@ -225,6 +225,19 @@ injection therefore needs `@PersistenceUnit("projects")`.
   credentials from — and both are `@EnabledOnOs(OS.LINUX)`. `domain`'s surefire block passes
   `--enable-native-access=ALL-UNNAMED` for them; a JVM-mode `quarkus-run.jar` needs it on the
   command line, and the binary needs nothing.
+- **Never let this process open a pts.** `ProcessBuilder`'s file redirects are opened by the
+  *calling* process, not the child, and they carry no `O_NOCTTY` — so
+  `redirectOutput(new File("/dev/pts/N"))` makes that terminal **this service's controlling
+  terminal**, because the service is a session leader (PID 1 in its container, exec-form
+  entrypoint). Closing the master then hangs *us* up, and Quarkus registers SIGHUP as a stop signal
+  alongside TERM and INT: the container shut down gracefully with exit 129, three times, ~20-30s
+  into every life somebody opened the sign-in dialog. The open belongs in the child
+  (`RemoteLoginSessions.terminalProcess` wraps it in `sh -c 'exec 0<>"$0" …'`), where a
+  non-session-leader doing it is harmless and `setsid --ctty` then claims the terminal deliberately
+  for the child's own session. `RemoteLoginCttyTest` guards both halves — and note its symptom test
+  has to relaunch under `setsid`, because a JVM that is not a session leader passes on the broken
+  code too, which is exactly why the suite stayed green while production died. `HangupImmunity` is
+  the backstop: SIGHUP is a WARN here, never a shutdown.
 - A `Failed to start quarkus` / `Port already bound: 8081` failure is the known flake
   (`migration-plan.md` §9 item 14) — `@QuarkusTest` restarts racing for the test port. Re-run first.
 - `GitFixtures.path("<name>.git")` is how a test gets a git origin to clone. It returns the

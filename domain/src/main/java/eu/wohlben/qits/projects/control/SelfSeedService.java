@@ -7,6 +7,8 @@ import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
 import eu.wohlben.qits.projects.control.RepositoryService;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
+import eu.wohlben.qits.projects.persistence.RepositoryRepository;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.control.ActivateRequestContext;
 import jakarta.inject.Inject;
@@ -78,7 +80,12 @@ public class SelfSeedService {
       "The qits repositories themselves, registered automatically at startup"
           + " (docs/epics/qits-live-deployment/features/2026-07-19_startup-qits-self-seed.md).";
 
-  private static final String QITS_WRAPPER_URL = "https://github.com/wohlben/qits-qits.git";
+  // The superproject, in the platform's own forge namespace — which is where its siblings live,
+  // and therefore what every committed `../<name>.git` in its .gitmodules has to fold against.
+  // wohlben/qits-qits is a different, older repository with nothing beside it; a wrapper pointed
+  // there resolves every component onto a url nobody serves.
+  private static final String QITS_WRAPPER_URL =
+      "https://github.com/QuicklyIterateTheSoftware/qits-qits.git";
   private static final String QITS_BACKEND_URL = "https://github.com/wohlben/qits-backend.git";
   // REMOVED: the wohlben/qits-angular-integration entry. That upstream is the same repository the
   // platform's own git host now serves as `qits-integrations-angular` — provably so: the mirror's
@@ -93,6 +100,8 @@ public class SelfSeedService {
 
   @Inject RepositoryService repositoryService;
 
+  @Inject RepositoryRepository repositoryRepository;
+
   /** The wrapper's .gitmodules IS the repository manifest — see the class doc. */
   @Inject WrapperReconcileService wrapperReconcileService;
 
@@ -105,9 +114,9 @@ public class SelfSeedService {
   Optional<String> repoUrlOverride;
 
   /**
-   * Redirects the {@code wohlben/qits-qits} wrapper clone source (same caveat as above, plus one
-   * more: an override whose basename is not {@code qits-qits} fails the wrapper name validation, so
-   * a fixture it points at must be named accordingly).
+   * Redirects the wrapper clone source (same caveat as above, plus one more: an override whose
+   * basename is not {@code qits-qits} fails the wrapper name validation, so a fixture it points at
+   * must be named accordingly).
    */
   @ConfigProperty(name = "qits.startup-seed.wrapper-url")
   Optional<String> wrapperUrlOverride;
@@ -137,20 +146,13 @@ public class SelfSeedService {
   public record SeedRepository(String url, RepositoryArchetype archetype) {}
 
   /**
-   * The in-code manifest: the upstreams this service must <b>clone</b> because nothing else holds
-   * them. qits-backend imports its submodules (registering the {@code testing-repo}/{@code
-   * qits-fixture-angular}/{@code testing-repo-quarkus-angular} siblings) and deep-imports once
-   * (linking the quarkus-angular child's nested {@code webui} gitlink back to the already-imported
-   * {@code qits-fixture-angular} sibling). Url overrides (for mirrors/forks/air-gap and tests) are
-   * applied here.
+   * The in-code manifest: the two repositories the wrapper's own {@code .gitmodules} cannot name.
+   * The wrapper, because it <em>is</em> that file, and the pre-split monorepo, because it is not a
+   * component of qits at all. Url overrides (for mirrors/forks/air-gap and tests) are applied here.
    *
-   * <p><b>This list shrinks as the platform onboards itself.</b> Every entry here is a {@code
-   * wohlben/*} upstream from before the platform served its own git; when the platform's host starts
-   * serving the same repository, {@link #platformManifest()} adopts it under its directory name and
-   * the clone entry is <b>deleted from here</b> — the two would otherwise seed two rows for one
-   * repository, indistinguishable in the ui and with only the adopted one carrying ci runs.
-   * {@code qits-angular-integration} went that way; {@code qits-backend} has not, because it is the
-   * pre-split monorepo and the parent of the fixture siblings, not a module the host serves.
+   * <p>Both entries are also <b>asserted onto their rows on every boot</b> ({@link
+   * #assertManifestOntoExistingRow}). This list is what the seed says these two repositories are,
+   * and a row that says otherwise is drift to heal rather than a decision to respect.
    */
   List<SeedRepository> manifest() {
     return List.of(
@@ -180,6 +182,20 @@ public class SelfSeedService {
   @ActivateRequestContext
   public void reconcile() {
     Project project = ensureProject();
+    // Heal every manifest-owned row FIRST, before anything reads one. The wrapper's own reconcile
+    // deregisters placeable rows it does not declare, so a row still carrying a pre-rework
+    // archetype would be swept away before its own manifest entry ever got the chance to correct
+    // it — which is precisely how the seeded monolith came to be one boot from deletion.
+    for (SeedRepository entry : manifest()) {
+      try {
+        assertManifestOntoExistingRow(project, entry);
+      } catch (RuntimeException e) {
+        LOG.errorf(
+            e,
+            "Self-seed: failed to assert the manifest onto the row for %s — retried on next boot.",
+            entry.url());
+      }
+    }
     for (SeedRepository entry : manifest()) {
       try {
         reconcileRepository(project, entry);
@@ -291,6 +307,9 @@ public class SelfSeedService {
     // Then the wrapper's own .gitmodules is reconciled, and THAT is the seed's whole repository
     // list. Importing a wrapper url is restoring a project.
     if (entry.archetype() == RepositoryArchetype.PROJECT) {
+      // The wrapper's url was healed above, which is what lets this succeed at all:
+      // adoptWrapperRepository refuses outright when the wrapper it finds is backed by a different
+      // url ("a project has at most one"), so a stale one would fail this item on every boot.
       projectService.adoptWrapperRepository(project.id, entry.url());
       var reconciliation = wrapperReconcileService.reconcile(project.id);
       LOG.infof(
@@ -319,5 +338,61 @@ public class SelfSeedService {
     } else {
       LOG.debugf("Self-seed: repository %s already present — left untouched.", entry.url());
     }
+  }
+
+  /**
+   * Finds the row a manifest entry already has, if it has one, and asserts the entry onto it: the
+   * entry's normalized archetype, and its url where it names one.
+   *
+   * <p>Seeding used to be create-or-skip, which quietly meant "whatever the row said when it was
+   * first created is what it says forever". That is wrong for the two entries this manifest owns:
+   * they are not user decisions to respect, they are what the seed asserts qits is made of. The
+   * live case that forced this is {@code qits-backend}, seeded as a {@code SERVICE} before the
+   * archetype rework — placeable, and so about to be deregistered by the first wrapper reconcile
+   * for not being a submodule of a wrapper it was never meant to be in.
+   *
+   * <p>The wrapper is found by its <b>role</b> and everything else by its <b>url</b>, and that
+   * asymmetry decides which drift can be healed: a non-wrapper entry's url is its own match key, so
+   * a row that drifted away from it is simply a row this entry no longer names.
+   *
+   * <p>Lookup and write share one transaction on purpose. Reading the row outside one loads it into
+   * the request-scoped session the wrapper reconcile then reads through, and the reconcile would go
+   * on seeing the pre-correction archetype however correctly the update committed — which is
+   * exactly the sweep this correction exists to prevent.
+   *
+   * <p>A no-op when the row already agrees, so it is safe on every boot; a change is logged at INFO,
+   * because a seed silently rewriting a row is the kind of thing that should leave a line behind. An
+   * entry with no url leaves the url alone rather than nulling it.
+   */
+  private void assertManifestOntoExistingRow(Project project, SeedRepository entry) {
+    RepositoryArchetype wanted = RepositoryArchetype.normalize(entry.archetype());
+    String wantedUrl = entry.url() == null || entry.url().isBlank() ? null : entry.url().trim();
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              Repository repo =
+                  entry.archetype() == RepositoryArchetype.PROJECT
+                      ? repositoryRepository.findWrapperByProject(project.id).orElse(null)
+                      : repositoryRepository
+                          .findByUrlInProject(entry.url(), project.id)
+                          .orElse(null);
+              if (repo == null) {
+                return;
+              }
+              if (wanted != null && repo.archetype != wanted) {
+                LOG.infof(
+                    "Self-seed: repository %s is %s in the manifest but %s in the database —"
+                        + " correcting it.",
+                    repo.id, wanted, repo.archetype);
+                repo.archetype = wanted;
+              }
+              if (wantedUrl != null && !wantedUrl.equals(repo.url)) {
+                LOG.infof(
+                    "Self-seed: repository %s points at %s but the manifest names %s — repointing"
+                        + " it.",
+                    repo.id, repo.url, wantedUrl);
+                repo.url = wantedUrl;
+              }
+            });
   }
 }

@@ -223,6 +223,92 @@ public class SelfSeedServiceTest {
         "its repository on the git host is untouched — deregistration is about membership only");
   }
 
+  /**
+   * The live case this healing exists for: {@code qits-backend} was seeded as a {@code SERVICE}
+   * before the archetype rework, which makes it placeable — so the first wrapper reconcile would
+   * deregister the monolith for not being a submodule of a wrapper it was never meant to be in. The
+   * seed asserts its own manifest onto the row first, and the row survives as a {@code FORK}.
+   */
+  @Test
+  public void aRowWhoseArchetypeDriftedFromTheManifestIsCorrectedBeforeTheReconcileSeesIt()
+      throws Exception {
+    Project project =
+        projectService.create("qits", "qits", "pre-existing", fixture(QITS_WRAPPER_FIXTURE));
+    Repository monorepo =
+        projectService.createRepositoryUnderProject(
+            project.id, fixture(QITS_BACKEND_FIXTURE), RepositoryArchetype.SERVICE);
+
+    selfSeedService.reconcile();
+
+    // A count query rather than a field read: this test's persistence context still holds the
+    // instance it created, and reading its field would answer from that copy rather than the row.
+    assertEquals(
+        1,
+        repositoryRepository.count("id = ?1 and archetype = ?2", monorepo.id, RepositoryArchetype.FORK),
+        "the manifest says FORK, so the row does");
+    assertEquals(1, repositoryRepository.count("id = ?1", monorepo.id), "and it was not swept away");
+  }
+
+  /**
+   * The wrapper's url can drift too, and it is the one entry whose url <em>can</em> be healed: it is
+   * matched by its role rather than by its url. It matters because every relative {@code
+   * ../<name>.git} in the manifest folds against it — a wrapper pointed at the wrong namespace
+   * resolves every component onto a url nobody serves.
+   */
+  @Test
+  public void aWrapperPointedAtTheWrongUpstreamIsRepointed() throws Exception {
+    Path stale = copyBare(Path.of(fixture(QITS_WRAPPER_FIXTURE)));
+    Project project = projectService.create("qits", "qits", "pre-existing", stale.toString());
+    String wrapperId = projectService.findWrapper(project.id).orElseThrow().id;
+
+    selfSeedService.reconcile();
+
+    assertEquals(
+        1,
+        repositoryRepository.count("id = ?1 and url = ?2", wrapperId, fixture(QITS_WRAPPER_FIXTURE)),
+        "the wrapper now points where the manifest says, and the adopt that follows is a no-op");
+  }
+
+  @Test
+  public void aRowThatAlreadyAgreesWithTheManifestIsLeftAlone() {
+    selfSeedService.reconcile();
+    Map<String, Repository> before = reposByName(qitsProject().id);
+    Map<String, String> urls =
+        before.entrySet().stream()
+            .collect(Collectors.toMap(Map.Entry::getKey, e -> String.valueOf(e.getValue().url)));
+
+    selfSeedService.reconcile();
+
+    Map<String, Repository> after = reposByName(qitsProject().id);
+    assertEquals(before.keySet(), after.keySet());
+    for (Map.Entry<String, Repository> entry : after.entrySet()) {
+      assertEquals(
+          before.get(entry.getKey()).id, entry.getValue().id, entry.getKey() + " is the same row");
+      assertEquals(
+          before.get(entry.getKey()).archetype,
+          entry.getValue().archetype,
+          entry.getKey() + " keeps its archetype");
+      assertEquals(urls.get(entry.getKey()), String.valueOf(entry.getValue().url));
+    }
+  }
+
+  /** A throwaway copy of a bare fixture, under the same basename — a second url for one wrapper. */
+  private Path copyBare(Path source) throws Exception {
+    Path target = Files.createTempDirectory("qits-stale-wrapper").resolve(source.getFileName());
+    try (var paths = Files.walk(source)) {
+      for (Path from : paths.toList()) {
+        Path to = target.resolve(source.relativize(from).toString());
+        if (Files.isDirectory(from)) {
+          Files.createDirectories(to);
+        } else {
+          Files.createDirectories(to.getParent());
+          Files.copy(from, to);
+        }
+      }
+    }
+    return target;
+  }
+
   /** An unplaceable row is exempt from the same sweep, which is why the monorepo is a FORK. */
   @Test
   public void anUnplaceableRowSurvivesTheReconcile() throws Exception {

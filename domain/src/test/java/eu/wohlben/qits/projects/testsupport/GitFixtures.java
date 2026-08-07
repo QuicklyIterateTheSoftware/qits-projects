@@ -45,7 +45,7 @@ public final class GitFixtures {
    */
   public static synchronized String path(String name) {
     Path dir = fixturesDir();
-    if (!Files.exists(dir.resolve(name))) {
+    if (!Files.exists(dir.resolve(name)) || !Files.exists(dir.resolve(STAMP))) {
       buildDerived(dir);
     }
     Path fixture = dir.resolve(name);
@@ -75,6 +75,15 @@ public final class GitFixtures {
     }
     return dir;
   }
+
+  /**
+   * Bumped whenever a derived fixture's CONTENT changes. The fixtures are built into {@code
+   * target/test-classes}, which survives everything short of a {@code clean}, so "the file exists"
+   * is not the same question as "the file is the one this suite expects" — and a stale wrapper
+   * fixture fails a test about the reconcile with a message about the reconcile. The stamp turns
+   * that into a rebuild.
+   */
+  private static final String STAMP = ".derived-v2";
 
   private static void buildDerived(Path dir) {
     Path work = dir.resolve(".build-testing-repo");
@@ -130,12 +139,14 @@ public final class GitFixtures {
     wrapperBare(dir.resolve("qits-qits.git"));
 
     deleteRecursively(work);
+    write(dir.resolve(STAMP), "built by GitFixtures\n");
   }
 
   /**
-   * A bare wrapper repository on {@code main} whose single commit is a {@code .gitmodules}: one
-   * entry per placeable directory that resolves to a sibling fixture, plus one under a directory no
-   * archetype claims (the reconcile must skip that one and say why).
+   * A bare wrapper repository on {@code main} whose single commit is a {@code .gitmodules}: two
+   * entries that resolve to sibling fixtures, one under a directory no archetype claims, and one
+   * whose url points back at a qits git host. The reconcile must skip the last two and say why —
+   * and must never take the fourth as a backup target, since a repository cannot be its own backup.
    */
   private static void wrapperBare(Path bare) {
     deleteRecursively(bare);
@@ -164,6 +175,10 @@ public final class GitFixtures {
         [submodule "vendored"]
         \tpath = vendor/vendored
         \turl = ../submodule-simple-super.git
+        \tbranch = main
+        [submodule "self-hosted"]
+        \tpath = services/self-hosted
+        \turl = https://qits.example/git/self-hosted.git
         \tbranch = main
         """);
     write(work.resolve("README.md"), "# qits-qits — wrapper fixture\n");

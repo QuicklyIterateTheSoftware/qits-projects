@@ -18,9 +18,16 @@ public abstract class RepositoryMapper {
 
   @Inject RepositoryNameRepository repositoryNames;
 
+  /**
+   * {@code url} and {@code backupUrl} are the same column, deliberately: the entity's {@code url}
+   * has always been the backup twin and never a clone source, and the DTO carries both spellings for
+   * one release so a client in flight keeps working. The deprecated one goes next release.
+   */
   @Mapping(target = "projectId", source = "project.id")
+  @Mapping(target = "backupUrl", source = "url")
   @Mapping(
       target = "name",
       expression = "java(entity == null ? null : repositoryNames.nameFor(entity).orElse(null))")
+  @SuppressWarnings("deprecation")
   public abstract RepositoryDto toDto(Repository entity);
 }

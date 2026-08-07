@@ -17,6 +17,7 @@ import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.control.ActivateRequestContext;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -354,7 +355,11 @@ public class RepositoryService {
 
     Repository repo = new Repository();
     repo.id = UUID.randomUUID().toString();
-    repo.url = null;
+    // The backup twin, derived the same way the reconcile derives every other row's: the wrapper's
+    // own forge url folded with ../<name>.git. The forge repository very likely does not exist yet,
+    // and that is accepted — the backup push fails loudly in a log line and harmlessly everywhere
+    // else, and the day somebody creates the twin it starts working with nothing to configure.
+    repo.url = derivedBackupUrl(project, name);
     repo.archetype = archetype;
     repo.project = project;
     repo.mainBranch = WRAPPER_DEFAULT_BRANCH;
@@ -379,6 +384,91 @@ public class RepositoryService {
       workspaceLifecycle.get().createMainWorkspace(repo.id, repo.mainBranch);
     }
     return repo;
+  }
+
+  /**
+   * The forge twin a new component of {@code project} would be backed up to, or null when the
+   * project's wrapper names no forge to fold against (a greenfield wrapper has no twin for
+   * anything). Never qits' own git host: a repository cannot be its own backup.
+   */
+  private String derivedBackupUrl(Project project, String name) {
+    String wrapperUrl =
+        repositoryRepository.findWrapperByProject(project.id).map(w -> w.url).orElse(null);
+    if (wrapperUrl == null || wrapperUrl.isBlank()) {
+      return null;
+    }
+    String derived = submoduleParser.resolveSubmoduleUrl(wrapperUrl, "../" + name + ".git");
+    return submoduleParser.isQitsHostUrl(derived) ? null : derived;
+  }
+
+  /**
+   * Mirrors every branch and tag the git host holds onto the repository's <b>backup twin</b> — the
+   * whole of what "backed up" means here, and the operation the git host's post-receive now triggers
+   * on every accepted push.
+   *
+   * <p>Not {@code pushRepository}, which is a different verb with a different job: that one
+   * publishes <em>one</em> branch and reconciles a divergence, because a person asked it to. This
+   * copies what is already the record, refuses nothing and reconciles nothing — a backup that
+   * rewrote history to make itself succeed would not be a backup. A non-fast-forward here means the
+   * twin holds something the platform does not, which is a real divergence for a person to look at
+   * and {@code syncStatus} already reports.
+   *
+   * <p>Refreshes the mirror first, so what reaches the twin is what the host holds rather than
+   * whatever this service last happened to fetch. For an adopted repository that is also the clone:
+   * {@link #requireMirror} creates the mirror on first use, which is why a row that has never been
+   * pulled or pushed can still be backed up.
+   *
+   * @return git's own output, for the caller to log
+   * <p>{@link ActivateRequestContext} because every caller is on a worker thread with no ambient
+   * request context — a git hook's intake hands off to one and the scheduler runs on one — and the
+   * row read below needs a persistence context to live in. The individual reads still own their own
+   * transactions.
+   *
+   * @throws BadRequestException when the repository has no backup twin — the caller decides whether
+   *     that is worth saying
+   */
+  @ActivateRequestContext
+  public String backupToTwin(String repoId) {
+    BackupSpec spec =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  Repository repo = get(repoId);
+                  return new BackupSpec(repo.url, repoLabel(repo));
+                });
+    if (spec.url() == null || spec.url().isBlank()) {
+      throw new BadRequestException("No backup target configured — nothing to back up to");
+    }
+    RepoMirror mirror = requireMirror(repoId);
+    try {
+      mirror.refreshNow();
+    } catch (GitMirrorException e) {
+      throw new InternalServerErrorException("Backup failed: " + e.getMessage());
+    }
+    try {
+      // Explicit wildcard refspecs rather than --mirror, which also implies force and would push
+      // deletions the twin should never take from us.
+      return git.exec(
+          mirror.gitDir().toFile(),
+          remoteAuth.gitWithCredentials(
+              "push",
+              "--end-of-options",
+              spec.url(),
+              "refs/heads/*:refs/heads/*",
+              "refs/tags/*:refs/tags/*"));
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Backup of " + spec.label() + " failed: " + e.getMessage());
+    }
+  }
+
+  /** The scalars a backup needs, read in one short transaction. */
+  private record BackupSpec(String url, String label) {}
+
+  /** Every repository that has a backup twin — the scheduled sweep's worklist. */
+  public List<String> repositoryIdsWithBackupTwin() {
+    return repositoryRepository.find("url is not null and url <> ''").stream()
+        .map(repo -> repo.id)
+        .toList();
   }
 
   /**

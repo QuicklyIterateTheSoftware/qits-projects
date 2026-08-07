@@ -230,4 +230,43 @@ public class WrapperSubmoduleWriterTest {
       throw new IllegalStateException("could not make the pre-push hook executable: " + hook);
     }
   }
+
+  // -------------------------------------------------------------------------------------------
+  // the backup twin a blank component is born with
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * A blank component is created on this platform's git host, so it has no upstream — but it does
+   * have a twin it should be backed up to, and the wrapper says where: the same {@code
+   * ../<name>.git} fold every other row's target comes from. The forge repository very likely does
+   * not exist yet, which is accepted; the backup fails in a log line until somebody makes it.
+   */
+  @Test
+  public void aBlankComponentIsBornBackingUpToTheTwinItsWrapperImplies() throws Exception {
+    var project =
+        projectService.create(
+            "Blank Twin", "qits", null, eu.wohlben.qits.projects.testsupport.GitFixtures.path("qits-qits.git"));
+
+    var created =
+        projectService.createRepository(project.id, null, "brand-new", RepositoryArchetype.LIBRARY);
+
+    assertEquals(
+        java.nio.file.Path.of(eu.wohlben.qits.projects.testsupport.GitFixtures.path("qits-qits.git"))
+            .getParent()
+            .resolve("brand-new.git")
+            .toString(),
+        created.repository().url,
+        "../brand-new.git folded against the wrapper's own forge url");
+  }
+
+  /** A greenfield wrapper names no forge, so there is no twin to derive — and that is not an error. */
+  @Test
+  public void aBlankComponentUnderAGreenfieldWrapperHasNoTwinYet() {
+    var project = projectService.create("Blank No Twin", "blank-no-twin", null);
+
+    var created =
+        projectService.createRepository(project.id, null, "orphan", RepositoryArchetype.SERVICE);
+
+    assertEquals(null, created.repository().url);
+  }
 }

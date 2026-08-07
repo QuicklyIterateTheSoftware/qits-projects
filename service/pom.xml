@@ -72,6 +72,14 @@
             <artifactId>quarkus-rest-jackson</artifactId>
         </dependency>
         <dependency>
+            <!-- The hourly backup sweep (ScheduledBackupSweep). A first-class Quarkus extension, so
+                 it registers its own native-image configuration: the scheduled method is discovered
+                 and wired at BUILD time, which is exactly why an @Scheduled bean survives into the
+                 binary while a reflective scheduler would not. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+        <dependency>
             <!-- The remote-login terminal socket (@WebSocket .../remote-login/{token}). -->
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-websockets-next</artifactId>

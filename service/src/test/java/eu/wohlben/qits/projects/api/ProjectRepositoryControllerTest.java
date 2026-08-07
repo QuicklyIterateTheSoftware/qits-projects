@@ -64,6 +64,9 @@ public class ProjectRepositoryControllerTest {
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repository.id", notNullValue())
         .body("repository.name", equalTo("checkout"))
+        // A greenfield wrapper names no forge, so there is no twin to derive yet. `url` is the
+        // deprecated spelling of `backupUrl` and carries the same value for one release.
+        .body("repository.backupUrl", nullValue())
         .body("repository.url", nullValue())
         .body("repository.mainBranch", equalTo("main"))
         .body("repository.archetype", equalTo("SERVICE"))
@@ -113,6 +116,7 @@ public class ProjectRepositoryControllerTest {
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repository.name", equalTo("testing-repo"))
+        .body("repository.backupUrl", equalTo(fixtureUrl))
         .body("repository.url", equalTo(fixtureUrl))
         .body("wrapperPath", equalTo("frontends/testing-repo"));
   }

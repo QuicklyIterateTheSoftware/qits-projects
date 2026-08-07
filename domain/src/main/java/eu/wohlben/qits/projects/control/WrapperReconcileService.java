@@ -69,6 +69,11 @@ public class WrapperReconcileService {
     KEPT,
     /** A row already matched; the wrapper's directory changed what kind of component it is. */
     ARCHETYPE_UPDATED,
+    /**
+     * A row already matched and agreed about its archetype; its <b>backup target</b> was wrong or
+     * missing and now names the forge twin the wrapper implies.
+     */
+    SYNC_TARGET_UPDATED,
     /** A placeable row no entry matched: its row is gone, its repository is not. */
     DEREGISTERED,
     /** Nothing could be decided — see the warning. */
@@ -220,10 +225,11 @@ public class WrapperReconcileService {
               + ", so there is no archetype to give it.");
     }
 
+    SyncTarget syncTarget = syncTargetFor(project, entry);
     Repository existing = match(project, entry, name);
     if (existing != null) {
       matchedRepoIds.add(existing.id);
-      return adjustExisting(project, existing, path, name, archetype);
+      return adjustExisting(project, existing, path, name, archetype, syncTarget);
     }
 
     // The host already serves it — the platform's own repositories reach the host without ever
@@ -234,13 +240,18 @@ public class WrapperReconcileService {
           QuarkusTransaction.requiringNew()
               .call(
                   () -> {
+                    // With the derived backup target, not null: an adopted row that never learns
+                    // where its forge twin is is a repository nothing backs up, and the derivation
+                    // is the same one every other row's target comes from.
                     Repository repo =
-                        repositoryService.adoptExistingOrigin(project, name, null, archetype);
+                        repositoryService.adoptExistingOrigin(
+                            project, name, syncTarget.url(), archetype);
                     repositoryNameRepository.ensureAlias(project, name, repo);
                     return repo;
                   });
       matchedRepoIds.add(adopted.id);
-      return new EntryOutcome(path, name, adopted.id, archetype, Outcome.ADOPTED, null);
+      return new EntryOutcome(
+          path, name, adopted.id, archetype, Outcome.ADOPTED, syncTarget.warning());
     }
 
     // Nothing here yet: clone the backend the entry names. This is the restore path — a wrapper url
@@ -294,16 +305,23 @@ public class WrapperReconcileService {
   }
 
   /**
-   * The row kept, with the wrapper having the last word on what kind of component it is, and its
-   * alias re-asserted so {@code ../<name>.git} resolves.
+   * The row kept, with the wrapper having the last word on two things: what kind of component it is
+   * (the directory) and where it is backed up to (the entry's url, folded against the wrapper's
+   * own). Its alias is re-asserted so {@code ../<name>.git} resolves.
+   *
+   * <p>A row can need both corrections at once. Both are applied; the outcome reports the archetype
+   * flip, because that is the bigger statement about the repository and a client showing one label
+   * per row should show that one.
    */
   private EntryOutcome adjustExisting(
       Project project,
       Repository existing,
       String path,
       String name,
-      RepositoryArchetype archetype) {
+      RepositoryArchetype archetype,
+      SyncTarget syncTarget) {
     RepositoryArchetype before = existing.archetype;
+    boolean[] retargeted = new boolean[1];
     String warning =
         QuarkusTransaction.requiringNew()
             .call(
@@ -313,16 +331,29 @@ public class WrapperReconcileService {
                   if (repo.archetype != archetype) {
                     repo.archetype = archetype;
                   }
+                  if (syncTarget.url() != null && !syncTarget.url().equals(repo.url)) {
+                    LOG.infof(
+                        "Reconcile: %s backs up to %s but the wrapper implies %s — repointing it.",
+                        name, repo.url, syncTarget.url());
+                    repo.url = syncTarget.url();
+                    retargeted[0] = true;
+                  }
                   return recordConfigDisagreement(repo, archetype);
                 });
-    boolean flipped = before != archetype;
+    Outcome outcome =
+        before != archetype
+            ? Outcome.ARCHETYPE_UPDATED
+            : retargeted[0] ? Outcome.SYNC_TARGET_UPDATED : Outcome.KEPT;
     return new EntryOutcome(
-        path,
-        name,
-        existing.id,
-        archetype,
-        flipped ? Outcome.ARCHETYPE_UPDATED : Outcome.KEPT,
-        warning);
+        path, name, existing.id, archetype, outcome, join(warning, syncTarget.warning()));
+  }
+
+  /** Both reasons a row can be worth a note, in one field. */
+  private static String join(String first, String second) {
+    if (first == null) {
+      return second;
+    }
+    return second == null ? first : first + " " + second;
   }
 
   /**
@@ -360,6 +391,56 @@ public class WrapperReconcileService {
             + " committed value.";
     repo.configWarning = warning;
     return warning;
+  }
+
+  /**
+   * Where a component is backed up to, derived from the wrapper rather than stored per row.
+   *
+   * <p>{@code Repository.url} has always been the <b>backup twin</b> and never a clone source — the
+   * platform clones through its own git host, always — and deriving it is what makes it uniform: the
+   * wrapper's own url folded with the entry's relative one is, by construction, the sibling a
+   * {@code ../<name>.git} resolves to at the forge. The same fold every clone of the superproject
+   * performs, so the answer cannot disagree with what a person sees.
+   *
+   * @param url the target, or null when the wrapper names no forge to fold against (a project whose
+   *     wrapper is greenfield has no twin for anything, and that is a normal state)
+   * @param warning why there is no target when the reason is worth saying out loud
+   */
+  private record SyncTarget(String url, String warning) {
+    static final SyncTarget NONE = new SyncTarget(null, null);
+
+    static SyncTarget of(String url) {
+      return new SyncTarget(url, null);
+    }
+
+    static SyncTarget refused(String url) {
+      return new SyncTarget(
+          null,
+          "The backup target this entry implies ("
+              + url
+              + ") is qits' own git host, so it was not applied — a repository cannot be its own"
+              + " backup. Commit the entry's url as a relative one and give the wrapper a forge"
+              + " remote.");
+    }
+  }
+
+  /** See {@link SyncTarget}. */
+  private SyncTarget syncTargetFor(Project project, WrapperGitmodules.Entry entry) {
+    String raw = entry.url() == null ? "" : entry.url().trim();
+    if (raw.isBlank()) {
+      return SyncTarget.NONE;
+    }
+    if (!raw.startsWith("./") && !raw.startsWith("../")) {
+      // An absolute entry names its backend outright; there is nothing to fold.
+      return submoduleParser.isQitsHostUrl(raw) ? SyncTarget.refused(raw) : SyncTarget.of(raw);
+    }
+    String wrapperUrl =
+        projectService.findWrapper(project.id).map(wrapper -> wrapper.url).orElse(null);
+    if (wrapperUrl == null || wrapperUrl.isBlank()) {
+      return SyncTarget.NONE;
+    }
+    String folded = submoduleParser.resolveSubmoduleUrl(wrapperUrl, raw);
+    return submoduleParser.isQitsHostUrl(folded) ? SyncTarget.refused(folded) : SyncTarget.of(folded);
   }
 
   /**

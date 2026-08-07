@@ -72,6 +72,7 @@ Everything it serves sits under its gateway segment, `/projects`:
 |---|---|
 | `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links — except under the prefixes below |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
+| `/projects/api/events/post-receive` | what the git host calls after it accepts a push — see **The backup twin** below |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
 | `/projects/q/openapi`, `/projects/q/swagger-ui` | the API document and its UI (`quarkus.http.non-application-root-path`) |
@@ -167,6 +168,35 @@ rather than minting one: a UUID row would be attached to nothing.
 does not do — no clone, no `origin` remote (so pull and push are not wired for an adopted
 repository), no workspace. A wrapper entry with no origin on this host and no reachable backend is
 skipped, with a warning, on every boot until the day that origin appears.
+
+## The backup twin
+
+Every repository this platform serves has a **forge twin**: the GitHub repository its project's
+wrapper implies. `Repository.url` is that twin's address and has never been anything else — the
+platform clones through its own git host, always, so nothing has ever cloned from this column.
+`RepositoryDto` says `backupUrl` now; `url` is the same value under its old, misleading name and
+goes next release.
+
+The address is **derived, not configured**: the wrapper's own forge url folded with the component's
+`../<name>.git`, which is by construction the sibling a clone of the superproject resolves. The
+reconcile applies that on every run, so a row with a stale twin or none at all is corrected
+(`SYNC_TARGET_UPDATED`), and a derivation that would point back at a qits git host is refused with a
+warning rather than written — a repository cannot be its own backup.
+
+Two triggers keep the twin current, and they are not redundant:
+
+| | |
+|---|---|
+| `POST /projects/api/events/post-receive` | qits-artifacts fans its `post-receive` here, so the twin is current within seconds of real work. Debounced per repository, because one `git push` of several branches is several events. Always answers 204 — the sender is a git hook inside somebody's push and can act on nothing else |
+| the hourly sweep | `ScheduledBackupSweep`, packaged runs only. The safety net for what the event path cannot notice: an event lost to a restart, a forge that was down for a minute, a credential that expired between pushes |
+
+Both go through `BackupPushService`, which swallows every failure — there is no caller left to hand
+one to — and logs an auth wall by name through the same classifier the sign-in terminal uses. The
+drift a failed backup leaves is what `syncStatus` already reports on the repository's own screen.
+
+    qits.projects.backup.enabled=true     # the kill switch, honoured by BOTH triggers
+    qits.projects.backup.interval=1h      # how often the sweep runs
+    qits.projects.backup.debounce-ms=2000 # how long a push-triggered backup waits to collect its siblings
 
 ## Persistence
 

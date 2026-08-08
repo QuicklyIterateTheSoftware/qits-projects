@@ -86,14 +86,19 @@ class FeatureServiceTest extends EpicsTestSupport {
     Epic e = epic();
     Feature a = featureService.create(e.id, "A", null, null, "t");
     Feature b = featureService.create(e.id, "B", null, a.id, "t");
-    Instant when = Instant.parse("2026-07-25T10:15:30.00Z");
-    featureService.update(b.id, null, null, null, false, when, false, "t");
 
-    // A title-only edit must not drop the dependency or the ship date.
+    // A title-only edit must not drop the dependency.
     Feature renamed = featureService.update(b.id, "B renamed", null, null, false, null, false, "t");
     assertEquals("B renamed", renamed.title);
     assertEquals(a.id, renamed.dependsOnFeatureId);
-    assertEquals(when, renamed.implementedOn);
+
+    // The ship date needs a frozen scope, and setting it must not drop title or dependency.
+    epicService.transition(e.id, "IMPLEMENTATION", "t");
+    Instant when = Instant.parse("2026-07-25T10:15:30.00Z");
+    Feature shipped = featureService.update(b.id, null, null, null, false, when, false, "t");
+    assertEquals("B renamed", shipped.title);
+    assertEquals(a.id, shipped.dependsOnFeatureId);
+    assertEquals(when, shipped.implementedOn);
   }
 
   @Test
@@ -137,6 +142,8 @@ class FeatureServiceTest extends EpicsTestSupport {
     Epic e = epic();
     Feature f = featureService.create(e.id, "A", null, null, "t");
     assertNull(f.implementedOn);
+    // The marker only moves once the epic's scope is frozen.
+    epicService.transition(e.id, "IMPLEMENTATION", "t");
 
     Instant when = Instant.parse("2026-07-25T10:15:30.00Z");
     Feature shipped = featureService.update(f.id, null, null, null, false, when, false, "t");

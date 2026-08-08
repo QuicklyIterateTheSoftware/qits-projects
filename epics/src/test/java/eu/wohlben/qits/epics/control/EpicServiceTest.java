@@ -3,12 +3,14 @@ package eu.wohlben.qits.epics.control;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.epics.entity.AuditEntityType;
 import eu.wohlben.qits.epics.entity.AuditOperation;
 import eu.wohlben.qits.epics.entity.Epic;
+import eu.wohlben.qits.epics.entity.EpicStatus;
 import eu.wohlben.qits.epics.error.BadRequestException;
 import eu.wohlben.qits.epics.error.NotFoundException;
 import io.quarkus.test.junit.QuarkusTest;
@@ -29,6 +31,8 @@ class EpicServiceTest extends EpicsTestSupport {
     Epic epic = epicService.create("proj-1", "Planning domain", "The spine", "alice");
     assertNotNull(epic.id);
     assertEquals("proj-1", epic.projectId);
+    assertEquals(EpicStatus.REFINING, epic.status);
+    assertNull(epic.supersededByEpicId);
     assertNotNull(epic.createdAt);
     assertNotNull(epic.updatedAt);
 

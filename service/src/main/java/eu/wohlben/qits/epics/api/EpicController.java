@@ -70,6 +70,27 @@ public class EpicController {
     return new UpdateEpicRequest.Response(epicMapper.toDto(epic));
   }
 
+  /**
+   * A lifecycle move. {@code target} is the status name — {@code IMPLEMENTATION} (the scope
+   * freeze), {@code SUPERSEDED} or {@code ABANDONED}. A move the lifecycle does not allow, and a
+   * target naming no status, both answer 409 with a message.
+   */
+  public record TransitionEpicRequest(String target) {
+    /** The epic in its new status, plus the successor draft a supersede spawned (null otherwise). */
+    public record Response(EpicDto epic, EpicDto successor) {}
+  }
+
+  @POST
+  @Path("/{id}/transition")
+  public TransitionEpicRequest.Response transition(
+      @PathParam("id") String id, @Valid TransitionEpicRequest request) {
+    var result =
+        epicService.transition(id, request.target(), EpicsPrincipal.changedBy(identity));
+    return new TransitionEpicRequest.Response(
+        epicMapper.toDto(result.epic()),
+        result.successor() == null ? null : epicMapper.toDto(result.successor()));
+  }
+
   public record DeleteEpicRequest() {
     public record Response(boolean success) {}
   }

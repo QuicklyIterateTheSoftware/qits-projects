@@ -14,6 +14,7 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 
@@ -40,11 +41,16 @@ public class ProjectEpicsController {
     }
   }
 
+  /**
+   * The project's epics, oldest first, optionally narrowed to one phase. {@code status} is the
+   * status name; a value naming none is a 400, so a typo in the filter does not read as "no epics".
+   */
   @GET
-  public ListEpicsRequest.Response list(@PathParam("projectId") String projectId) {
+  public ListEpicsRequest.Response list(
+      @PathParam("projectId") String projectId, @QueryParam("status") String status) {
     projectService.get(projectId); // 404 if the project does not exist
     var entries =
-        epicService.listByProject(projectId).stream()
+        epicService.listByProject(projectId, status).stream()
             .map(e -> new ListEpicsRequest.Response.Entry(epicMapper.toDto(e)))
             .toList();
     return new ListEpicsRequest.Response(entries);

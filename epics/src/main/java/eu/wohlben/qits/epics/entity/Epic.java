@@ -3,6 +3,8 @@ package eu.wohlben.qits.epics.entity;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import java.time.Instant;
 import org.hibernate.annotations.CreationTimestamp;
@@ -32,6 +34,23 @@ public class Epic extends PanacheEntityBase {
    */
   @Column(nullable = false, updatable = false)
   public String slug;
+
+  /**
+   * The phase this epic is in (V3). Decides which mutations the services accept: structural edits
+   * need {@link EpicStatus#REFINING}, implemented markers need {@link EpicStatus#IMPLEMENTATION},
+   * and the two terminal statuses accept neither.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 32)
+  public EpicStatus status;
+
+  /**
+   * The successor draft this epic spawned when it was superseded; null on every other row. The old
+   * scope stays here as the record of what was discarded, which is why superseded epics remain
+   * list entries.
+   */
+  @Column(name = "superseded_by_epic_id")
+  public String supersededByEpicId;
 
   /** The long-form Markdown spine. */
   public String description;

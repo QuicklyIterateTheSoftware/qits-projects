@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
@@ -86,6 +87,9 @@ class EpicApiTest {
             .body("epic.projectId", equalTo(projectId))
             .body("epic.title", equalTo("Planning domain"))
             .body("epic.slug", equalTo("planning-domain"))
+            // A new epic is a draft, with no successor — the lifecycle's starting point.
+            .body("epic.status", equalTo("REFINING"))
+            .body("epic.supersededByEpicId", nullValue())
             .extract()
             .path("epic.id");
 

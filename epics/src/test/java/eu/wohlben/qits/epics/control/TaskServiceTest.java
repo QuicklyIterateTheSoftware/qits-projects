@@ -127,6 +127,8 @@ class TaskServiceTest extends EpicsTestSupport {
     Feature f = feature();
     Task t = taskService.create(f.id, "repo-1", "A", null, null, "t");
     assertNull(t.implementedAt);
+    // The marker only moves once the epic's scope is frozen.
+    epicService.transition(f.epicId, "IMPLEMENTATION", "t");
 
     Instant when = Instant.parse("2026-07-25T10:15:30.00Z");
     Task done = taskService.update(t.id, null, null, null, false, when, false, "t");

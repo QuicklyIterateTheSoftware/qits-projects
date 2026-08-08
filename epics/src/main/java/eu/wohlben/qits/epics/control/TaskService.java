@@ -2,10 +2,12 @@ package eu.wohlben.qits.epics.control;
 
 import eu.wohlben.qits.epics.entity.AuditEntityType;
 import eu.wohlben.qits.epics.entity.AuditOperation;
+import eu.wohlben.qits.epics.entity.Epic;
 import eu.wohlben.qits.epics.entity.Feature;
 import eu.wohlben.qits.epics.entity.Task;
 import eu.wohlben.qits.epics.error.BadRequestException;
 import eu.wohlben.qits.epics.error.NotFoundException;
+import eu.wohlben.qits.epics.persistence.EpicRepository;
 import eu.wohlben.qits.epics.persistence.FeatureRepository;
 import eu.wohlben.qits.epics.persistence.TaskRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -26,6 +28,10 @@ import java.util.UUID;
  * (null field = leave unchanged) with explicit clear flags for the dependency and completion
  * marker. Every mutation — including dependents cleared when a depended-on task is deleted — is
  * audited.
+ *
+ * <p>Every write here obeys the phase of the epic above the task's feature ({@link EpicLifecycle}):
+ * a task is scope, so creating, deleting or structurally editing one needs a draft, while {@code
+ * implementedAt} moves only once that scope is frozen.
  */
 @ApplicationScoped
 public class TaskService {
@@ -33,6 +39,8 @@ public class TaskService {
   @Inject TaskRepository taskRepository;
 
   @Inject FeatureRepository featureRepository;
+
+  @Inject EpicRepository epicRepository;
 
   @Inject AuditService auditService;
 
@@ -57,6 +65,7 @@ public class TaskService {
     Validations.requireText(title, "title");
     Validations.requireText(repositoryId, "repositoryId");
     Feature feature = requireFeature(featureId);
+    EpicLifecycle.requireRefining(requireEpic(feature));
     if (dependsOnTaskId != null) {
       requireDependencyInFeature(dependsOnTaskId, featureId);
     }
@@ -78,6 +87,10 @@ public class TaskService {
     return task;
   }
 
+  /**
+   * Partial update. The freeze is applied per field: whatever this call touches must be allowed by
+   * the epic's phase, so a call supplying both kinds always fails — no status allows both.
+   */
   @Transactional
   public Task update(
       String id,
@@ -89,6 +102,21 @@ public class TaskService {
       boolean clearImplementedAt,
       String changedBy) {
     Task task = get(id);
+    boolean touchesMarker = implementedAt != null || clearImplementedAt;
+    // An edit that supplies nothing at all is counted as structural: it is the scope endpoint.
+    boolean touchesScope =
+        title != null
+            || description != null
+            || dependsOnTaskId != null
+            || clearDependsOn
+            || !touchesMarker;
+    Epic epic = requireEpic(requireFeature(task.featureId));
+    if (touchesScope) {
+      EpicLifecycle.requireRefining(epic);
+    }
+    if (touchesMarker) {
+      EpicLifecycle.requireImplementation(epic);
+    }
     if (title != null) {
       Validations.requireText(title, "title");
       task.title = title;
@@ -119,6 +147,7 @@ public class TaskService {
   @Transactional
   public void delete(String id, String changedBy) {
     Task task = get(id);
+    EpicLifecycle.requireRefining(requireEpic(requireFeature(task.featureId)));
     String epicId = epicIdOf(task);
     for (Task dependent : taskRepository.listDependents(id)) {
       dependent.dependsOnTaskId = null;
@@ -141,6 +170,13 @@ public class TaskService {
     return featureRepository
         .findByIdOptional(featureId)
         .orElseThrow(() -> new NotFoundException("Feature not found: " + featureId));
+  }
+
+  /** The epic above a feature — the row whose phase decides what may be written here. */
+  private Epic requireEpic(Feature feature) {
+    return epicRepository
+        .findByIdOptional(feature.epicId)
+        .orElseThrow(() -> new NotFoundException("Epic not found: " + feature.epicId));
   }
 
   private void requireDependencyInFeature(String taskId, String featureId) {

@@ -2,6 +2,7 @@ package eu.wohlben.qits.epics.control;
 
 import eu.wohlben.qits.epics.entity.AuditEntityType;
 import eu.wohlben.qits.epics.entity.AuditOperation;
+import eu.wohlben.qits.epics.entity.Epic;
 import eu.wohlben.qits.epics.entity.Feature;
 import eu.wohlben.qits.epics.entity.Task;
 import eu.wohlben.qits.epics.error.BadRequestException;
@@ -26,6 +27,10 @@ import java.util.UUID;
  * explicit clear flags so a partial edit can't silently drop a dependency or ship date. Every
  * mutation — including the tasks removed on cascade delete and the dependents cleared when a
  * depended-on feature is deleted — is recorded in the {@link AuditService audit log}.
+ *
+ * <p>Every write here obeys the owning epic's phase ({@link EpicLifecycle}): a feature is scope, so
+ * creating, deleting or structurally editing one needs a draft, while {@code implementedOn} moves
+ * only once that scope is frozen.
  */
 @ApplicationScoped
 public class FeatureService {
@@ -56,7 +61,7 @@ public class FeatureService {
       String dependsOnFeatureId,
       String changedBy) {
     Validations.requireText(title, "title");
-    requireEpic(epicId);
+    EpicLifecycle.requireRefining(requireEpic(epicId));
     if (dependsOnFeatureId != null) {
       requireDependencyInEpic(dependsOnFeatureId, epicId);
     }
@@ -80,6 +85,9 @@ public class FeatureService {
   /**
    * Partial update. A null {@code title}/{@code description} leaves that field unchanged; the
    * dependency and ship-date are changed only via their explicit value/clear flag pair.
+   *
+   * <p>The freeze is applied per field: whatever this call touches must be allowed by the epic's
+   * phase. A call that supplies both kinds therefore always fails — no status allows both.
    */
   @Transactional
   public Feature update(
@@ -92,6 +100,21 @@ public class FeatureService {
       boolean clearImplementedOn,
       String changedBy) {
     Feature feature = get(id);
+    boolean touchesMarker = implementedOn != null || clearImplementedOn;
+    // An edit that supplies nothing at all is counted as structural: it is the scope endpoint.
+    boolean touchesScope =
+        title != null
+            || description != null
+            || dependsOnFeatureId != null
+            || clearDependsOn
+            || !touchesMarker;
+    Epic epic = requireEpic(feature.epicId);
+    if (touchesScope) {
+      EpicLifecycle.requireRefining(epic);
+    }
+    if (touchesMarker) {
+      EpicLifecycle.requireImplementation(epic);
+    }
     if (title != null) {
       Validations.requireText(title, "title");
       feature.title = title;
@@ -128,6 +151,7 @@ public class FeatureService {
   public void delete(String id, String changedBy) {
     Feature feature = get(id);
     String epicId = feature.epicId;
+    EpicLifecycle.requireRefining(requireEpic(epicId));
     // Clear same-epic dependents' pointer in-service (audited) rather than leaning on the DB
     // SET NULL, which would leave no trace.
     for (Feature dependent : featureRepository.listDependents(id)) {
@@ -151,10 +175,13 @@ public class FeatureService {
         AuditEntityType.FEATURE, id, epicId, AuditOperation.DELETE, changedBy, feature);
   }
 
-  private void requireEpic(String epicId) {
-    if (epicId == null || epicRepository.findByIdOptional(epicId).isEmpty()) {
-      throw new NotFoundException("Epic not found: " + epicId);
+  private Epic requireEpic(String epicId) {
+    if (epicId == null) {
+      throw new NotFoundException("Epic not found: null");
     }
+    return epicRepository
+        .findByIdOptional(epicId)
+        .orElseThrow(() -> new NotFoundException("Epic not found: " + epicId));
   }
 
   private void requireDependencyInEpic(String featureId, String epicId) {

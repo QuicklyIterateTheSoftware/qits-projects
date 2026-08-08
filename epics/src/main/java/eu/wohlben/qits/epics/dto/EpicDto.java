@@ -7,6 +7,8 @@ public record EpicDto(
     String projectId,
     String title,
     String slug,
+    String status,
+    String supersededByEpicId,
     String description,
     Instant createdAt,
     Instant updatedAt) {}

@@ -187,6 +187,34 @@ branch is a *file* at `refs/heads/feature/<timestamp>` while a feature branch ne
 `refs/heads/feature/<epic>/` to be a directory, so the first of the two to be created blocks the
 other. Renaming the capture prefix is a qits-workspaces workstream; do not change it from here.
 
+## Epic lifecycle
+
+An epic is in one of four stored statuses (V3): `REFINING`, `IMPLEMENTATION`, `SUPERSEDED`,
+`ABANDONED`. New epics start `REFINING`, and `POST /epics/{id}/transition` is the only thing that
+moves the status. Four moves are legal — `REFINING→IMPLEMENTATION` (the scope freeze),
+`REFINING→ABANDONED`, `IMPLEMENTATION→SUPERSEDED`, `IMPLEMENTATION→ABANDONED` — and everything else,
+including a target that names no status, is a 409.
+
+**"Done" is not stored.** It is derived: an `IMPLEMENTATION` epic with at least one feature and every
+feature's `implementedOn` set, which is the derivation the SPA already does. A fifth status would
+give the same fact two sources that can disagree.
+
+**The freeze is enforced in the services, per field rather than per endpoint.** `EpicLifecycle` holds
+the rules and all three services obey them — a task's phase is the phase of its feature's epic.
+Structural changes (the epic's title/description, and any feature/task create, update or delete,
+`dependsOn` included) need `REFINING`; the implemented markers (`implementedOn`/`implementedAt`) need
+`IMPLEMENTATION`. Those two rules alone reject every write in the terminal statuses, and a call
+carrying both kinds always fails. Deleting an *epic* stays allowed in every status: it removes the
+row rather than editing a frozen scope, and the audit log outlives it.
+
+**Superseding copies the whole discarded scope** into a successor draft — a new `REFINING` epic with
+the old title, description and feature/task tree, fresh ids, implemented markers reset, `dependsOn*`
+remapped to the new rows, and `supersededByEpicId` on the old row pointing at it. The old row keeps
+its frozen scope as the record of what was discarded, which is why superseded epics stay in the
+list. Features and tasks keep their slugs, because the new epic and its features are new scopes; the
+successor *epic's* slug cannot, because its scope is the project and the old row still holds it, so
+it mints the next free suffix like any other create.
+
 ## Schema changes
 
 `domain/src/main/resources/db/projects/migration/`, hand-written, its own lineage on its own

@@ -10,8 +10,10 @@ import eu.wohlben.qits.projects.dto.ProjectDto;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecord;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
+import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.mapper.ProjectMapper;
 import eu.wohlben.qits.projects.mapper.RepositoryMapper;
+import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.validation.DnsFqdn;
 import eu.wohlben.qits.projects.validation.DnsRecordValue;
 import eu.wohlben.qits.projects.validation.NotBlankIfPresent;
@@ -61,9 +63,12 @@ public class ProjectController {
   // --- Project CRUD ---
 
   /**
-   * @param slug the git-safe, immutable project identity the wrapper repository is named after
-   *     ({@code <slug>-<slug>}). Optional — derived from {@code name} when omitted. Unlike {@code
-   *     name} it can never be changed afterwards, so a wrapper's alias cannot go stale.
+   * @param slug the git-safe, immutable, <b>unique</b> project identity the wrapper repository is
+   *     named after ({@code <slug>-<slug>}) and the upstream backup organisation is named by.
+   *     Optional — derived from {@code name} when omitted, and a derived one takes the next free
+   *     {@code -2}, {@code -3}, …. Supplied and already taken is a <b>409</b>, because the value is
+   *     then a statement about which upstream this project backs up to. Unlike {@code name} it can
+   *     never be changed afterwards, so a wrapper's alias cannot go stale.
    * @param url an existing upstream to adopt as the wrapper repository. Optional — omitted, the
    *     wrapper is initialized locally with no backup remote. An adopted upstream may be completely
    *     empty (it is seeded with the project template skeleton) but its basename must be exactly
@@ -105,6 +110,10 @@ public class ProjectController {
   }
 
   @POST
+  @APIResponse(responseCode = "200", description = "The project exists, with its wrapper repository")
+  @APIResponse(
+      responseCode = "409",
+      description = "The supplied slug already names another project — slugs are unique")
   public CreateProjectRequest.Response create(@Valid CreateProjectRequest request) {
     var project =
         projectService.create(
@@ -264,6 +273,61 @@ public class ProjectController {
    * @param archetype which kind of component this is — it decides the wrapper directory the
    *     submodule is mounted under, so it must be a placeable one.
    */
+  public static record ResolveRepositoryNameRequest() {
+    /**
+     * @param repositoryId the repository the name addresses — a UUID for one this service minted,
+     *     and the directory name itself for an adopted platform repository, which is why this
+     *     answers an id rather than echoing the name back
+     */
+    public record Response(String repositoryId) {}
+  }
+
+  /**
+   * Resolves a project-scoped repository name to its id — the read behind qits-artifacts'
+   * name-addressed git scheme {@code /artifacts/git/<projectId>/<repoName>}, which it reaches
+   * through its optional {@code githost.RepositoryNameResolver} port.
+   *
+   * <p><b>Unguarded, and documented rather than hidden</b> — the {@code GitHostEventController}
+   * precedent. This service has no machine auth: reaching it at all means being inside the trusted
+   * network, so a guard here would look like a control and be worth nothing. qits-artifacts
+   * generates its client from {@code docs/openapi.yml}, so the one route it calls belongs in that
+   * document.
+   *
+   * <p>404 for an unknown project and for an unknown name alike, in the same words: a caller
+   * resolving a name has nothing to do with the difference, and spelling it out would say which
+   * project ids exist.
+   */
+  @GET
+  @Path("/{projectId}/repositories/by-name/{repoName}")
+  @Operation(
+      summary = "Resolve a project-scoped repository name to its id",
+      description =
+          "The name is the segment a committed relative submodule url (../<name>.git) resolves to,"
+              + " with any .git suffix stripped. Resolution is exactly what wrapper membership"
+              + " honours: the (project, name) alias, then the name read as the repository's own id"
+              + " — an adopted platform repository is keyed by its directory name and owns no alias"
+              + " row.")
+  @APIResponse(
+      responseCode = "200",
+      description = "The name resolves",
+      content =
+          @Content(schema = @Schema(implementation = ResolveRepositoryNameRequest.Response.class)))
+  @APIResponse(responseCode = "404", description = "No such project, or no repository by that name")
+  public ResolveRepositoryNameRequest.Response resolveRepositoryName(
+      @PathParam("projectId") String projectId, @PathParam("repoName") String repoName) {
+    // A relative submodule url arrives as "<name>.git"; the alias table stores the bare name.
+    // basename() is the normalization that table already registers names through, so using it here
+    // is what keeps the two sides spelling one name the same way.
+    String name = RepositoryNameRepository.basename(repoName);
+    return repositoryService
+        .findByProjectAndName(projectId, name)
+        .map(repo -> new ResolveRepositoryNameRequest.Response(repo.id))
+        .orElseThrow(
+            () ->
+                new NotFoundException(
+                    "No repository named '" + name + "' in project " + projectId));
+  }
+
   public static record CreateProjectRepositoryRequest(
       String url,
       String name,

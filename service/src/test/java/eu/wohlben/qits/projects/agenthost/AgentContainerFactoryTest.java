@@ -62,8 +62,7 @@ class AgentContainerFactoryTest {
         "the listing and the idle sweep both filter on qits.managed");
     assertTrue(
         valuesAfter(argv, "--label").contains("qits.project=" + PROJECT_ID),
-        "the container name is derived from the non-unique slug, so the label is what proves"
-            + " ownership");
+        "a deleted project's container keeps its name, so the label is what proves ownership");
     assertEquals("qits-net", valuesAfter(argv, "--network").get(0));
     assertTrue(argv.contains("--add-host=host.docker.internal:host-gateway"));
     assertTrue(argv.contains("--init"), "tini at PID 1, so the daemon is a reaped child");

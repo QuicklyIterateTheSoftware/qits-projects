@@ -48,8 +48,9 @@ public final class Slugs {
    * Returns {@code base} when no sibling holds it, else the first free {@code -2}, {@code -3}, …,
    * trimming {@code base} so the whole stays within 40 characters.
    *
-   * <p>This diverges from {@code Project.slug}, which is deliberately <em>not</em> unique: these
-   * slugs are branch path segments, so two siblings sharing one would name the same branch.
+   * <p>These slugs are branch path segments, so two siblings sharing one would name the same
+   * branch. {@code Project.slug} is unique too, with the whole service as its scope; the rule there
+   * is the same suffixing for a derived slug and a 409 for a supplied one that collides.
    *
    * <p>The check is a read before a write with no lock, so two concurrent creates of the same title
    * in the same scope can both pass it and the second then fails the unique constraint as a 500.

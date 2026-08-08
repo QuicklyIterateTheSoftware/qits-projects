@@ -25,6 +25,12 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
  * {@code RUNNING} with no daemon connected for the seconds between {@code docker start} and the
  * first {@code Hello}, and the client shows "starting" rather than a broken terminal.
  *
+ * <p><b>A container whose provision failed is {@code FAILED}, not {@code RUNNING}.</b> The daemon
+ * clones the project into {@code /workspace} on boot; when that fails the container stays up and
+ * docker calls it healthy, so the honest answer comes from what the daemon said rather than from
+ * what docker sees. {@code failureDetail} carries the reason, and it is what the panel shows
+ * instead of a terminal onto an empty checkout.
+ *
  * <p>Everything below the surface is in {@code agenthost/}. This class only names the routes.
  */
 // No @Consumes: all three routes are verbs on a resource and take no body, and declaring one would
@@ -45,14 +51,24 @@ public class AgentContainerController {
      * @param daemonConnected whether the in-container daemon holds an open control socket
      * @param daemonVersion the daemon binary's release identity, or null when it has not said or
      *     was built without a version stamp
+     * @param failureDetail why {@code runtimeStatus} is {@code FAILED} — an ensure that could not
+     *     produce a container, or a daemon that could not clone the project into {@code /workspace}.
+     *     Null for every other status. A detail rather than a sixth status constant, because the
+     *     five status strings are a published contract this client already switches on.
      */
     public record ContainerView(
-        AgentRuntimeStatus runtimeStatus, boolean daemonConnected, String daemonVersion) {}
+        AgentRuntimeStatus runtimeStatus,
+        boolean daemonConnected,
+        String daemonVersion,
+        String failureDetail) {}
 
     static AgentContainerResponse of(AgentContainerState state) {
       return new AgentContainerResponse(
           new ContainerView(
-              state.runtimeStatus(), state.daemonConnected(), state.daemonVersion()));
+              state.runtimeStatus(),
+              state.daemonConnected(),
+              state.daemonVersion(),
+              state.failureDetail()));
     }
   }
 

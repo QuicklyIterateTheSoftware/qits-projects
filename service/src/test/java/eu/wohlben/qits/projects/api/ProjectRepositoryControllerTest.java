@@ -377,6 +377,104 @@ public class ProjectRepositoryControllerTest {
         .body("repository.lastBackup", nullValue());
   }
 
+  // --- name resolution: what qits-artifacts' name-addressed git scheme reads ---
+
+  private io.restassured.response.Response resolveByName(String projectId, String repoName) {
+    return given()
+        .when()
+        .get("/projects/api/projects/" + projectId + "/repositories/by-name/" + repoName);
+  }
+
+  @Test
+  public void aComponentResolvesByTheNameItsRelativeSubmoduleUrlNames() {
+    String projectId = createProject("Name Resolution");
+    String repoId =
+        postRepository(projectId, null, "checkout", RepositoryArchetype.SERVICE)
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .path("repository.id");
+
+    resolveByName(projectId, "checkout")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositoryId", equalTo(repoId));
+    // A committed ../checkout.git arrives with the suffix; the alias table stores the bare name.
+    resolveByName(projectId, "checkout.git")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositoryId", equalTo(repoId));
+  }
+
+  /**
+   * The wrapper is a {@code repository_name} row like any other, and the route has to answer for it:
+   * a container clones the project name-addressed as {@code <slug>-<slug>}. Its id is a UUID that is
+   * not its name, which is the whole reason this route answers ids.
+   */
+  @Test
+  public void theWrapperResolvesByItsConventionalName() {
+    String slug = "name-res-wrapper";
+    io.restassured.path.json.JsonPath created =
+        given()
+            .contentType(ContentType.JSON)
+            .body(
+                new ProjectController.CreateProjectRequest(
+                    "Name Resolution Wrapper", slug, null, null, ProjectRequests.DNS))
+            .when()
+            .post("/projects/api/projects")
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .jsonPath();
+    String projectId = created.getString("project.id");
+    String wrapperId = created.getString("wrapper.id");
+
+    resolveByName(projectId, slug + "-" + slug)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositoryId", equalTo(wrapperId));
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        slug + "-" + slug, wrapperId, "the wrapper's id is not its name — the route answers ids");
+  }
+
+  /**
+   * The second step of the resolution: an adopted platform repository is keyed by its directory
+   * name, so the name <em>is</em> the id and no alias row was ever written. Wrapper membership
+   * honours that, and so must this.
+   */
+  @Test
+  public void aNameThatIsTheRepositoryIdResolvesToo() {
+    String projectId = createProject("Name Resolution By Id");
+    String repoId =
+        postRepository(projectId, null, "byid", RepositoryArchetype.LIBRARY)
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .path("repository.id");
+
+    resolveByName(projectId, repoId)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositoryId", equalTo(repoId));
+  }
+
+  /** An unknown name and an unknown project answer the same 404 — the caller cannot tell them apart. */
+  @Test
+  public void anUnknownNameAndAnUnknownProjectAreTheSame404() {
+    String projectId = createProject("Name Resolution Misses");
+    postRepository(projectId, null, "known", RepositoryArchetype.SERVICE)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    resolveByName(projectId, "nothing-by-that-name")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+    // The name exists — in another project. Project scoping is the whole point of the alias table.
+    resolveByName("no-such-project", "known")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
   /**
    * A repository under the project that the wrapper does not declare. Registered through the domain
    * service rather than the create route, because the create route is precisely what would also add

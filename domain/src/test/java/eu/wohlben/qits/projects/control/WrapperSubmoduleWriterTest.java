@@ -243,6 +243,13 @@ public class WrapperSubmoduleWriterTest {
    */
   @Test
   public void aBlankComponentIsBornBackingUpToTheTwinItsWrapperImplies() throws Exception {
+    // A slug is unique (V6), and this fixture can only be adopted under 'qits' — its basename has
+    // to equal <slug>-<slug>. Whoever held it before gives it up. Same idiom as
+    // SelfSeedServiceTest's clean().
+    projectService.list().stream()
+        .filter(p -> "qits".equals(p.slug))
+        .toList()
+        .forEach(p -> projectService.delete(p.id));
     var project =
         projectService.create(
             "Blank Twin", "qits", null, eu.wohlben.qits.projects.testsupport.GitFixtures.path("qits-qits.git"));

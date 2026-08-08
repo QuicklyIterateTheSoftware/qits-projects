@@ -1,6 +1,7 @@
 package eu.wohlben.qits.projects.control;
 
 import eu.wohlben.qits.projects.error.BadRequestException;
+import eu.wohlben.qits.projects.error.DomainException;
 import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.entity.ProjectDnsRecord;
@@ -208,15 +209,25 @@ public class ProjectService {
   }
 
   /**
-   * Validates an explicitly supplied slug, or derives one from the project name.
+   * Validates an explicitly supplied slug, or derives one from the project name — and makes it
+   * unique either way, but by two different means on purpose.
    *
    * <p>The Bean Validation constraint on the request DTO only guards HTTP; the self-seed, both cli
    * seeds and MCP all reach {@code create} without passing through it, so the format is re-asserted
    * here — this is the enforcement that actually holds.
+   *
+   * <p><b>A derived slug takes the next free suffix</b> ({@code -2}, {@code -3}, …), the way an
+   * epic's does within its project. The caller gave a display name and no slug, so it has stated
+   * nothing about the value and two projects called "Checkout" must both be creatable.
+   *
+   * <p><b>A supplied slug that is taken is a 409.</b> It is a statement rather than a default: it
+   * names the project's upstream backup organisation and its wrapper repository ({@code
+   * <slug>-<slug>}), so a silent rename would create a project whose wrapper does not match the
+   * upstream the caller meant, and nothing would say so until a push failed.
    */
-  private static String resolveSlug(String name, String slug, String projectId) {
+  private String resolveSlug(String name, String slug, String projectId) {
     if (slug == null || slug.isBlank()) {
-      return slugify(name, projectId);
+      return nextFreeSlug(slugify(name, projectId));
     }
     String trimmed = slug.trim();
     if (!ProjectSlugValidator.matches(trimmed)) {
@@ -227,7 +238,45 @@ public class ProjectService {
               + " leading or trailing dash). It becomes a git path segment and a forge repository"
               + " name, so it must survive both unchanged.");
     }
+    if (projectRepository.findBySlug(trimmed).isPresent()) {
+      throw new DomainException(
+          409,
+          "The slug '"
+              + trimmed
+              + "' already names another project. A slug is unique: it names this project's upstream"
+              + " backup organisation and its wrapper repository ('"
+              + trimmed
+              + "-"
+              + trimmed
+              + "'), so two projects cannot share one. Choose another, or omit the field to have one"
+              + " derived from the name.");
+    }
     return trimmed;
+  }
+
+  /**
+   * {@code base}, or the first free {@code -2}, {@code -3}, … — the same rule epics' {@code
+   * Slugs.unique} applies within its scope, whose scope here is the whole service.
+   *
+   * <p>A read before a write with no lock, so two concurrent creates of the same name can both pass
+   * it and the second then fails the unique constraint as a 500. Accepted, as it is in epics:
+   * project creation is hand-driven and a retry succeeds.
+   */
+  private String nextFreeSlug(String base) {
+    if (projectRepository.findBySlug(base).isEmpty()) {
+      return base;
+    }
+    for (int n = 2; ; n++) {
+      String suffix = "-" + n;
+      String head =
+          base.length() + suffix.length() <= MAX_SLUG_LENGTH
+              ? base
+              : base.substring(0, MAX_SLUG_LENGTH - suffix.length()).replaceAll("-+$", "");
+      String candidate = head + suffix;
+      if (projectRepository.findBySlug(candidate).isEmpty()) {
+        return candidate;
+      }
+    }
   }
 
   /**

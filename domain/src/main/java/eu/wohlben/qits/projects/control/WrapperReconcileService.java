@@ -525,17 +525,10 @@ public class WrapperReconcileService {
         continue;
       }
       String name = path.substring(path.lastIndexOf('/') + 1);
+      // The shared resolution, not a copy of it: the by-name read serves the same answer, and a
+      // second spelling here would let the two disagree about what belongs to the project.
       String repositoryId =
-          repositoryNameRepository
-              .findRepositoryByProjectAndName(projectId, name)
-              .map(r -> r.id)
-              .orElseGet(
-                  () ->
-                      repositoryRepository
-                          .findByIdOptional(name)
-                          .filter(r -> r.project != null && projectId.equals(r.project.id))
-                          .map(r -> r.id)
-                          .orElse(null));
+          repositoryService.findByProjectAndName(projectId, name).map(r -> r.id).orElse(null);
       entries.add(new WrapperView.Entry(path, name, repositoryId));
     }
     return new WrapperView(repo.id, branch, List.copyOf(entries));

@@ -33,11 +33,12 @@ import org.jboss.logging.Logger;
  * queueing behind an image pull.
  *
  * <p><b>A container is only this project's if its label says so.</b> The container name is derived
- * from the project <em>slug</em>, and {@code Project.slug} is deliberately not unique in this
- * context — two projects can be named the same thing. So every read checks {@code qits.project} and
- * refuses a foreign container with a 409 rather than adopting it, which would hand one project a
- * shell over another's checkout. The refusal names both ids, because renaming a project is the only
- * way out of it.
+ * from the project <em>slug</em>, which is unique among <em>live</em> projects (V6) — and that is
+ * not the same as unique among containers. Deleting a project does not remove its agent container,
+ * so a later project taking the freed slug finds the old one still sitting on the name, holding the
+ * deleted project's checkout. So every read checks {@code qits.project} and refuses a foreign
+ * container with a 409 rather than adopting it. The refusal names both ids, because removing the
+ * stale container is the only way out of it.
  */
 @ApplicationScoped
 public class AgentContainers {
@@ -66,7 +67,7 @@ public class AgentContainers {
     if (!lock.tryLock()) {
       // Somebody else is already doing exactly this. Answering rather than queueing keeps a second
       // click off an image pull's critical path.
-      return new AgentContainerState(AgentRuntimeStatus.PROVISIONING, false, null);
+      return AgentContainerState.of(AgentRuntimeStatus.PROVISIONING);
     }
     try {
       ContainerRuntime.ContainerInfo existing = requireOwnContainer(projectId, name).orElse(null);
@@ -82,10 +83,11 @@ public class AgentContainers {
     } catch (DomainException refused) {
       throw refused; // the ownership 409 is an answer, not a failure to report as FAILED
     } catch (RuntimeException e) {
-      // The runtime could not produce a running container. FAILED is the honest answer and the log
-      // carries the reason: the response shape is fixed and has nowhere to put a message.
+      // The runtime could not produce a running container. FAILED is the honest answer, and the
+      // reason rides the same detail field a failed provision uses rather than living only in a log
+      // nobody reading the panel can see.
       LOG.errorf(e, "Could not ensure the agent container for project %s", projectId);
-      return AgentContainerState.of(AgentRuntimeStatus.FAILED);
+      return AgentContainerState.of(AgentRuntimeStatus.FAILED).failedWith(e.getMessage());
     } finally {
       lock.unlock();
     }
@@ -119,7 +121,7 @@ public class AgentContainers {
     String name = containerNameOf(project);
     ReentrantLock lock = locks.get(projectId);
     if (lock != null && lock.isLocked()) {
-      return new AgentContainerState(AgentRuntimeStatus.PROVISIONING, false, null);
+      return AgentContainerState.of(AgentRuntimeStatus.PROVISIONING);
     }
     ContainerRuntime.ContainerInfo existing = requireOwnContainer(projectId, name).orElse(null);
     if (existing == null) {
@@ -144,7 +146,8 @@ public class AgentContainers {
               + name
               + "' is already taken by project "
               + owner
-              + ". Two projects share a slug; rename one of them to give each its own agent.");
+              + ". Slugs are unique among live projects, so this is a container left behind by a"
+              + " deleted one; remove it and try again.");
     }
     return Optional.of(info);
   }
@@ -162,11 +165,24 @@ public class AgentContainers {
     return runtime.containerName(project.slug);
   }
 
-  /** A container status plus whatever its daemon has announced about itself. */
+  /**
+   * A container status plus whatever its daemon has announced about itself — and, ahead of both, a
+   * provision that failed.
+   *
+   * <p>A container whose self-clone failed is up, healthy to docker and useless: its {@code
+   * /workspace} is empty, so reporting it {@code RUNNING} sends the browser to open a terminal on
+   * nothing. The last {@link eu.wohlben.qits.projectsdaemon.protocol.ProvisionFailed} outranks the
+   * docker status until a {@code Provisioned} or a stop clears it.
+   *
+   * <p>Nothing here re-provisions — see {@link AgentContainerState#failedWith}. Recovery is to
+   * remove the container and ensure it again.
+   */
   private AgentContainerState state(String projectId, AgentRuntimeStatus status) {
-    return registry
-        .lookup(projectId)
-        .map(info -> new AgentContainerState(status, true, info.daemonVersion()))
-        .orElseGet(() -> AgentContainerState.of(status));
+    AgentContainerState observed =
+        registry
+            .lookup(projectId)
+            .map(info -> new AgentContainerState(status, true, info.daemonVersion(), null))
+            .orElseGet(() -> AgentContainerState.of(status));
+    return registry.provisionFailure(projectId).map(observed::failedWith).orElse(observed);
   }
 }

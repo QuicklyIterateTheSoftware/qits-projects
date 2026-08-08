@@ -82,6 +82,19 @@ public class ProjectWrapperTest {
     return projectService.findWrapper(project.id).orElseThrow();
   }
 
+  /**
+   * Give up a slug so this case can hold it. A slug is unique (V6) and an adopted wrapper url can
+   * only be used under the slug its basename names ({@code <slug>-<slug>}), so the cases below
+   * cannot each invent one — they share the fixtures' slugs and hand them on. Same idiom as
+   * SelfSeedServiceTest's clean().
+   */
+  private void releaseSlug(String slug) {
+    projectService.list().stream()
+        .filter(p -> slug.equals(p.slug))
+        .toList()
+        .forEach(p -> projectService.delete(p.id));
+  }
+
   // ---------------------------------------------------------------- greenfield
 
   @Test
@@ -230,6 +243,7 @@ public class ProjectWrapperTest {
 
   @Test
   public void adoptingAnEmptyUpstreamSeedsTheSkeletonOnMain() throws Exception {
+    releaseSlug("empty");
     var project = projectService.create("Empty Upstream", "empty", null, fixture("empty-empty.git"));
     var wrapper = wrapperOf(project);
 
@@ -242,6 +256,7 @@ public class ProjectWrapperTest {
 
   @Test
   public void adoptingANonEmptyUpstreamLeavesItsHistoryUntouched() throws Exception {
+    releaseSlug("demo");
     var project = projectService.create("Demo", "demo", null, fixture("demo-demo.git"));
     var wrapper = wrapperOf(project);
 
@@ -255,6 +270,7 @@ public class ProjectWrapperTest {
 
   @Test
   public void adoptingAUrlWhoseBasenameIsNotSlugSlugIsRejected() throws Exception {
+    releaseSlug("qits");
     var error =
         assertThrows(
             BadRequestException.class,
@@ -266,6 +282,7 @@ public class ProjectWrapperTest {
   /** State 4: a project created greenfield later gains the upstream the manifest names. */
   @Test
   public void adoptAttachesTheBackupRemoteToAGreenfieldWrapper() throws Exception {
+    releaseSlug("qits");
     var project = projectService.create("Attach", "qits", null);
     var wrapper = wrapperOf(project);
     assertNull(wrapper.url);
@@ -283,6 +300,7 @@ public class ProjectWrapperTest {
   /** State 3: the steady state on every later boot. */
   @Test
   public void adoptIsANoOpOnceTheWrapperAlreadyHasThatUrl() throws Exception {
+    releaseSlug("qits");
     var project = projectService.create("Idempotent", "qits", null, fixture("qits-qits.git"));
     var first = wrapperOf(project);
 
@@ -299,6 +317,7 @@ public class ProjectWrapperTest {
   public void adoptPromotesARepositoryAlreadyRegisteredAtThatUrl() throws Exception {
     // A project whose slug matches the fixture basename, with the wrapper deleted so the url is
     // free to be registered as an ordinary repository first.
+    releaseSlug("demo");
     var project = projectService.create("Promote", "demo", null);
     repositoryService.deleteInternal(wrapperOf(project).id);
 

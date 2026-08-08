@@ -77,6 +77,20 @@ public class AgentDaemonRegistry {
    */
   private final ConcurrentHashMap<String, Instant> lastActivity = new ConcurrentHashMap<>();
 
+  /**
+   * Why each project's last {@link ProvisionFailed} said its {@code /workspace} is not there.
+   *
+   * <p>A sibling map next to {@link #lastActivity} rather than a field on the connection, and that
+   * is the whole point: a daemon that cannot provision usually drops its socket soon after saying
+   * so, and {@link #lookup} answers empty from that moment. A failure recorded on the connection
+   * would disappear exactly when somebody came to read it.
+   *
+   * <p>Cleared on a {@link Provisioned}, on {@link #register} (a reconnecting daemon re-provisions
+   * and its next word on the subject is the current one) and in {@link #forget} (the container is
+   * going away with the volume the failure was about).
+   */
+  private final ConcurrentHashMap<String, String> provisionFailures = new ConcurrentHashMap<>();
+
   /** What a connected daemon announced about itself, for the lifecycle read and the UI. */
   public record DaemonInfo(
       Instant connectedAt,
@@ -89,6 +103,7 @@ public class AgentDaemonRegistry {
   public void register(String projectId, WebSocketConnection connection) {
     clients.put(projectId, new DaemonConnection(connection));
     touch(projectId);
+    provisionFailures.remove(projectId);
     LOG.debugf(
         "projects-daemon connected for project %s (connection %s)", projectId, connection.id());
   }
@@ -157,9 +172,21 @@ public class AgentDaemonRegistry {
     return lastActivity.computeIfAbsent(projectId, id -> at);
   }
 
-  /** Forget a project's activity stamp — called when its container is stopped. */
+  /**
+   * Why this project's {@code /workspace} is not provisioned, or empty when nothing said so.
+   *
+   * <p>Read by {@link AgentContainers} on every lifecycle answer: a container whose self-clone
+   * failed is running and useless, and reporting it {@code RUNNING} sends a browser to open a
+   * terminal on an empty checkout.
+   */
+  public Optional<String> provisionFailure(String projectId) {
+    return Optional.ofNullable(provisionFailures.get(projectId));
+  }
+
+  /** Forget a project's activity stamp and last provision failure — its container is stopped. */
   public void forget(String projectId) {
     lastActivity.remove(projectId);
+    provisionFailures.remove(projectId);
   }
 
   /**
@@ -215,12 +242,22 @@ public class AgentDaemonRegistry {
           LOG.infof("[projects-daemon %s] %s: %s", projectId, log.level(), log.message());
       case AgentActivity activity -> onAgentActivity(projectId, activity);
       case ProjectChanged changed -> onProjectChanged(projectId, changed);
-      case Provisioned provisioned ->
-          LOG.infof(
-              "projects-daemon provisioned project %s at %s", projectId, provisioned.head());
-      case ProvisionFailed failed ->
-          LOG.warnf(
-              "projects-daemon could not provision project %s: %s", projectId, failed.message());
+      case Provisioned provisioned -> {
+        LOG.infof("projects-daemon provisioned project %s at %s", projectId, provisioned.head());
+        provisionFailures.remove(projectId);
+      }
+      case ProvisionFailed failed -> {
+        LOG.warnf(
+            "projects-daemon could not provision project %s: %s", projectId, failed.message());
+        // Recorded, not just logged: the container stays up and would otherwise read RUNNING while
+        // its /workspace is empty. A null or blank message still counts as a failure — the state is
+        // what matters and a missing reason must not read as "provisioned".
+        provisionFailures.put(
+            projectId,
+            failed.message() == null || failed.message().isBlank()
+                ? "The daemon reported a failed provision with no reason."
+                : failed.message());
+      }
       // Replies to frames this host never sends, and qits -> daemon requests echoed back. Both are
       // dropped rather than treated as errors: a daemon must not be able to break its own control
       // socket by saying something this backend has no view for.

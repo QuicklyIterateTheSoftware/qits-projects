@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.control;
 import static org.junit.jupiter.api.Assertions.*;
 
 import eu.wohlben.qits.projects.error.BadRequestException;
+import eu.wohlben.qits.projects.error.DomainException;
 import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.persistence.ProjectRepository;
 import eu.wohlben.qits.projects.entity.Repository;
@@ -141,6 +142,63 @@ public class ProjectServiceTest {
                   repositoryRepository.findByIdOptional(wrapperId).isEmpty(),
                   "the wrapper must go with its project");
             });
+  }
+
+  /**
+   * A slug is unique (V6), and a derived one gets there by suffixing: the caller gave a display
+   * name and no slug, so it stated nothing about the value and two projects called the same thing
+   * must both be creatable.
+   */
+  @Test
+  public void aDerivedSlugTakesTheNextFreeSuffix() {
+    var first = projectService.create("Slug Collision Derived", null, null);
+    var second = projectService.create("Slug Collision Derived", null, null);
+    var third = projectService.create("Slug Collision Derived", null, null);
+
+    assertEquals("slug-collision-derived", first.slug);
+    assertEquals("slug-collision-derived-2", second.slug);
+    assertEquals("slug-collision-derived-3", third.slug);
+    // And each one's wrapper is named after its own slug, which is the reason this has to hold.
+    assertEquals(
+        "slug-collision-derived-2-slug-collision-derived-2", ProjectService.wrapperName(second));
+  }
+
+  /**
+   * A supplied slug is a statement — it names the upstream this project backs up to — so a
+   * collision is refused rather than renamed. A silent {@code -2} would create a project whose
+   * wrapper does not match the upstream the caller meant, and nothing would say so until a push.
+   */
+  @Test
+  public void aSuppliedSlugThatIsTakenIsRefused() {
+    projectService.create("Slug Collision Supplied", "slug-collision-supplied", null);
+
+    var refusal =
+        assertThrows(
+            DomainException.class,
+            () -> projectService.create("Another Name Entirely", "slug-collision-supplied", null));
+    assertEquals(409, refusal.statusCode());
+    assertTrue(projectRepository.find("slug", "slug-collision-supplied-2").list().isEmpty());
+  }
+
+  /** The constraint itself, under the service that is supposed to make it unreachable. */
+  @Test
+  public void theDatabaseRefusesTwoProjectsOnOneSlug() {
+    var project = projectService.create("Slug Constraint", "slug-constraint", null);
+
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            QuarkusTransaction.requiringNew()
+                .run(
+                    () -> {
+                      var duplicate = new eu.wohlben.qits.projects.entity.Project();
+                      duplicate.id = "slug-constraint-duplicate";
+                      duplicate.name = "Slug Constraint Duplicate";
+                      duplicate.slug = "slug-constraint";
+                      projectRepository.persist(duplicate);
+                      entityManager.flush();
+                    }));
+    assertEquals("slug-constraint", projectService.get(project.id).slug);
   }
 
   /**

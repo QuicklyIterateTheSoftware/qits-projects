@@ -4,6 +4,22 @@
 openapi: 3.1.0
 components:
   schemas:
+    AgentContainerResponse:
+      type: object
+      properties:
+        container:
+          $ref: "#/components/schemas/ContainerView"
+          type: object
+          description: "The project's agent container, as this service last observed\
+            \ it."
+    AgentRuntimeStatus:
+      type: string
+      enum:
+      - RUNNING
+      - STOPPED
+      - PROVISIONING
+      - FAILED
+      - ABSENT
     AuditEntityType:
       type: string
       enum:
@@ -116,6 +132,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CommitDto"
+    ContainerView:
+      type: object
+      properties:
+        runtimeStatus:
+          $ref: "#/components/schemas/AgentRuntimeStatus"
+        daemonConnected:
+          type: boolean
+        daemonVersion:
+          type: string
     CreateEpicRequest:
       type: object
       required:
@@ -1081,6 +1106,60 @@ paths:
       summary: Delete
       tags:
       - Project Controller
+  /projects/api/projects/{projectId}/agent-container:
+    get:
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentContainerResponse"
+      summary: Get
+      tags:
+      - Agent Container Controller
+  /projects/api/projects/{projectId}/agent-container/ensure:
+    post:
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentContainerResponse"
+      summary: Ensure
+      tags:
+      - Agent Container Controller
+  /projects/api/projects/{projectId}/agent-container/stop:
+    post:
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentContainerResponse"
+      summary: Stop
+      tags:
+      - Agent Container Controller
   /projects/api/projects/{projectId}/epics:
     get:
       parameters:

@@ -1912,6 +1912,37 @@ public class RepositoryService {
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
   }
 
+  /**
+   * The repository a project addresses by {@code name} — the one resolution wrapper membership
+   * honours, in one place so nothing can drift from it.
+   *
+   * <p>Two steps, and the second is not a fallback for tidiness:
+   *
+   * <ol>
+   *   <li>the {@code (project, name)} alias row, which is what an ordinary repository owns;
+   *   <li>the name read as the repository's own <b>id</b>, within this project. Adopted platform
+   *       repositories are keyed by their directory name — the bootstrap created the origin before
+   *       any row existed — so the name <em>is</em> the id and there is no alias row to find.
+   * </ol>
+   *
+   * <p>Both callers are name resolutions a person can compare: the wrapper block the UI reads
+   * ({@link WrapperReconcileService#view}) and the git host's name-addressed scheme behind {@code
+   * GET /projects/api/projects/{projectId}/repositories/by-name/{repoName}}. One resolving a
+   * repository the other does not would show as drift that is not there.
+   *
+   * @param name the addressable name, with no {@code .git} suffix — callers reading it off a url or
+   *     a path segment normalize first
+   */
+  public Optional<Repository> findByProjectAndName(String projectId, String name) {
+    return repositoryNameRepository
+        .findRepositoryByProjectAndName(projectId, name)
+        .or(
+            () ->
+                repositoryRepository
+                    .findByIdOptional(name)
+                    .filter(repo -> repo.project != null && repo.project.id.equals(projectId)));
+  }
+
   // -----------------------------------------------------------------------------------------
   // wrapper membership — a repository the wrapper does not name is not part of the project
   // -----------------------------------------------------------------------------------------

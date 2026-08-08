@@ -73,6 +73,7 @@ Everything it serves sits under its gateway segment, `/projects`:
 | `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links — except under the prefixes below |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
 | `/projects/api/events/post-receive` | what the git host calls after it accepts a push — see **The backup twin** below |
+| `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/artifacts/git/<projectId>/<repoName>` through. Unguarded and in the document, like the post-receive intake |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
 | `/projects/q/openapi`, `/projects/q/swagger-ui` | the API document and its UI (`quarkus.http.non-application-root-path`) |
@@ -137,8 +138,9 @@ tier and not one per project. Nothing here creates, names or reconciles one.
 Reached the other way: qits-workspaces' `RepositoryLookup` and `RepositoryAddressResolver`, and
 qits-artifacts' `githost.RepositoryNameResolver`, are ports **those** repos declare and this one
 satisfies. This jar does not implement them — the assembling application does, by adapting
-`RepositoryRepository` / `RepositoryNameRepository` (which live here) to their interfaces. Note the
-name collision: artifacts' `githost.RepositoryNameResolver` (a port) and this context's
+`RepositoryRepository` / `RepositoryNameRepository` (which live here) to their interfaces, or, for
+a service that runs apart, by calling the by-name route in the table above. Note the name collision:
+artifacts' `githost.RepositoryNameResolver` (a port) and this context's
 `control.RepositoryNameResolver` (the alias resolver) are unrelated types.
 
 ## The startup self-seed

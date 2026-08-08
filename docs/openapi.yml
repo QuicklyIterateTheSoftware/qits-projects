@@ -467,6 +467,11 @@ components:
     Response18:
       type: object
       properties:
+        repositoryId:
+          type: string
+    Response19:
+      type: object
+      properties:
         projectId:
           type: string
         wrapperRepositoryId:
@@ -477,13 +482,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EntryOutcome"
-    Response19:
-      type: object
-      properties:
-        domain:
-          $ref: "#/components/schemas/DomainOutcome"
-        domainDetail:
-          type: string
     Response2:
       type: object
       properties:
@@ -494,30 +492,37 @@ components:
     Response20:
       type: object
       properties:
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/Entry3"
-        wrapper:
-          $ref: "#/components/schemas/WrapperView"
+        domain:
+          $ref: "#/components/schemas/DomainOutcome"
+        domainDetail:
+          type: string
     Response21:
       type: object
       properties:
         entries:
           type: array
           items:
-            $ref: "#/components/schemas/Entry5"
+            $ref: "#/components/schemas/Entry3"
+        wrapper:
+          $ref: "#/components/schemas/WrapperView"
     Response22:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry5"
+    Response23:
       type: object
       properties:
         project:
           $ref: "#/components/schemas/ProjectDto"
-    Response23:
+    Response24:
       type: object
       properties:
         success:
           type: boolean
-    Response24:
+    Response25:
       type: object
       properties:
         repository:
@@ -526,14 +531,14 @@ components:
           type: string
         wrapperPath:
           type: string
-    Response25:
+    Response26:
       type: object
       properties:
         project:
           $ref: "#/components/schemas/ProjectDto"
         wrapper:
           $ref: "#/components/schemas/RepositoryDto"
-    Response26:
+    Response27:
       type: object
       properties:
         projectId:
@@ -541,21 +546,16 @@ components:
         scheduled:
           type: integer
           format: int32
-    Response27:
+    Response28:
       type: object
       properties:
         technicalProcessId:
           type: string
-    Response28:
+    Response29:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response29:
-      type: object
-      properties:
-        technicalProcessId:
-          type: string
     Response3:
       type: object
       properties:
@@ -569,13 +569,13 @@ components:
     Response31:
       type: object
       properties:
-        repository:
-          $ref: "#/components/schemas/RepositoryDto"
+        technicalProcessId:
+          type: string
     Response32:
       type: object
       properties:
-        success:
-          type: boolean
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
     Response33:
       type: object
       properties:
@@ -584,18 +584,23 @@ components:
     Response34:
       type: object
       properties:
+        success:
+          type: boolean
+    Response35:
+      type: object
+      properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response35:
+    Response36:
       type: object
       properties:
         repositoryId:
           type: string
         scheduled:
           type: boolean
-    Response36:
+    Response37:
       type: object
       properties:
         technicalProcessId:
@@ -1023,7 +1028,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response21"
+                $ref: "#/components/schemas/Response22"
       summary: List
       tags:
       - Project Controller
@@ -1040,7 +1045,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response25"
+                $ref: "#/components/schemas/Response26"
         "400":
           description: Bad Request
       summary: Create
@@ -1085,7 +1090,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response22"
+                $ref: "#/components/schemas/Response23"
       summary: Get
       tags:
       - Project Controller
@@ -1102,7 +1107,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response23"
+                $ref: "#/components/schemas/Response24"
       summary: Delete
       tags:
       - Project Controller
@@ -1248,7 +1253,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response19"
+                $ref: "#/components/schemas/Response20"
         "404":
           description: No such project
       tags:
@@ -1267,7 +1272,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response20"
+                $ref: "#/components/schemas/Response21"
       summary: List Repositories
       tags:
       - Project Controller
@@ -1290,7 +1295,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response24"
+                $ref: "#/components/schemas/Response25"
         "400":
           description: "Neither or both of url/name, an unplaceable archetype, a name\
             \ already taken in the project, or a wrapper commit the git host refused"
@@ -1315,9 +1320,39 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response26"
+                $ref: "#/components/schemas/Response27"
         "404":
           description: No such project
+      tags:
+      - Project Controller
+  /projects/api/projects/{projectId}/repositories/by-name/{repoName}:
+    get:
+      summary: Resolve a project-scoped repository name to its id
+      description: "The name is the segment a committed relative submodule url (../<name>.git)\
+        \ resolves to, with any .git suffix stripped. Resolution is exactly what wrapper\
+        \ membership honours: the (project, name) alias, then the name read as the\
+        \ repository's own id — an adopted platform repository is keyed by its directory\
+        \ name and owns no alias row."
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: repoName
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: The name resolves
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response18"
+        "404":
+          description: "No such project, or no repository by that name"
       tags:
       - Project Controller
   /projects/api/projects/{projectId}/repositories/reconcile:
@@ -1342,7 +1377,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response18"
+                $ref: "#/components/schemas/Response19"
         "400":
           description: The project has no wrapper repository
         "404":
@@ -1363,7 +1398,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response31"
+                $ref: "#/components/schemas/Response32"
       summary: Get
       tags:
       - Repository Controller
@@ -1380,7 +1415,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response33"
+                $ref: "#/components/schemas/Response34"
       summary: Delete
       tags:
       - Repository Controller
@@ -1398,7 +1433,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response36"
+                $ref: "#/components/schemas/Response37"
       summary: Active Process
       tags:
       - Repository Controller
@@ -1420,7 +1455,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response35"
+                $ref: "#/components/schemas/Response36"
         "404":
           description: No such repository
       tags:
@@ -1445,7 +1480,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response32"
+                $ref: "#/components/schemas/Response33"
       summary: Delete Branch
       tags:
       - Repository Controller
@@ -1462,7 +1497,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response34"
+                $ref: "#/components/schemas/Response35"
       summary: Branches
       tags:
       - Repository Controller
@@ -1570,7 +1605,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response28"
+                $ref: "#/components/schemas/Response29"
         "400":
           description: Bad Request
       summary: Set Main Branch
@@ -1590,7 +1625,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response30"
+                $ref: "#/components/schemas/Response31"
       summary: Pull
       tags:
       - Repository Controller
@@ -1608,7 +1643,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response29"
+                $ref: "#/components/schemas/Response30"
       summary: Push
       tags:
       - Repository Controller
@@ -1626,7 +1661,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response27"
+                $ref: "#/components/schemas/Response28"
       summary: Sync
       tags:
       - Repository Controller
@@ -1710,4 +1745,4 @@ paths:
       - Task Controller
 info:
   title: qits-projects API
-  version: 2026.808.110015
+  version: 2026.808.152415

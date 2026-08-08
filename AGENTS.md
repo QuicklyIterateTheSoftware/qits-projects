@@ -83,12 +83,13 @@ things about that are easy to get wrong:
   `quarkus.quinoa.ignored-path-prefixes`.** Quinoa's SPA fallback is a catch-all at `/projects/*`
   registered near-last, so a real route still wins — but a path matching *no* route is rerouted to
   `index.html` and answers `200 text/html`, which a machine client parses as data. The key is set
-  explicitly (`/api,/q,/mcp`) rather than derived, because the derivation reads only
-  `quarkus.rest.path` and `quarkus.http.non-application-root-path` and nothing names the MCP
-  root-path. Setting it **replaces** the derivation, so `/api` and `/q` are repeated by hand, and
-  the values are matched **after** `ui-root-path` is stripped — `/projects/mcp` written there
-  matches nothing at all and is indistinguishable from leaving the key unset. The remote-login
-  websocket needs no entry only because its literal sits under `/projects/api`.
+  explicitly (`/api,/q,/mcp,/daemon,/container`) rather than derived, because the derivation reads
+  only `quarkus.rest.path` and `quarkus.http.non-application-root-path` and nothing names the MCP
+  root-path or the agent harness's raw routes. Setting it **replaces** the derivation, so `/api` and
+  `/q` are repeated by hand, and the values are matched **after** `ui-root-path` is stripped —
+  `/projects/mcp` written there matches nothing at all and is indistinguishable from leaving the key
+  unset. The remote-login websocket needs no entry only because its literal sits under
+  `/projects/api`.
 
 Path parameters naming a repository are `{repoId}` everywhere. Parameter names are visible in the
 generated client, so keep them uniform. Note the two reconciles under a project are deliberately
@@ -214,6 +215,86 @@ its frozen scope as the record of what was discarded, which is why superseded ep
 list. Features and tasks keep their slugs, because the new epic and its features are new scopes; the
 successor *epic's* slug cannot, because its scope is the project and the old row still holds it, so
 it mints the next free suffix like any other create.
+
+## Project agent harness
+
+One container per project, holding a clone of that project's wrapper repository and running
+`qits-projects-daemon` over it, so a refinement agent can read and build the project it is drafting
+epics for. The host side is `service/…/agenthost/`; the container's process is its own repository
+(`qits-projects-daemon`), and that repo's `AGENTS.md` is the source of truth for every value below.
+The whole shape is qits-workspaces' daemon harness — registry, tunnels, proxy — adapted rather than
+reinvented, so read that repo before changing anything structural here.
+
+**Two path contracts, and both are append-only.** They are baked into every container as env at
+creation, and only a container recreate re-injects them:
+
+    control socket   ws://<host>:<port>/projects/daemon/<projectId>
+    proxy prefix     /projects/container/<projectId>/
+
+Neither is a literal in this tree. Both live in the vendored `DaemonProtocol` constants and are
+asserted on both sides by `DaemonCodecTest`, which is also why `projects-daemon-protocol/` exists
+here at all: it is a **source copy** of the daemon repo's module, same java package, different
+artifactId. A protocol change is three edits in order — the record and the constants in the daemon
+repo, `DaemonCodecTest` there, then the same files here — and it bumps `CAPABILITY_VERSION`.
+
+**The daemon has no address.** `ProjectsApi` binds `127.0.0.1` from capability 1, so there is no
+direct branch anywhere: qits sends an `OpenStream` over the control socket, the daemon dials *out*
+to `/projects/daemon/stream/{nonce}`, and `DaemonStreamRoute` marries that WebSocket to the parked
+loopback connection `AgentTunnels` accepted. The nonce is the whole authentication — host-minted,
+single-use, short-lived — because the control socket names its caller with a path parameter and a
+dial-back that named its own project would reproduce that weakness in a second place. That
+token-free control socket is inherited from qits-workspaces and closes with it when qits-idp machine
+auth lands; do not add an interim token.
+
+**Nothing rewrites a path.** `ContainerProxyRoute` forwards `/projects/container/{id}/commands` byte
+for byte, and the daemon is *told* which leading part is its own address
+(`QITS_PROJECTS_DAEMON_API_BASE_PATH`, rendered by `ContainerProxyPath.base`). Do not add a
+`substring` here: a hop that rewrites leaves the two ends disagreeing about the destination's own
+address, and the disagreement surfaces a long way from the rewrite. A **WebSocket upgrade does not
+go through `vertx-http-proxy` at all** — `proxyUpgrade` does it by hand, because the library skips
+its whole interceptor chain on an upgrade (so the bearer never arrives) and pipes with no
+`writeQueueFull`/`pause`/`drainHandler` at all.
+
+**The env contract**, read from the daemon repo and asserted by `AgentContainerFactoryTest`. Getting
+one wrong fails silently: no url leaves the daemon idle, no token leaves its API unbound.
+
+    QITS_PROJECTS_DAEMON_URL             the control socket, dialled verbatim
+    QITS_PROJECTS_DAEMON_API_BASE_PATH   /projects/container/<projectId>/
+    QITS_PROJECTS_DAEMON_PROJECT_ID      the project served
+    QITS_PROJECTS_DAEMON_REPO_NAME       the wrapper, <slug>-<slug> — the clone is name-addressed
+    QITS_PROJECTS_DAEMON_GIT_BASE        stated, never derived: the git host is qits-artifacts
+    QITS_PROJECTS_DAEMON_API_TOKEN       qits.projects.daemon-api-token
+    QITS_PROJECTS_DAEMON_API_PORT        13338, also the authority the proxy pins
+    QITS_PROJECTS_DAEMON_HOOKS_PORT      13337
+    QITS_PROJECTS_DAEMON_CLAUDE_MOUNT    /claude-home
+
+**The token is not a boundary.** `qits.projects.daemon-api-token` is peer authentication behind a
+loopback bind — it says "qits is calling", never "this user is calling" — so the proxy *sets* it,
+replacing whatever the caller sent, and a forwarded one would be a credential leak. It ships with a
+default so a deployment needs no configuration; the other end is still fail-closed, because a daemon
+handed no token does not bind its API at all.
+
+**The shared volumes carry qits-workspaces' names on purpose** — `qits_shared_dot_claude`,
+`qits_shared_m2`, `qits_shared_pnpm`. They are platform-wide: a divergent credential volume here
+would give project agents their own unauthenticated agent home. The per-project checkout volume is
+`qits_project_<projectId>`, keyed on the id, while the container is named `qits-proj-<slug>` so
+`docker ps` reads well. `Project.slug` is **not unique** in this context, so the name proves nothing
+— every read checks the `qits.project` label and `AgentContainers` answers 409 rather than adopting
+another project's container.
+
+**The stop policy is stop, never remove.** `POST …/agent-container/stop` and the
+`qits.projects.agent-idle-timeout` sweep (PT4H) both leave the container and its `/workspace` volume
+in place, so the next ensure is a `docker start` that reattaches the checkout with any uncommitted
+work intact. That is what makes an automatic sweep safe to run at all. Idleness is measured from the
+last thing the daemon said — `Hello`, heartbeat, agent activity — so it means "nobody is using this
+project", not "nothing is happening": a long silent build still heartbeats. A container this process
+has never heard from is stamped on sight and ages out one window later, rather than being immortal
+or reaped immediately.
+
+**Nothing here shells docker under test.** `DockerAgentRuntime` is `@DefaultBean`, so
+`FakeContainerRuntime` simply wins the injection — and its startup observer is gated on
+`LaunchMode.NORMAL`, because a `@DefaultBean` that loses the contest *keeps* its `@Observes
+StartupEvent` and would otherwise create real platform volumes on every `./mvnw verify`.
 
 ## Schema changes
 

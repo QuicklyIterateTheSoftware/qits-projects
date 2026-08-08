@@ -63,9 +63,12 @@ public class ProjectController {
   // --- Project CRUD ---
 
   /**
-   * @param slug the git-safe, immutable project identity the wrapper repository is named after
-   *     ({@code <slug>-<slug>}). Optional — derived from {@code name} when omitted. Unlike {@code
-   *     name} it can never be changed afterwards, so a wrapper's alias cannot go stale.
+   * @param slug the git-safe, immutable, <b>unique</b> project identity the wrapper repository is
+   *     named after ({@code <slug>-<slug>}) and the upstream backup organisation is named by.
+   *     Optional — derived from {@code name} when omitted, and a derived one takes the next free
+   *     {@code -2}, {@code -3}, …. Supplied and already taken is a <b>409</b>, because the value is
+   *     then a statement about which upstream this project backs up to. Unlike {@code name} it can
+   *     never be changed afterwards, so a wrapper's alias cannot go stale.
    * @param url an existing upstream to adopt as the wrapper repository. Optional — omitted, the
    *     wrapper is initialized locally with no backup remote. An adopted upstream may be completely
    *     empty (it is seeded with the project template skeleton) but its basename must be exactly
@@ -107,6 +110,10 @@ public class ProjectController {
   }
 
   @POST
+  @APIResponse(responseCode = "200", description = "The project exists, with its wrapper repository")
+  @APIResponse(
+      responseCode = "409",
+      description = "The supplied slug already names another project — slugs are unique")
   public CreateProjectRequest.Response create(@Valid CreateProjectRequest request) {
     var project =
         projectService.create(

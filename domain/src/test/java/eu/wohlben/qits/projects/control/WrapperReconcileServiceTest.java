@@ -54,6 +54,13 @@ public class WrapperReconcileServiceTest {
    */
   @BeforeEach
   void nothingIsServedYet() throws Exception {
+    // A slug is unique (V6) and the fixture wrapper can only be adopted under 'qits' — its basename
+    // has to equal <slug>-<slug> — so every case here wants the same slug and the previous case's
+    // project has to give it up first. Same idiom as SelfSeedServiceTest's clean().
+    projectService.list().stream()
+        .filter(p -> "qits".equals(p.slug))
+        .toList()
+        .forEach(p -> projectService.delete(p.id));
     for (String name : List.of("submodule-shared", "submodule-grandchild", "self-hosted")) {
       Path bare = Path.of(gitHost.fetchUrl(name));
       if (!Files.isDirectory(bare)) {

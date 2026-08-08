@@ -33,11 +33,12 @@ import org.jboss.logging.Logger;
  * queueing behind an image pull.
  *
  * <p><b>A container is only this project's if its label says so.</b> The container name is derived
- * from the project <em>slug</em>, and {@code Project.slug} is deliberately not unique in this
- * context — two projects can be named the same thing. So every read checks {@code qits.project} and
- * refuses a foreign container with a 409 rather than adopting it, which would hand one project a
- * shell over another's checkout. The refusal names both ids, because renaming a project is the only
- * way out of it.
+ * from the project <em>slug</em>, which is unique among <em>live</em> projects (V6) — and that is
+ * not the same as unique among containers. Deleting a project does not remove its agent container,
+ * so a later project taking the freed slug finds the old one still sitting on the name, holding the
+ * deleted project's checkout. So every read checks {@code qits.project} and refuses a foreign
+ * container with a 409 rather than adopting it. The refusal names both ids, because removing the
+ * stale container is the only way out of it.
  */
 @ApplicationScoped
 public class AgentContainers {
@@ -145,7 +146,8 @@ public class AgentContainers {
               + name
               + "' is already taken by project "
               + owner
-              + ". Two projects share a slug; rename one of them to give each its own agent.");
+              + ". Slugs are unique among live projects, so this is a container left behind by a"
+              + " deleted one; remove it and try again.");
     }
     return Optional.of(info);
   }

@@ -213,9 +213,9 @@ class AgentContainerLifecycleTest {
 
   @Test
   void aContainerBelongingToAnotherProjectIsRefused() {
-    // Two projects can share a slug — Project.slug is deliberately not unique — so the name alone
-    // proves nothing. Adopting a foreign container would hand this project a shell over somebody
-    // else's checkout.
+    // Slugs are unique among live projects, but deleting one leaves its container on the name — so
+    // the name alone proves nothing. Adopting a foreign container would hand this project a shell
+    // over somebody else's checkout.
     runtime.given(containerName, "some-other-project", true);
 
     given().when().post(base() + "/ensure").then().statusCode(409);

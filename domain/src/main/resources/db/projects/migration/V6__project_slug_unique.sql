@@ -1,0 +1,18 @@
+-- Project.slug is unique from here on. V1's comment on the column says the opposite; that file is
+-- applied and checksummed, so the correction lives here rather than as an edit to it.
+--
+-- What changed: each project has its own upstream backup organisation and the slug names it, so two
+-- projects sharing one would name the same forge namespace. The slug also names the agent container
+-- (qits-proj-<slug>) and the wrapper repository (<slug>-<slug>), both of which read better for it.
+--
+-- NULLs are still allowed, more than one of them: a unique constraint constrains values, and the
+-- column is nullable because tests persist `new Project()` directly. ProjectService is what enforces
+-- non-null on every create.
+--
+-- No dedupe backfill, deliberately, and not only because the live platform holds one project. A slug
+-- is immutable (@Column(updatable = false)) precisely because things are named after it: rewriting
+-- one in SQL the way V2 does for epic slugs would leave that project's wrapper repository addressable
+-- as <old>-<old> while the project derives <new>-<new>, and the relative submodule urls committed in
+-- its .gitmodules would resolve to nothing. If this migration fails on a duplicate, that is the right
+-- outcome: choosing which project renames means recreating its wrapper, which is a person's decision.
+alter table Project add constraint uq_project_slug unique (slug);

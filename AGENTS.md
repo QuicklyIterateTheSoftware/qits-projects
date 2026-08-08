@@ -161,6 +161,29 @@ names, with a relative url. Three rules follow, and every one of them is enforce
 `WrapperSubmoduleWriter` is the only writer of that file and `WrapperGitmodules` the only editor —
 textual, one section at a time, every other byte where it was, because this is a file people review.
 
+## Project slugs
+
+`Project.slug` is **unique** (V6) and immutable (`@Column(updatable = false)`). Each project has its
+own upstream backup organisation and the slug names it; it also names the project's wrapper
+repository (`<slug>-<slug>`) and its agent container (`qits-proj-<slug>`).
+
+It was deliberately non-unique until 2026-08-08 — V1's column comment and `V2__slugs.sql` in the
+epics lineage both still say so, and neither can be corrected in place: they are applied migrations
+and Flyway checksums the file. V6 carries the correction.
+
+Uniqueness is reached two ways, and the difference is what the caller said:
+
+- **no slug given** — derived from the name, then the next free `-2`, `-3`, …, exactly like an epic
+  slug within its project. The caller stated nothing about the value and two projects called
+  "Checkout" must both be creatable.
+- **a slug given** — a collision is a **409**. It is a statement, not a default: it names the
+  upstream the wrapper is backed up to, so a silent rename would create a project whose wrapper does
+  not match the upstream the caller meant, and nothing would say so until a push failed.
+
+There is no dedupe backfill in V6, and not only because the live platform holds one project: a slug
+is immutable because things are named after it, so rewriting one in SQL would leave that project's
+wrapper addressable under a name the project no longer derives. A duplicate is a person's decision.
+
 ## Branch naming
 
 Work on an epic, feature or task happens on a branch named after the planning row:
@@ -178,9 +201,10 @@ title at **create** and never changes — `@Column(updatable = false)`, and no `
 it — because a rename must not orphan the branches already cut. `Slugs.slugify` is the derivation, a
 deliberate copy of domain's `ProjectService.slugify` (epics depends on `domain` nowhere, and stays
 that way); `Slugs.unique` then adds `-2`, `-3`, … within the scope. The scope is the parent: an
-epic's slug is unique per project, a feature's per epic, a task's per feature. Unlike
-`Project.slug`, which is deliberately non-unique, these must be — two siblings sharing one would
-name the same branch.
+epic's slug is unique per project, a feature's per epic, a task's per feature — two siblings sharing
+one would name the same branch. `Project.slug` is unique too (V6), with the whole service as its
+scope, so the same suffixing runs there; the difference is what a *supplied* slug means, and it is
+in **Project slugs** below.
 
 **Open, in another repo:** qits-workspaces' `CaptureService` mints capture branches named
 `feature/<timestamp>`. Directory-wise that collides with `feature/<epic>/<feature>` — a capture
@@ -278,9 +302,10 @@ handed no token does not bind its API at all.
 `qits_shared_m2`, `qits_shared_pnpm`. They are platform-wide: a divergent credential volume here
 would give project agents their own unauthenticated agent home. The per-project checkout volume is
 `qits_project_<projectId>`, keyed on the id, while the container is named `qits-proj-<slug>` so
-`docker ps` reads well. `Project.slug` is **not unique** in this context, so the name proves nothing
-— every read checks the `qits.project` label and `AgentContainers` answers 409 rather than adopting
-another project's container.
+`docker ps` reads well. `Project.slug` is unique (V6), but only among *live* projects, and deleting
+a project does not remove its agent container — so a later project taking the freed slug finds the
+old container on the name. Every read therefore checks the `qits.project` label and
+`AgentContainers` answers 409 rather than adopting it.
 
 **The stop policy is stop, never remove.** `POST …/agent-container/stop` and the
 `qits.projects.agent-idle-timeout` sweep (PT4H) both leave the container and its `/workspace` volume

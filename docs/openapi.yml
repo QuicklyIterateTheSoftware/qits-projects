@@ -1043,11 +1043,14 @@ paths:
         required: true
       responses:
         "200":
-          description: OK
+          description: "The project exists, with its wrapper repository"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response26"
+        "409":
+          description: The supplied slug already names another project — slugs are
+            unique
         "400":
           description: Bad Request
       summary: Create

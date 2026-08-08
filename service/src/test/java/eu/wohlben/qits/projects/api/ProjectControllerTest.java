@@ -254,6 +254,56 @@ public class ProjectControllerTest {
         .body("wrapper.archetype", equalTo("PROJECT"));
   }
 
+  /**
+   * A slug is unique, and the two ways of arriving at one answer differently on a collision: a
+   * supplied slug names the upstream this project backs up to, so it is refused rather than
+   * renamed, while a derived one takes the next free suffix.
+   */
+  @Test
+  public void testCreateRefusesATakenSlugButSuffixesADerivedOne() {
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new ProjectController.CreateProjectRequest(
+                "Slug Taken", "slug-taken", null, null, ProjectRequests.DNS))
+        .when()
+        .post("/projects/api/projects")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new ProjectController.CreateProjectRequest(
+                "Something Else", "slug-taken", null, null, ProjectRequests.DNS))
+        .when()
+        .post("/projects/api/projects")
+        .then()
+        .statusCode(Response.Status.CONFLICT.getStatusCode());
+
+    // The same name twice, with no slug given, is two projects.
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new ProjectController.CreateProjectRequest(
+                "Slug Derived Twice", null, null, null, ProjectRequests.DNS))
+        .when()
+        .post("/projects/api/projects")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("project.slug", equalTo("slug-derived-twice"));
+    given()
+        .contentType(ContentType.JSON)
+        .body(
+            new ProjectController.CreateProjectRequest(
+                "Slug Derived Twice", null, null, null, ProjectRequests.DNS))
+        .when()
+        .post("/projects/api/projects")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("project.slug", equalTo("slug-derived-twice-2"));
+  }
+
   /** Adopting an upstream whose basename is not <slug>-<slug> breaks the alias invariant. */
   @Test
   public void testCreateRejectsAnAdoptUrlThatDoesNotMatchTheWrapperName() {

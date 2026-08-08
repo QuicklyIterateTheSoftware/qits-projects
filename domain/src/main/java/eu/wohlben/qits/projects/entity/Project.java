@@ -28,8 +28,15 @@ public class Project extends PanacheEntityBase {
   public String name;
 
   /**
-   * The git-safe, <b>immutable</b> identity this project's wrapper repository is named after
-   * ({@code <slug>-<slug>}), deliberately detached from the free-form, editable {@link #name}.
+   * The git-safe, <b>immutable</b> and <b>unique</b> identity this project's wrapper repository is
+   * named after ({@code <slug>-<slug>}), deliberately detached from the free-form, editable {@link
+   * #name}.
+   *
+   * <p>Unique since V6, because each project has its own upstream backup organisation and this is
+   * what names it. {@code ProjectService} suffixes a <em>derived</em> slug to the next free {@code
+   * -2}, {@code -3}, … and refuses a <em>supplied</em> one that is taken with a 409 — the second is
+   * a statement about which upstream the wrapper belongs to, and renaming it silently would break
+   * that statement without saying so.
    *
    * <p>A repository's local alias must equal its remote basename for a committed <em>relative</em>
    * submodule url ({@code ../<name>.git}) to fold to the same thing in a workspace container and at

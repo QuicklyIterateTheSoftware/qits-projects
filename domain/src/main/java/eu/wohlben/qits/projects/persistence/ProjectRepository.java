@@ -11,4 +11,9 @@ public class ProjectRepository implements PanacheRepositoryBase<Project, String>
   public Optional<Project> findByName(String name) {
     return find("name", name).firstResultOptional();
   }
+
+  /** The project holding {@code slug}, if any — slugs are unique (V6). */
+  public Optional<Project> findBySlug(String slug) {
+    return find("slug", slug).firstResultOptional();
+  }
 }

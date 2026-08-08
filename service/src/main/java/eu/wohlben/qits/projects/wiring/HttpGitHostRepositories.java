@@ -87,7 +87,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
       return false;
     }
     throw new GitHostException(
-        "qits-artifacts answered "
+        "qits-platform-artifacts answered "
             + response.statusCode()
             + " creating "
             + repoId
@@ -107,7 +107,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
     }
     if (response.statusCode() != 200) {
       throw new GitHostException(
-          "qits-artifacts answered "
+          "qits-platform-artifacts answered "
               + response.statusCode()
               + " reading "
               + repoId
@@ -121,7 +121,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
           new HostRepository(repoId, defaultBranch == null ? null : defaultBranch.toString()));
     } catch (IOException e) {
       throw new GitHostException(
-          "Could not read qits-artifacts' answer for " + repoId + " at " + url, e);
+          "Could not read qits-platform-artifacts' answer for " + repoId + " at " + url, e);
     }
   }
 
@@ -130,7 +130,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
       return client.send(request, HttpResponse.BodyHandlers.ofString());
     } catch (IOException e) {
       throw new GitHostException(
-          "qits-artifacts unreachable " + verbing + " " + request.uri(), e);
+          "qits-platform-artifacts unreachable " + verbing + " " + request.uri(), e);
     } catch (InterruptedException e) {
       // Never swallow the interrupt: this runs on a request thread the container may be shutting
       // down.

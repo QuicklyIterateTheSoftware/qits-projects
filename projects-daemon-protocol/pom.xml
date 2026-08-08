@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-projects</artifactId>
+        <version>2026.808.110015</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The projects-daemon control-plane wire contract: plain records + the shared type/field-name
+         constants, framework-free and dependency-free. No JSON library on purpose — each side
+         serializes with whatever it already carries (Jackson here, a Vert.x JsonObject in the
+         native daemon binary).
+
+         VENDORED COPY. The canonical source is qits-projects-daemon/projects-daemon-protocol. It is
+         copied rather than depended on because that module is published to no registry, and a clone
+         of qits-projects alone must `./mvnw verify` green — no credentials, no prior `mvn install`
+         in another repo, no submodule dragging a GraalVM native build into this reactor. The same
+         arrangement qits-workspaces has with qits-workspace-daemon.
+
+         Three things keep the copy honest:
+           - The java PACKAGE is identical (eu.wohlben.qits.projectsdaemon.protocol), so the day
+             this artifact is published somewhere, deleting this module and adding a <dependency>
+             is a one-line change with no source edits.
+           - The artifactId is NOT identical — qits-projects-daemon-protocol, under this repo's own
+             groupId — so the two jars can never collide in ~/.m2 or on one classpath.
+           - DaemonCodecTest travels with it. It is the contract test and it runs on both sides, so
+             a drift in either repo fails a build rather than a socket at runtime. Any change here
+             must be mirrored in the daemon repo and bump DaemonProtocol.CAPABILITY_VERSION. -->
+    <artifactId>qits-projects-daemon-protocol</artifactId>
+    <name>qits-projects :: daemon-protocol (vendored)</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -49,6 +49,12 @@
             <artifactId>qits-projects-epics</artifactId>
         </dependency>
         <dependency>
+            <!-- The vendored projects-daemon wire contract, spoken by the agent harness in
+                 agenthost/. Sources, not a published jar — see that module's pom. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-daemon-protocol</artifactId>
+        </dependency>
+        <dependency>
             <!-- domain's test-support only (see its jar plugin config): the port implementations
                  this module's @QuarkusTests need on the classpath, not a second copy of them. -->
             <groupId>${project.groupId}</groupId>
@@ -94,6 +100,13 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The agent-container reverse proxy (agenthost/ContainerProxyRoute). Quarkus drags
+                 vertx-core in, but not the proxy: HttpProxy.reverseProxy lives here and nothing
+                 else on the classpath pulls it. The raw routes beside it need only vertx-core. -->
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-http-proxy</artifactId>
         </dependency>
         <dependency>
             <!-- The repository/submodule MCP tool surface. Not in the Quarkus BOM, so the version

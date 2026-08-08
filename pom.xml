@@ -37,8 +37,10 @@
     <modules>
         <!-- gitmirror has no reactor dependency and is what `domain` builds its git substrate from
              (see its own pom for why it is a separate module); `service` depends on both `domain`
-             and `epics`; `epics` deliberately depends on neither. -->
+             and `epics`; `epics` deliberately depends on neither. projects-daemon-protocol is a
+             vendored copy of the daemon repo's wire contract and depends on nothing at all. -->
         <module>gitmirror</module>
+        <module>projects-daemon-protocol</module>
         <module>domain</module>
         <module>epics</module>
         <module>service</module>
@@ -97,6 +99,13 @@
                      graph. -->
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-projects-gitmirror</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The vendored projects-daemon wire contract. Framework-free like gitmirror, and
+                     consumed only by `service` — the agent harness is a service-layer concern. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-projects-daemon-protocol</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

@@ -121,6 +121,20 @@ public class AgentContainerFactory {
   String gitBase;
 
   /**
+   * The <b>one</b> MCP server an agent launch attaches — this service's own, at {@code
+   * /projects/mcp}, carrying the epic tools a refinement session drafts through. Absent, it is
+   * composed from {@link #ownHost}/{@link #ownPort}, which is the same address the control socket
+   * already names, so a deployment needs no configuration for it.
+   *
+   * <p>Stated rather than left to the daemon's own derivation. The daemon can derive it — the
+   * control socket and this server are the same service — but that soundness is a property of
+   * today's topology, and the day the MCP server is deployed apart the derivation becomes a guess
+   * with nothing saying so. This key is where that move is made.
+   */
+  @ConfigProperty(name = "qits.projects.agent-mcp-url")
+  Optional<String> agentMcpUrl;
+
+  /**
    * The bearer every container's {@code ProjectsApi} requires. Without it the daemon's API does not
    * bind at all — fail-closed, because an omitted env is indistinguishable from a misconfiguration.
    * One shared value with a default, so a deployment needs no configuration: it is peer
@@ -253,6 +267,15 @@ public class AgentContainerFactory {
     container.env("QITS_PROJECTS_DAEMON_API_PORT", Integer.toString(daemonApiPort));
     container.env("QITS_PROJECTS_DAEMON_HOOKS_PORT", Integer.toString(daemonHooksPort));
     container.env("QITS_PROJECTS_DAEMON_CLAUDE_MOUNT", claudeMount);
+    // The one MCP server a launch in this container attaches: this service, at /projects/mcp, where
+    // the epic tools live. Stated rather than derived — see the field's javadoc.
+    //
+    // Exactly one, deliberately. qits-workspace-daemon wires three (actions, repository,
+    // observability); none of the other two is named here or addressable there, because a
+    // refinement agent's job is the project's PLAN, not workspace actions or another service's
+    // telemetry. The name has no QITS_PROJECTS_DAEMON_ prefix because it is the daemon's existing
+    // `qits.repository-mcp.url` key, the spelling the workspace daemon uses for the same server.
+    container.env("QITS_REPOSITORY_MCP_URL", agentMcpUrl());
 
     // Resource limits (opt-out): without a memory cap every JVM in the container sizes its heap
     // against the whole host's RAM.
@@ -285,6 +308,17 @@ public class AgentContainerFactory {
     container.volume(projectVolumeName(projectId), "/workspace");
 
     return container.image(image);
+  }
+
+  /**
+   * The configured MCP url, or this service's own {@code /projects/mcp} composed from the same
+   * host/port the control socket uses. Never blank: an empty env would leave the daemon deriving
+   * one, which is the state this key exists to leave behind.
+   */
+  private String agentMcpUrl() {
+    return agentMcpUrl
+        .filter(url -> !url.isBlank())
+        .orElseGet(() -> "http://" + ownHost + ":" + ownPort + "/projects/mcp");
   }
 
   /** The configured zone, or this service's own default zone when blank. */

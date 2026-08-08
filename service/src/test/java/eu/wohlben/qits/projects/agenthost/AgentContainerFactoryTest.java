@@ -8,6 +8,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Map;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -104,6 +105,26 @@ class AgentContainerFactoryTest {
     assertEquals("13338", env.get("QITS_PROJECTS_DAEMON_API_PORT"));
     assertEquals("13337", env.get("QITS_PROJECTS_DAEMON_HOOKS_PORT"));
     assertEquals("/claude-home", env.get("QITS_PROJECTS_DAEMON_CLAUDE_MOUNT"));
+  }
+
+  @Test
+  void statesTheOneMcpServerAndNoOther() {
+    Map<String, String> env = envOf(factory.forProject(PROJECT_ID, "demo", "demo-demo").toRunArgv());
+
+    // Same host and port as the control socket above, and this service's own MCP root path — the
+    // server carrying the epic tools a refinement session drafts through. Stated, so the daemon
+    // does not have to derive it from the socket's authority.
+    assertEquals("http://qits-projects:8080/projects/mcp", env.get("QITS_REPOSITORY_MCP_URL"));
+    assertEquals(
+        ConfigProvider.getConfig()
+            .getValue("quarkus.mcp.server.repository.http.root-path", String.class),
+        java.net.URI.create(env.get("QITS_REPOSITORY_MCP_URL")).getPath(),
+        "the url is composed from a literal; this is what notices when the mount moves");
+    // Exactly one. qits-workspace-daemon wires actions/repository/observability; a refinement agent
+    // gets the plan and nothing else, so no second MCP address is injected here on purpose.
+    assertEquals(
+        List.of("QITS_REPOSITORY_MCP_URL"),
+        env.keySet().stream().filter(name -> name.contains("MCP")).toList());
   }
 
   @Test

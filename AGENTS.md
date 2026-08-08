@@ -291,6 +291,22 @@ one wrong fails silently: no url leaves the daemon idle, no token leaves its API
     QITS_PROJECTS_DAEMON_API_PORT        13338, also the authority the proxy pins
     QITS_PROJECTS_DAEMON_HOOKS_PORT      13337
     QITS_PROJECTS_DAEMON_CLAUDE_MOUNT    /claude-home
+    QITS_REPOSITORY_MCP_URL              the one MCP server a launch attaches — this service
+
+**The harness gets exactly one MCP server, and it is this one.** `QITS_REPOSITORY_MCP_URL` names
+this service's `repository` server at `/projects/mcp`, which carries `EpicMcpTools` beside
+`RepositoryMcpTools` — the epic surface is why the container exists. It is composed from
+`qits.projects.own-host`/`own-port` (`qits.projects.agent-mcp-url` overrides), so it is *stated*
+rather than left to the daemon's derivation; the daemon keeps that derivation as a fallback, so
+containers created before this env still work and nothing had to be recreated. The name carries no
+`QITS_PROJECTS_DAEMON_` prefix because it is the daemon's existing `qits.repository-mcp.url` key.
+
+The exclusion is the other half of the decision: qits-workspace-daemon wires **three** servers into
+a workspace container (`actions`, `repository`, `observability`) and a project agent gets neither of
+the other two — its job is the project's plan, not workspace actions or another service's telemetry.
+Nothing can add them back at runtime: the daemon addresses `repository` alone and refuses any other
+name, and Claude is launched `--strict-mcp-config`, so the shared `/claude-home` volume's own MCP
+entries are ignored.
 
 **The token is not a boundary.** `qits.projects.daemon-api-token` is peer authentication behind a
 loopback bind — it says "qits is calling", never "this user is calling" — so the proxy *sets* it,

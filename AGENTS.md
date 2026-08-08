@@ -160,6 +160,33 @@ names, with a relative url. Three rules follow, and every one of them is enforce
 `WrapperSubmoduleWriter` is the only writer of that file and `WrapperGitmodules` the only editor —
 textual, one section at a time, every other byte where it was, because this is a file people review.
 
+## Branch naming
+
+Work on an epic, feature or task happens on a branch named after the planning row:
+
+    epic/<epic>
+    feature/<epic>/<feature>
+    task/<epic>/<feature>/<task>
+
+Every level carries its **own** prefix so no branch is ever a path prefix of another. Git stores
+refs as files, so `epic/planning` and `epic/planning/slugs` cannot both exist; the per-level
+prefixes are what make the three depths coexist.
+
+The segments are the `slug` columns on `Epic`, `Feature` and `Task` (V2). A slug is minted from the
+title at **create** and never changes — `@Column(updatable = false)`, and no `update` path touches
+it — because a rename must not orphan the branches already cut. `Slugs.slugify` is the derivation, a
+deliberate copy of domain's `ProjectService.slugify` (epics depends on `domain` nowhere, and stays
+that way); `Slugs.unique` then adds `-2`, `-3`, … within the scope. The scope is the parent: an
+epic's slug is unique per project, a feature's per epic, a task's per feature. Unlike
+`Project.slug`, which is deliberately non-unique, these must be — two siblings sharing one would
+name the same branch.
+
+**Open, in another repo:** qits-workspaces' `CaptureService` mints capture branches named
+`feature/<timestamp>`. Directory-wise that collides with `feature/<epic>/<feature>` — a capture
+branch is a *file* at `refs/heads/feature/<timestamp>` while a feature branch needs
+`refs/heads/feature/<epic>/` to be a directory, so the first of the two to be created blocks the
+other. Renaming the capture prefix is a qits-workspaces workstream; do not change it from here.
+
 ## Schema changes
 
 `domain/src/main/resources/db/projects/migration/`, hand-written, its own lineage on its own

@@ -43,6 +43,29 @@ class FeatureServiceTest extends EpicsTestSupport {
   }
 
   @Test
+  void slugIsDerivedFromTheTitleAndUniqueWithinTheEpic() {
+    Epic e = epic();
+    Feature first = featureService.create(e.id, "Planning domain", null, null, "t");
+    assertEquals("planning-domain", first.slug);
+
+    Feature second = featureService.create(e.id, "Planning   DOMAIN!", null, null, "t");
+    assertEquals("planning-domain-2", second.slug);
+
+    // Another epic is another scope, so the clean slug is free again.
+    Epic other = epic();
+    assertEquals(
+        "planning-domain", featureService.create(other.id, "Planning domain", null, null, "t").slug);
+  }
+
+  @Test
+  void updateLeavesTheSlugAlone() {
+    Feature feature = featureService.create(epic().id, "Planning domain", null, null, "t");
+    Feature renamed =
+        featureService.update(feature.id, "Renamed", null, null, false, null, false, "t");
+    assertEquals("planning-domain", renamed.slug);
+  }
+
+  @Test
   void dependencyCanBeSetThenCleared() {
     Epic e = epic();
     Feature a = featureService.create(e.id, "A", null, null, "t");

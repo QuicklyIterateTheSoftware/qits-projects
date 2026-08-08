@@ -85,6 +85,7 @@ class EpicApiTest {
             .body("epic.id", notNullValue())
             .body("epic.projectId", equalTo(projectId))
             .body("epic.title", equalTo("Planning domain"))
+            .body("epic.slug", equalTo("planning-domain"))
             .extract()
             .path("epic.id");
 
@@ -94,7 +95,8 @@ class EpicApiTest {
         .get("/projects/api/epics/" + epicId)
         .then()
         .statusCode(200)
-        .body("epic.id", equalTo(epicId));
+        .body("epic.id", equalTo(epicId))
+        .body("epic.slug", equalTo("planning-domain"));
     given()
         .when()
         .get("/projects/api/projects/" + projectId + "/epics")
@@ -110,7 +112,9 @@ class EpicApiTest {
         .put("/projects/api/epics/" + epicId)
         .then()
         .statusCode(200)
-        .body("epic.title", equalTo("Planning domain v2"));
+        .body("epic.title", equalTo("Planning domain v2"))
+        // The slug names a branch, so a rename never touches it.
+        .body("epic.slug", equalTo("planning-domain"));
 
     // Create a feature under the epic.
     String featureId =
@@ -122,6 +126,7 @@ class EpicApiTest {
             .then()
             .statusCode(200)
             .body("feature.epicId", equalTo(epicId))
+            .body("feature.slug", equalTo("feature-a"))
             .extract()
             .path("feature.id");
 
@@ -136,11 +141,22 @@ class EpicApiTest {
             .statusCode(200)
             .body("task.repositoryId", equalTo(repoId))
             .body("task.featureId", equalTo(featureId))
+            .body("task.slug", equalTo("task-1"))
             .extract()
             .path("task.id");
 
-    given().when().get("/projects/api/features/" + featureId).then().statusCode(200);
-    given().when().get("/projects/api/tasks/" + taskId).then().statusCode(200);
+    given()
+        .when()
+        .get("/projects/api/features/" + featureId)
+        .then()
+        .statusCode(200)
+        .body("feature.slug", equalTo("feature-a"));
+    given()
+        .when()
+        .get("/projects/api/tasks/" + taskId)
+        .then()
+        .statusCode(200)
+        .body("task.slug", equalTo("task-1"));
 
     // Audit subtree: every create landed with the forwardauth `dev` identity.
     given()

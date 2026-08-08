@@ -57,6 +57,27 @@ class EpicServiceTest extends EpicsTestSupport {
   }
 
   @Test
+  void slugIsDerivedFromTheTitleAndUniqueWithinTheProject() {
+    Epic first = epicService.create("proj-1", "Planning domain", null, "t");
+    assertEquals("planning-domain", first.slug);
+
+    // Same slug in the same project → the next free suffix, oldest keeps the clean one.
+    Epic second = epicService.create("proj-1", "Planning   DOMAIN!", null, "t");
+    assertEquals("planning-domain-2", second.slug);
+
+    // Another project is another scope, so the clean slug is free again.
+    assertEquals("planning-domain", epicService.create("proj-2", "Planning domain", null, "t").slug);
+  }
+
+  @Test
+  void updateLeavesTheSlugAlone() {
+    Epic epic = epicService.create("proj-1", "Planning domain", null, "t");
+    Epic renamed = epicService.update(epic.id, "Something else entirely", null, "t");
+    // The slug names a branch; a rename must not orphan the branches already cut from it.
+    assertEquals("planning-domain", renamed.slug);
+  }
+
+  @Test
   void blankTitleIsRejected() {
     assertThrows(BadRequestException.class, () -> epicService.create("proj-1", "  ", null, "t"));
   }

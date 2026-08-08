@@ -30,6 +30,13 @@ public class Task extends PanacheEntityBase {
   @Column(nullable = false)
   public String title;
 
+  /**
+   * Git-safe path segment, minted from the title at create and never changed after: it names the
+   * task's branch {@code task/<epic-slug>/<feature-slug>/<slug>}. Unique within the feature.
+   */
+  @Column(nullable = false, updatable = false)
+  public String slug;
+
   /** The long-form Markdown body. */
   public String description;
 

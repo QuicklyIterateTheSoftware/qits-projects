@@ -260,6 +260,8 @@ components:
           type: string
         title:
           type: string
+        slug:
+          type: string
         description:
           type: string
         createdAt:
@@ -274,6 +276,8 @@ components:
         epicId:
           type: string
         title:
+          type: string
+        slug:
           type: string
         description:
           type: string
@@ -627,6 +631,8 @@ components:
         repositoryId:
           type: string
         title:
+          type: string
+        slug:
           type: string
         description:
           type: string
@@ -1559,4 +1565,4 @@ paths:
       - Task Controller
 info:
   title: qits-projects API
-  version: 2026.807.123833
+  version: 2026.807.201401

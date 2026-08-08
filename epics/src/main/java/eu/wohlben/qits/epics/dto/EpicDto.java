@@ -6,6 +6,7 @@ public record EpicDto(
     String id,
     String projectId,
     String title,
+    String slug,
     String description,
     Instant createdAt,
     Instant updatedAt) {}

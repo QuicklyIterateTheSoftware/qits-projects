@@ -51,6 +51,12 @@ public class EpicService {
     epic.id = UUID.randomUUID().toString();
     epic.projectId = projectId;
     epic.title = title;
+    // Minted once, at create, and never re-derived on update: the slug is a branch path segment,
+    // and renaming an epic must not orphan the branches already cut from it.
+    epic.slug =
+        Slugs.unique(
+            Slugs.slugify(title, epic.id, "epic-"),
+            epicRepository.listByProject(projectId).stream().map(e -> e.slug).toList());
     epic.description = description;
     epicRepository.persist(epic);
     auditService.record(

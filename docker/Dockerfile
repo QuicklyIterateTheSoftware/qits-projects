@@ -181,8 +181,27 @@ WORKDIR /work
 # without which the sign-in terminal's git finds no controlling terminal, never prompts, and fails
 # non-interactively instead of asking for the credentials the session exists to collect.
 # --nodocs and no weak deps because an image is not a workstation.
-RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 git-core util-linux-core \
-    && microdnf clean all
+#
+# The docker CLI is the third: `DockerAgentRuntime` shells the binary named by
+# `qits.projects.agent-container-runtime` for every run/start/stop/inspect that creates or reattaches
+# a project's agent container, so without it the agent harness fails at its first `docker run` with
+# an IOException naming a missing executable — the same shape as a missing git, and just as fatal to
+# the feature. It comes from Docker's own repository because no UBI repository carries a
+# docker-compatible client at all; the repo definition is removed again afterwards so the shipped
+# image does not carry a third-party package source it has no reason to consult.
+#
+# THE DOCKER SOCKET IS NOT IN THIS IMAGE. Run with
+# `-v /var/run/docker.sock:/var/run/docker.sock`, or no agent container can be created. That mount
+# hands this container control of the host's docker daemon, which is root-equivalent — an agent
+# container is a sandbox precisely because it does *not* get the socket, and this service is the
+# thing on the other side of that boundary. Leaving the mount to the deployment keeps it an explicit
+# act. Without it the service still starts and serves; every agent start fails with a docker
+# connection error.
+RUN printf '[docker-ce-stable]\nname=Docker CE Stable\nbaseurl=https://download.docker.com/linux/centos/9/$basearch/stable\nenabled=1\ngpgcheck=1\ngpgkey=https://download.docker.com/linux/centos/gpg\n' \
+      > /etc/yum.repos.d/docker-ce.repo \
+ && microdnf install -y --nodocs --setopt=install_weak_deps=0 git-core util-linux-core docker-ce-cli \
+ && microdnf clean all \
+ && rm -f /etc/yum.repos.d/docker-ce.repo
 
 # `quarkus.package.output-name` names the binary `qits-projects` (no -runner suffix), so the process
 # is identifiable in `ps`/`docker top`. It is built by `service`, the one module of the three that is

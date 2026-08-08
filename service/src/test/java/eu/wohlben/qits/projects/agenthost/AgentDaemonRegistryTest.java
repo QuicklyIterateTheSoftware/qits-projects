@@ -13,6 +13,8 @@ import eu.wohlben.qits.projectsdaemon.protocol.DaemonProtocol;
 import eu.wohlben.qits.projectsdaemon.protocol.Heartbeat;
 import eu.wohlben.qits.projectsdaemon.protocol.Hello;
 import eu.wohlben.qits.projectsdaemon.protocol.ProjectChanged;
+import eu.wohlben.qits.projectsdaemon.protocol.ProvisionFailed;
+import eu.wohlben.qits.projectsdaemon.protocol.Provisioned;
 import io.quarkus.websockets.next.WebSocketConnection;
 import jakarta.enterprise.inject.Instance;
 import java.lang.reflect.Proxy;
@@ -170,6 +172,64 @@ class AgentDaemonRegistryTest {
     assertEquals(
         List.of(new ProjectChangeHint(PROJECT, ProjectChangeHint.Topic.AGENT_ACTIVITY)), fired);
     assertTrue(registry.lastActivityAt(PROJECT).isPresent(), "a busy agent is not an idle project");
+  }
+
+  /**
+   * The failure has to outlive the socket. A daemon that cannot clone the project usually drops
+   * soon after saying so, and a failure held on the connection would vanish exactly when somebody
+   * came to read it.
+   */
+  @Test
+  void aFailedProvisionIsRecordedAndSurvivesTheSocketClosing() {
+    WebSocketConnection connection = connection("c1");
+    registry.register(PROJECT, connection);
+
+    registry.onMessage(PROJECT, connection, new ProvisionFailed(PROJECT, "no such remote"));
+    assertEquals("no such remote", registry.provisionFailure(PROJECT).orElseThrow());
+
+    registry.unregister(PROJECT, connection);
+    assertEquals(
+        "no such remote",
+        registry.provisionFailure(PROJECT).orElseThrow(),
+        "the container is still up and still unusable");
+  }
+
+  @Test
+  void aLaterProvisionedClearsIt() {
+    WebSocketConnection connection = connection("c1");
+    registry.register(PROJECT, connection);
+    registry.onMessage(PROJECT, connection, new ProvisionFailed(PROJECT, "no such remote"));
+
+    registry.onMessage(PROJECT, connection, new Provisioned(PROJECT, "abc123"));
+
+    assertTrue(registry.provisionFailure(PROJECT).isEmpty());
+  }
+
+  @Test
+  void aReconnectAndAStopBothClearIt() {
+    WebSocketConnection connection = connection("c1");
+    registry.register(PROJECT, connection);
+    registry.onMessage(PROJECT, connection, new ProvisionFailed(PROJECT, "disk full"));
+
+    registry.register(PROJECT, connection("c2"));
+    assertTrue(
+        registry.provisionFailure(PROJECT).isEmpty(),
+        "a reconnecting daemon re-provisions; its next word on the subject is the current one");
+
+    registry.onMessage(PROJECT, connection, new ProvisionFailed(PROJECT, "disk full"));
+    registry.forget(PROJECT);
+    assertTrue(registry.provisionFailure(PROJECT).isEmpty(), "the container is going away");
+  }
+
+  /** A missing reason is still a failed provision — it must not read as "provisioned". */
+  @Test
+  void aReasonlessFailureStillCountsAsOne() {
+    WebSocketConnection connection = connection("c1");
+    registry.register(PROJECT, connection);
+
+    registry.onMessage(PROJECT, connection, new ProvisionFailed(PROJECT, null));
+
+    assertFalse(registry.provisionFailure(PROJECT).orElseThrow().isBlank());
   }
 
   @Test

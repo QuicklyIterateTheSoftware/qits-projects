@@ -291,6 +291,19 @@ project", not "nothing is happening": a long silent build still heartbeats. A co
 has never heard from is stamped on sight and ages out one window later, rather than being immortal
 or reaped immediately.
 
+**A failed provision is reported, not swallowed.** The daemon clones the project into
+`/workspace` on boot; when that fails it says `ProvisionFailed`, and docker still calls the
+container healthy. So the frame is *recorded* per project and the agent-container read answers
+`FAILED` with a `failureDetail` rather than `RUNNING` — otherwise the panel opens a terminal onto
+an empty checkout. The record lives in a map beside `lastActivity`, not on the connection, because a
+daemon that cannot clone usually drops its socket right after saying so and a failure held on the
+socket would vanish exactly when somebody came to read it. A `Provisioned`, a reconnect or a stop
+clears it. **There is no re-provision**: `ensure` no-ops on a running container and the daemon
+latches its attempt for the life of its process, so recovery is to remove the container and ensure
+it again — deliberately not automatic, since the `/workspace` volume a remove orphans is where
+uncommitted work lives. The detail is a field and not a sixth `AgentRuntimeStatus`: the SPA switches
+on those five strings and they are a published contract.
+
 **Nothing here shells docker under test.** `DockerAgentRuntime` is `@DefaultBean`, so
 `FakeContainerRuntime` simply wins the injection — and its startup observer is gated on
 `LaunchMode.NORMAL`, because a `@DefaultBean` that loses the contest *keeps* its `@Observes

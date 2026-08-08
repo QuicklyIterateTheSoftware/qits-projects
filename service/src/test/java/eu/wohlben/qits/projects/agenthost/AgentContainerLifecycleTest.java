@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.projects.api.ProjectController;
 import eu.wohlben.qits.projects.api.ProjectRequests;
+import eu.wohlben.qits.projectsdaemon.protocol.ProvisionFailed;
+import eu.wohlben.qits.projectsdaemon.protocol.Provisioned;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
@@ -32,6 +34,8 @@ class AgentContainerLifecycleTest {
   @Inject FakeContainerRuntime runtime;
 
   @Inject AgentContainers agentContainers;
+
+  @Inject AgentDaemonRegistry registry;
 
   private String projectId;
   private String containerName;
@@ -110,7 +114,42 @@ class AgentContainerLifecycleTest {
         .post(base() + "/ensure")
         .then()
         .statusCode(200)
-        .body("container.runtimeStatus", org.hamcrest.Matchers.is("FAILED"));
+        .body("container.runtimeStatus", org.hamcrest.Matchers.is("FAILED"))
+        .body("container.failureDetail", org.hamcrest.Matchers.is("no such image"));
+  }
+
+  /**
+   * The container is up, docker calls it healthy, and its {@code /workspace} is empty — the state
+   * this read used to describe as {@code RUNNING}, which sent the panel to open a terminal onto
+   * nothing. The daemon's word outranks docker's until it takes it back.
+   *
+   * <p>The frame is delivered with a null connection: the {@code ProvisionFailed} branch reads the
+   * message and nothing else, so a socket here would be fixture with no assertion behind it.
+   */
+  @Test
+  void aFailedProvisionMakesARunningContainerReadFailed() {
+    runtime.given(containerName, projectId, true);
+    registry.onMessage(
+        projectId, null, new ProvisionFailed(projectId, "clone refused: no such remote"));
+
+    given()
+        .when()
+        .get(base())
+        .then()
+        .statusCode(200)
+        .body("container.runtimeStatus", org.hamcrest.Matchers.is("FAILED"))
+        .body("container.failureDetail", org.hamcrest.Matchers.is("clone refused: no such remote"));
+
+    // A retry that works takes it back, and the panel is usable again with no restart anywhere.
+    registry.onMessage(projectId, null, new Provisioned(projectId, "abc123"));
+
+    given()
+        .when()
+        .get(base())
+        .then()
+        .statusCode(200)
+        .body("container.runtimeStatus", org.hamcrest.Matchers.is("RUNNING"))
+        .body("container.failureDetail", org.hamcrest.Matchers.nullValue());
   }
 
   @Test
@@ -160,7 +199,8 @@ class AgentContainerLifecycleTest {
         .statusCode(200)
         .body("container.runtimeStatus", org.hamcrest.Matchers.is("STOPPED"))
         .body("container.daemonConnected", org.hamcrest.Matchers.is(false))
-        .body("container.daemonVersion", org.hamcrest.Matchers.nullValue());
+        .body("container.daemonVersion", org.hamcrest.Matchers.nullValue())
+        .body("container.failureDetail", org.hamcrest.Matchers.nullValue());
   }
 
   @Test

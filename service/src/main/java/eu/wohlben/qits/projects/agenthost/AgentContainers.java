@@ -66,7 +66,7 @@ public class AgentContainers {
     if (!lock.tryLock()) {
       // Somebody else is already doing exactly this. Answering rather than queueing keeps a second
       // click off an image pull's critical path.
-      return new AgentContainerState(AgentRuntimeStatus.PROVISIONING, false, null);
+      return AgentContainerState.of(AgentRuntimeStatus.PROVISIONING);
     }
     try {
       ContainerRuntime.ContainerInfo existing = requireOwnContainer(projectId, name).orElse(null);
@@ -82,10 +82,11 @@ public class AgentContainers {
     } catch (DomainException refused) {
       throw refused; // the ownership 409 is an answer, not a failure to report as FAILED
     } catch (RuntimeException e) {
-      // The runtime could not produce a running container. FAILED is the honest answer and the log
-      // carries the reason: the response shape is fixed and has nowhere to put a message.
+      // The runtime could not produce a running container. FAILED is the honest answer, and the
+      // reason rides the same detail field a failed provision uses rather than living only in a log
+      // nobody reading the panel can see.
       LOG.errorf(e, "Could not ensure the agent container for project %s", projectId);
-      return AgentContainerState.of(AgentRuntimeStatus.FAILED);
+      return AgentContainerState.of(AgentRuntimeStatus.FAILED).failedWith(e.getMessage());
     } finally {
       lock.unlock();
     }
@@ -119,7 +120,7 @@ public class AgentContainers {
     String name = containerNameOf(project);
     ReentrantLock lock = locks.get(projectId);
     if (lock != null && lock.isLocked()) {
-      return new AgentContainerState(AgentRuntimeStatus.PROVISIONING, false, null);
+      return AgentContainerState.of(AgentRuntimeStatus.PROVISIONING);
     }
     ContainerRuntime.ContainerInfo existing = requireOwnContainer(projectId, name).orElse(null);
     if (existing == null) {
@@ -162,11 +163,24 @@ public class AgentContainers {
     return runtime.containerName(project.slug);
   }
 
-  /** A container status plus whatever its daemon has announced about itself. */
+  /**
+   * A container status plus whatever its daemon has announced about itself — and, ahead of both, a
+   * provision that failed.
+   *
+   * <p>A container whose self-clone failed is up, healthy to docker and useless: its {@code
+   * /workspace} is empty, so reporting it {@code RUNNING} sends the browser to open a terminal on
+   * nothing. The last {@link eu.wohlben.qits.projectsdaemon.protocol.ProvisionFailed} outranks the
+   * docker status until a {@code Provisioned} or a stop clears it.
+   *
+   * <p>Nothing here re-provisions — see {@link AgentContainerState#failedWith}. Recovery is to
+   * remove the container and ensure it again.
+   */
   private AgentContainerState state(String projectId, AgentRuntimeStatus status) {
-    return registry
-        .lookup(projectId)
-        .map(info -> new AgentContainerState(status, true, info.daemonVersion()))
-        .orElseGet(() -> AgentContainerState.of(status));
+    AgentContainerState observed =
+        registry
+            .lookup(projectId)
+            .map(info -> new AgentContainerState(status, true, info.daemonVersion(), null))
+            .orElseGet(() -> AgentContainerState.of(status));
+    return registry.provisionFailure(projectId).map(observed::failedWith).orElse(observed);
   }
 }

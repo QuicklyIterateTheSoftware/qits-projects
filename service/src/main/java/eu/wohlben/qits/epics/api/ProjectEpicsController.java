@@ -35,6 +35,8 @@ public class ProjectEpicsController {
 
   @Inject SecurityIdentity identity;
 
+  @Inject EpicChangeHints hints;
+
   public record ListEpicsRequest() {
     public record Response(List<Entry> entries) {
       public record Entry(EpicDto epic) {}
@@ -67,6 +69,7 @@ public class ProjectEpicsController {
     var epic =
         epicService.create(
             projectId, request.title(), request.description(), EpicsPrincipal.changedBy(identity));
+    hints.fire(projectId);
     return new CreateEpicRequest.Response(epicMapper.toDto(epic));
   }
 }

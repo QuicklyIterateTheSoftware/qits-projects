@@ -30,12 +30,17 @@ public class ReadOnlyRepositoryToolFilter implements ToolFilter {
   public static final String READ_ONLY_PARAM = "agentReadOnly";
 
   /**
-   * The mutating tools of the "repository" MCP server (see {@code RepositoryMcpTools}); everything
-   * else it exposes is read-only. Kept explicit so a newly added mutating tool is a conscious
-   * choice to add here. {@code runAction} executes a configured action script in a workspace
-   * container — a host-side side effect — so it must be hidden from an unattended read-only run
-   * just like the branch/workspace mutators, else a conflict-resolution agent steered by an
-   * untrusted commit message could run arbitrary actions with no human in the loop.
+   * The mutating tools of the "repository" MCP server (see {@code RepositoryMcpTools} and {@code
+   * EpicMcpTools}); everything else it exposes is read-only. Kept explicit so a newly added
+   * mutating tool is a conscious choice to add here. {@code runAction} executes a configured action
+   * script in a workspace container — a host-side side effect — so it must be hidden from an
+   * unattended read-only run just like the branch/workspace mutators, else a conflict-resolution
+   * agent steered by an untrusted commit message could run arbitrary actions with no human in the
+   * loop.
+   *
+   * <p>The epic write tools are here for the same reason: an unattended run must not rewrite the
+   * project's plan. The refinement agent that owns them connects without the marker, so its own
+   * surface is unchanged.
    */
   private static final Set<String> MUTATING_TOOLS =
       Set.of(
@@ -43,7 +48,15 @@ public class ReadOnlyRepositoryToolFilter implements ToolFilter {
           "cleanupBranch",
           "integrateBranch",
           "mergeParentIntoWorkspace",
-          "runAction");
+          "runAction",
+          "propose_epic",
+          "update_epic",
+          "add_feature",
+          "update_feature",
+          "remove_feature",
+          "add_task",
+          "update_task",
+          "remove_task");
 
   @Inject HttpServerRequest request;
 

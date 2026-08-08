@@ -47,6 +47,8 @@ public class FeatureController {
 
   @Inject SecurityIdentity identity;
 
+  @Inject EpicChangeHints hints;
+
   // --- Feature ---
 
   public record GetFeatureRequest() {
@@ -89,6 +91,7 @@ public class FeatureController {
             request.implementedOn(),
             request.clearImplementedOn(),
             EpicsPrincipal.changedBy(identity));
+    hints.fire(hints.projectOfEpic(feature.epicId));
     return new UpdateFeatureRequest.Response(featureMapper.toDto(feature));
   }
 
@@ -99,7 +102,10 @@ public class FeatureController {
   @DELETE
   @Path("/{id}")
   public DeleteFeatureRequest.Response delete(@PathParam("id") String id) {
+    // Resolved before the delete — afterwards there is no row to walk up from.
+    String projectId = hints.projectOfFeature(id);
     featureService.delete(id, EpicsPrincipal.changedBy(identity));
+    hints.fire(projectId);
     return new DeleteFeatureRequest.Response(true);
   }
 
@@ -152,6 +158,7 @@ public class FeatureController {
             request.description(),
             request.dependsOnTaskId(),
             EpicsPrincipal.changedBy(identity));
+    hints.fire(epic.projectId);
     return new CreateTaskRequest.Response(taskMapper.toDto(task));
   }
 }

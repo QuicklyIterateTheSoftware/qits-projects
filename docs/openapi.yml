@@ -1128,6 +1128,26 @@ paths:
       summary: Create
       tags:
       - Project Epics Controller
+  /projects/api/projects/{projectId}/events:
+    get:
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            text/event-stream:
+              schema:
+                type: array
+                items:
+                  type: string
+      summary: Events
+      tags:
+      - Project Events Controller
   /projects/api/projects/{projectId}/reconcile:
     post:
       summary: Re-assert a project's domain against qits-dns

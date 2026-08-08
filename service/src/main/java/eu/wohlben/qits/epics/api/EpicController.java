@@ -44,6 +44,8 @@ public class EpicController {
 
   @Inject SecurityIdentity identity;
 
+  @Inject EpicChangeHints hints;
+
   // --- Epic ---
 
   public record GetEpicRequest() {
@@ -67,6 +69,7 @@ public class EpicController {
     var epic =
         epicService.update(
             id, request.title(), request.description(), EpicsPrincipal.changedBy(identity));
+    hints.fire(epic.projectId);
     return new UpdateEpicRequest.Response(epicMapper.toDto(epic));
   }
 
@@ -86,6 +89,8 @@ public class EpicController {
       @PathParam("id") String id, @Valid TransitionEpicRequest request) {
     var result =
         epicService.transition(id, request.target(), EpicsPrincipal.changedBy(identity));
+    // A supersede spawns a second epic in the same project, so one hint still covers both rows.
+    hints.fire(result.epic().projectId);
     return new TransitionEpicRequest.Response(
         epicMapper.toDto(result.epic()),
         result.successor() == null ? null : epicMapper.toDto(result.successor()));
@@ -98,7 +103,10 @@ public class EpicController {
   @DELETE
   @Path("/{id}")
   public DeleteEpicRequest.Response delete(@PathParam("id") String id) {
+    // Resolved before the delete — afterwards there is no row to walk up from.
+    String projectId = hints.projectOfEpic(id);
     epicService.delete(id, EpicsPrincipal.changedBy(identity));
+    hints.fire(projectId);
     return new DeleteEpicRequest.Response(true);
   }
 
@@ -137,6 +145,7 @@ public class EpicController {
             request.description(),
             request.dependsOnFeatureId(),
             EpicsPrincipal.changedBy(identity));
+    hints.fire(hints.projectOfEpic(epicId));
     return new CreateFeatureRequest.Response(featureMapper.toDto(feature));
   }
 

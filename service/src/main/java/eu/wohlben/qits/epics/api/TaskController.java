@@ -29,6 +29,8 @@ public class TaskController {
 
   @Inject SecurityIdentity identity;
 
+  @Inject EpicChangeHints hints;
+
   public record GetTaskRequest() {
     public record Response(TaskDto task) {}
   }
@@ -69,6 +71,7 @@ public class TaskController {
             request.implementedAt(),
             request.clearImplementedAt(),
             EpicsPrincipal.changedBy(identity));
+    hints.fire(hints.projectOfFeature(task.featureId));
     return new UpdateTaskRequest.Response(taskMapper.toDto(task));
   }
 
@@ -79,7 +82,10 @@ public class TaskController {
   @DELETE
   @Path("/{id}")
   public DeleteTaskRequest.Response delete(@PathParam("id") String id) {
+    // Resolved before the delete — afterwards there is no row to walk up from.
+    String projectId = hints.projectOfTask(id);
     taskService.delete(id, EpicsPrincipal.changedBy(identity));
+    hints.fire(projectId);
     return new DeleteTaskRequest.Response(true);
   }
 }

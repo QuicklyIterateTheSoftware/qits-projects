@@ -72,6 +72,13 @@
             <artifactId>quarkus-rest-jackson</artifactId>
         </dependency>
         <dependency>
+            <!-- Multi/BroadcastProcessor: the per-project SSE fan-out (ProjectEventBroadcaster).
+                 quarkus-rest already drags Mutiny in, but the fan-out is written against it
+                 directly, so it is declared rather than inherited. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-mutiny</artifactId>
+        </dependency>
+        <dependency>
             <!-- The hourly backup sweep (ScheduledBackupSweep). A first-class Quarkus extension, so
                  it registers its own native-image configuration: the scheduled method is discovered
                  and wired at BUILD time, which is exactly why an @Scheduled bean survives into the

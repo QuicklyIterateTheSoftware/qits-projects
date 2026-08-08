@@ -225,7 +225,17 @@ public class RepositoryMcpToolsTest {
                       "createWorkspace",
                       "cleanupBranch",
                       "integrateBranch",
-                      "mergeParentIntoWorkspace")) {
+                      "mergeParentIntoWorkspace",
+                      // The epic write tools (EpicMcpTools) are mutating too — an unattended run
+                      // must not rewrite the project's plan.
+                      "propose_epic",
+                      "update_epic",
+                      "add_feature",
+                      "update_feature",
+                      "remove_feature",
+                      "add_task",
+                      "update_task",
+                      "remove_task")) {
                 assertFalse(
                     names.contains(mutating),
                     "read-only run still exposes mutating tool " + mutating + ": " + names);
@@ -235,6 +245,8 @@ public class RepositoryMcpToolsTest {
               // project-only client doesn't carry — so it isn't asserted here.
               assertTrue(
                   names.contains("listRepositories"), "read-only tool wrongly hidden: " + names);
+              assertTrue(names.contains("list_epics"), "read-only tool wrongly hidden: " + names);
+              assertTrue(names.contains("get_epic"), "read-only tool wrongly hidden: " + names);
             })
         .thenAssertResults();
   }
@@ -256,9 +268,10 @@ public class RepositoryMcpToolsTest {
 
   @Test
   public void exposesExactlyTheRepositoryContextToolset() {
-    // The repository server must expose only the repository tools — nothing from other contexts —
-    // so the model stays on task. The submodule tools are gone with the import they served: the
-    // wrapper's .gitmodules is the project's manifest now, and it is read over REST.
+    // The repository server must expose only the repository tools and the epic-refinement tools
+    // that share its declared server name — nothing from other contexts — so the model stays on
+    // task. The submodule tools are gone with the import they served: the wrapper's .gitmodules is
+    // the project's manifest now, and it is read over REST.
     String project = createProject("Tools");
     client(project)
         .when()
@@ -276,7 +289,20 @@ public class RepositoryMcpToolsTest {
                       "listBranches",
                       "listCommits",
                       "listCommitChanges",
-                      "getCommitFileDiff"),
+                      "getCommitFileDiff",
+                      // EpicMcpTools — the refinement surface, deliberately on the same declared
+                      // server (a second name would need its own daemon-side contract). No
+                      // transition tool: freezing a draft is a human act in the UI.
+                      "list_epics",
+                      "get_epic",
+                      "propose_epic",
+                      "update_epic",
+                      "add_feature",
+                      "update_feature",
+                      "remove_feature",
+                      "add_task",
+                      "update_task",
+                      "remove_task"),
                   java.util.Set.copyOf(names),
                   "unexpected tool surface: " + names);
             })

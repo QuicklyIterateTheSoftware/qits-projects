@@ -65,6 +65,11 @@ public class TaskService {
     task.featureId = featureId;
     task.repositoryId = repositoryId;
     task.title = title;
+    // Minted once, at create, and never re-derived on update — see Epic.slug.
+    task.slug =
+        Slugs.unique(
+            Slugs.slugify(title, task.id, "task-"),
+            taskRepository.listByFeature(featureId).stream().map(t -> t.slug).toList());
     task.description = description;
     task.dependsOnTaskId = dependsOnTaskId;
     taskRepository.persist(task);

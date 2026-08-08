@@ -24,6 +24,13 @@ public class Feature extends PanacheEntityBase {
   @Column(nullable = false)
   public String title;
 
+  /**
+   * Git-safe path segment, minted from the title at create and never changed after: it names the
+   * feature's branch {@code feature/<epic-slug>/<slug>}. Unique within the epic.
+   */
+  @Column(nullable = false, updatable = false)
+  public String slug;
+
   /** The long-form Markdown body. */
   public String description;
 

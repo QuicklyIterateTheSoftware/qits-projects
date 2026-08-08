@@ -64,6 +64,11 @@ public class FeatureService {
     feature.id = UUID.randomUUID().toString();
     feature.epicId = epicId;
     feature.title = title;
+    // Minted once, at create, and never re-derived on update — see Epic.slug.
+    feature.slug =
+        Slugs.unique(
+            Slugs.slugify(title, feature.id, "feature-"),
+            featureRepository.listByEpic(epicId).stream().map(f -> f.slug).toList());
     feature.description = description;
     feature.dependsOnFeatureId = dependsOnFeatureId;
     featureRepository.persist(feature);

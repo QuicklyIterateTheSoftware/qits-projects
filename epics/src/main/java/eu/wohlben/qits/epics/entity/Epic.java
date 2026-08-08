@@ -25,6 +25,14 @@ public class Epic extends PanacheEntityBase {
   @Column(nullable = false)
   public String title;
 
+  /**
+   * Git-safe path segment, minted from the title at create and never changed after: it names the
+   * epic's branch {@code epic/<slug>} and prefixes every feature and task branch below it. Unique
+   * within the project.
+   */
+  @Column(nullable = false, updatable = false)
+  public String slug;
+
   /** The long-form Markdown spine. */
   public String description;
 

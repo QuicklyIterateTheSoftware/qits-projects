@@ -51,6 +51,29 @@ class TaskServiceTest extends EpicsTestSupport {
   }
 
   @Test
+  void slugIsDerivedFromTheTitleAndUniqueWithinTheFeature() {
+    Feature f = feature();
+    Task first = taskService.create(f.id, "repo-1", "Planning domain", null, null, "t");
+    assertEquals("planning-domain", first.slug);
+
+    Task second = taskService.create(f.id, "repo-1", "Planning   DOMAIN!", null, null, "t");
+    assertEquals("planning-domain-2", second.slug);
+
+    // Another feature is another scope, so the clean slug is free again.
+    Feature other = feature();
+    assertEquals(
+        "planning-domain",
+        taskService.create(other.id, "repo-1", "Planning domain", null, null, "t").slug);
+  }
+
+  @Test
+  void updateLeavesTheSlugAlone() {
+    Task task = taskService.create(feature().id, "repo-1", "Planning domain", null, null, "t");
+    Task renamed = taskService.update(task.id, "Renamed", null, null, false, null, false, "t");
+    assertEquals("planning-domain", renamed.slug);
+  }
+
+  @Test
   void createUnderUnknownFeatureThrowsNotFound() {
     assertThrows(
         NotFoundException.class,

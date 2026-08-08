@@ -7,6 +7,7 @@ public record TaskDto(
     String featureId,
     String repositoryId,
     String title,
+    String slug,
     String description,
     String dependsOnTaskId,
     Instant implementedAt,

@@ -14,9 +14,10 @@
          web/JAX-RS and, deliberately, NO dependency on `domain` or any `auth/*` module. Epics hang
          off a project and tasks off a repository by *String id* (never a JPA @ManyToOne), so the
          module stays lift-out-able. Its REST boundary is hosted (for now) by `service`. It owns its
-         OWN named datasource + persistence unit + Flyway lineage — a separate file-based H2 under
-         ~/.qits/data/epics (see src/main/resources/META-INF/microprofile-config.properties) — so the
-         likely future standalone deployable moves files, not data (the artifacts precedent). -->
+         OWN named datasource + persistence unit + Flyway lineage — its own postgres database,
+         `qits_epics`, handed to it as QITS_RESOURCE_EPICS_* (see
+         src/main/resources/META-INF/microprofile-config.properties) — so the likely future
+         standalone deployable moves a database, not tables out of somebody else's. -->
     <artifactId>qits-projects-epics</artifactId>
     <name>qits-projects :: epics</name>
 
@@ -35,12 +36,22 @@
             <artifactId>quarkus-jackson</artifactId>
         </dependency>
         <dependency>
+            <!-- This module's store: its own postgres database, separate from `projects`. The two
+                 datasources the deployable opens are two databases on one server, which is what
+                 keeps this module lift-out-able. -->
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-jdbc-h2</artifactId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10 split its database support out of the core: without this module Flyway
+                 refuses a postgres url with "no database found to handle". Declared here as well
+                 as in `domain` because this module owns its own lineage and depends on nothing. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -57,6 +68,32 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The store this module's @QuarkusTests boot against: real postgres binaries spawned
+                 as a child process, never a container and never a dev service. testdb/EmbeddedPg
+                 is a COPY of domain's rather than a reuse — this module deliberately depends on
+                 nothing, and a test-jar dependency on `domain` is the higher price. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Per-arch artifacts; zonky picks one at run time, so every architecture the suite
+                 may run on is named here rather than discovered mid-suite. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

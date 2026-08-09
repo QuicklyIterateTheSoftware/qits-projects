@@ -5,14 +5,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.projects.testdb.EmbeddedPg;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusIntegrationTest;
+import io.quarkus.test.junit.QuarkusTestProfile;
+import io.quarkus.test.junit.TestProfile;
 import io.restassured.RestAssured;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -26,15 +30,18 @@ import org.junit.jupiter.api.condition.OS;
  * {@code -Dnative} — because that is the only place a whole class of failure is visible.
  *
  * <p>Every other test here is a {@code @QuarkusTest}: it augments and runs in the build JVM, with
- * the full classpath present and reflection unrestricted, against the test profile's in-memory H2.
- * A native image has none of those. Three real defects in this repo were invisible to the entire
- * suite and fatal to the binary, and all three are covered below:
+ * the full classpath present and reflection unrestricted. A native image has none of those. Three
+ * real defects in this repo were invisible to the entire suite and fatal to the binary, and all
+ * three are covered below:
  *
  * <ul>
- *   <li>{@code AUTO_SERVER=TRUE} on the shipped H2 urls, which asks for {@code
- *       org.h2.server.TcpServer} — a class no native image has. The process died in connection-pool
- *       warm-up, before binding a port, so <em>any</em> assertion against a running server catches
- *       it.
+ *   <li>a shipped datasource default that only the packaged process ever meets — historically
+ *       {@code AUTO_SERVER=TRUE} on the H2 urls, which asked for {@code org.h2.server.TcpServer}, a
+ *       class no native image has, and killed the process in connection-pool warm-up before it
+ *       bound a port. The urls are {@code ${QITS_RESOURCE_*_URL}} expressions now, with no feature
+ *       left in them to lose; what is under test is that the indirection itself resolves, so
+ *       <em>any</em> assertion against a running server catches a jar that spells a variable
+ *       wrong.
  *   <li>{@code project-template/} not being in the image, so project creation — the first thing
  *       anyone does with this service — failed with "missing from the classpath". {@code
  *       repository-template/} is the second such tree and is covered the same way, by creating a
@@ -45,7 +52,8 @@ import org.junit.jupiter.api.condition.OS;
  *
  * <p>{@code src/test/resources/application.properties} points the launched process at {@code
  * target/} through {@code quarkus.test.arg-line}; without that this test would write into the
- * developer's real {@code ~/.qits}.
+ * developer's real {@code ~/.qits}. The two databases cannot travel that way — their urls name a
+ * port chosen at run time — so {@link PackagedResources} hands them over instead.
  *
  * <p>ITs are skipped by default ({@code skipITs} in the root pom) and the {@code native} profile
  * flips that, so {@code ./mvnw verify -Dnative} is what runs this. {@code -DskipITs=false} runs it
@@ -62,7 +70,50 @@ import org.junit.jupiter.api.condition.OS;
  */
 @QuarkusIntegrationTest
 @QuarkusTestResource(GitHostFixture.class)
+@TestProfile(PackagedSurfaceIT.PackagedResources.class)
 public class PackagedSurfaceIT {
+
+  /**
+   * Hands the launched artifact its two databases the way a deployment does — as the generic
+   * resource triples {@code QITS_RESOURCE_DB_*} and {@code QITS_RESOURCE_EPICS_*}, not as the
+   * {@code quarkus.datasource.*} keys. The domain and epics jars ship {@code
+   * jdbc.url=${QITS_RESOURCE_DB_URL}} and {@code ${QITS_RESOURCE_EPICS_URL}}, so supplying the
+   * variables leaves the <b>shipped</b> expressions themselves under test. These overrides reach
+   * the launched process as system properties, and expression expansion reads the whole config, so
+   * the same six names resolve there.
+   *
+   * <p>The databases are on an embedded postgres this JVM starts. <b>Their urls travel through
+   * system properties rather than static fields</b>: a test profile is instantiated in more than
+   * one classloader, so a field written by one copy is not the field the other reads, while the
+   * process has exactly one property table.
+   */
+  public static class PackagedResources implements QuarkusTestProfile {
+
+    /** Where each url is parked for whichever copy of this class is asked second. */
+    private static final String URL_PROPERTY_PREFIX = "qits.test.packaged-it.db-url.";
+
+    @Override
+    public Map<String, String> getConfigOverrides() {
+      return Map.of(
+          "QITS_RESOURCE_DB_URL", databaseUrl("qp_it_projects"),
+          "QITS_RESOURCE_DB_USERNAME", EmbeddedPg.USER,
+          "QITS_RESOURCE_DB_PASSWORD", EmbeddedPg.PASSWORD,
+          "QITS_RESOURCE_EPICS_URL", databaseUrl("qp_it_epics"),
+          "QITS_RESOURCE_EPICS_USERNAME", EmbeddedPg.USER,
+          "QITS_RESOURCE_EPICS_PASSWORD", EmbeddedPg.PASSWORD);
+    }
+
+    private static synchronized String databaseUrl(String database) {
+      String recorded = System.getProperty(URL_PROPERTY_PREFIX + database);
+      if (recorded != null) {
+        return recorded;
+      }
+      // localhost resolves for the launched process too — it is a child of this JVM on this host.
+      String url = EmbeddedPg.url(database);
+      System.setProperty(URL_PROPERTY_PREFIX + database, url);
+      return url;
+    }
+  }
 
   @Test
   public void theApiDocumentAndItsUiAreServedUnderTheSegment() {
@@ -125,8 +176,7 @@ public class PackagedSurfaceIT {
     // been read.
     assertEquals(slug, response.path("project.slug"));
     assertNotNull(response.path("wrapper.id"), "creation returned no wrapper repository");
-    // Written to a real (file-H2) database by V2's columns and read back through the embeddable —
-    // the
+    // Written to a real postgres by V1's dns_* columns and read back through the embeddable — the
     // one assertion here that the migration and the @Embedded mapping work outside a test JVM.
     assertEquals("packaged.test.eu", response.path("project.dns.domain"));
     assertEquals("A", response.path("project.dns.type"));

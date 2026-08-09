@@ -17,8 +17,8 @@ import org.junit.jupiter.api.extension.ExtensionContext;
  *
  * <p>Repository tests used to give each class its own {@code Files.createTempDirectory()} path via
  * a per-class {@code @TestProfile}. That made every class's Quarkus config unique, which forced a
- * full Quarkus app restart per class (fresh classloader + CDI container + H2 + all Flyway
- * migrations) — dozens of restarts accumulating classloader/metaspace in the single reused surefire
+ * full Quarkus app restart per class (fresh classloader + CDI container + connection pool + all
+ * Flyway migrations) — dozens of restarts accumulating classloader/metaspace in the single reused surefire
  * fork until it blew the memory limit. Pointing every class at these stable dirs lets them share a
  * single Quarkus app; this extension restores the per-class clean-slate the temp dirs used to give.
  *

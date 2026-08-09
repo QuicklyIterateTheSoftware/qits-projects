@@ -10,7 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 
 /**
  * Base for epics control-layer tests: wipes all four tables before each test in FK-safe order so
- * every case starts from an empty planning DB. Runs against in-memory H2 (see
+ * every case starts from an empty planning DB. Runs against an embedded postgres this module's
+ * suite spawns as a child process (see {@code testdb/EmbeddedPg} and
  * src/test/resources/application.properties) — no docker, no auth variant.
  */
 public abstract class EpicsTestSupport {

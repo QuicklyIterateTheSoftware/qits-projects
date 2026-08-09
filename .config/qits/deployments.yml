@@ -10,3 +10,14 @@
 # ENVIRONMENT service: every environment runs its own instance, and a green build deploys into
 # whichever tier listens to the built branch.
 deployment_target: environment
+
+# TWO DATABASES, because this application opens two datasources with two Flyway lineages: `projects`
+# (domain/) and `epics` (epics/). qits-platform-deployments creates a login role and a database for
+# each on the postgres of this tier before the container starts, and injects
+# QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD — the generic contract the two library jars map
+# onto quarkus.datasource.* in their own shipped defaults.
+#
+# `db` takes the DERIVED default database, qits_projects: `qits_` plus the application name without
+# its qits- prefix, dashes to underscores. `epics` NAMES its database, and has to: the default is
+# derived from the application and both entries would have asked for qits_projects.
+resources: postgresql:db, postgresql:epics:qits_epics

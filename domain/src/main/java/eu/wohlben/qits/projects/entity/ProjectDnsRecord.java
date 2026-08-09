@@ -49,8 +49,9 @@ public class ProjectDnsRecord {
 
   /**
    * The address or CNAME target. Named {@code dns_value} in the schema and not {@code value}: H2
-   * 2.x reserves the bare word, which is the same rock qits-dns' own record table had to route
-   * around.
+   * 2.x reserved the bare word, which is the same rock qits-dns' own record table had to route
+   * around. The store is postgres now and would accept {@code value} unquoted; the column keeps its
+   * name because renaming it is a code change, not a translation.
    */
   @Column(name = "dns_value")
   public String value;

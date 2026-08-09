@@ -165,6 +165,31 @@
             <artifactId>rest-assured</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <!-- The two databases every @QuarkusTest here boots against. Zonky spawns real postgres
+                 binaries as a child process — a maven dependency rather than a container — which is
+                 what keeps the clone-alone, docker-free rule true now that both stores are
+                 postgres. A test-scoped dependency is never transitive, so this is declared here as
+                 well as in `domain`, whose test-jar supplies the EmbeddedPg class itself. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

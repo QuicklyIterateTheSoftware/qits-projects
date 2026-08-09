@@ -29,23 +29,29 @@
 # them; see the microdnf line below for which packages and why.
 #
 # --- `docker run` with no configuration FAILS, and that is the honest behaviour -------------------
-# The `domain` and `epics` jars default their datasources to file-backed H2 under
-# `${user.home}/.qits/…`. In this image `USER 1001` has no passwd entry, so `user.home` resolves to
-# the literal `?` and the process dies during Flyway's first connect with:
+# The `domain` and `epics` jars ship their datasource urls as EXPRESSIONS over the platform's generic
+# resource contract — `${QITS_RESOURCE_DB_URL}` and `${QITS_RESOURCE_EPICS_URL}`, each with a
+# `_USERNAME` and a `_PASSWORD` beside it — and there is no fallback behind them. A bare run leaves
+# the expressions unresolvable and the process dies at Flyway's migrate-at-start naming the missing
+# variable.
 #
-#     A file path that is implicitly relative to the current working directory is not allowed in the
-#     database URL "jdbc:h2:file:?/.qits/data/epics/h2/epics" [90011-240]
+# It used to fail for a worse reason and in the same second: the urls were file-backed H2 under
+# `${user.home}/.qits/…`, and `USER 1001` has no passwd entry, so `user.home` resolved to the literal
+# `?` and H2 refused it as an implicitly relative path. The failure is now a sentence about
+# configuration rather than about a path nobody chose, but the stance is unchanged and is
+# deliberately NOT patched here with an `ENV HOME=…`: a database inside the container would make the
+# bare run "work" by writing state that dies with the container and that no sibling service can
+# reach — the failure would move from the first second to the first restart. The same `${user.home}`
+# default sits under `qits.projects.data-dir` (this service's own git mirrors and project-template
+# scratch, projects-volume-decoupling-plan.md), so it belongs on this list too. What a deployment
+# supplies instead:
 #
-# That is a missing-configuration failure, not a packaging one, and it is deliberately NOT patched
-# here with an `ENV HOME=…`: a home dir inside the container would make the bare run "work" by
-# writing a database and a mirror tree that die with the container and that no sibling service can
-# reach — the failure would move from the first second to the first restart. The same
-# `${user.home}` default sits under `qits.projects.data-dir` (this service's own git mirrors and
-# project-template scratch, projects-volume-decoupling-plan.md), so it belongs on this list too now
-# that the image no longer names a working default for it. What a deployment supplies instead:
-#
-#   quarkus.datasource.projects.*  /  quarkus.datasource.epics.*
-#                       two separate lineages on two separate datasources; see AGENTS.md.
+#   QITS_RESOURCE_DB_*  /  QITS_RESOURCE_EPICS_*
+#                       two separate lineages on two separate DATABASES. Not hand-set on a real
+#                       platform: this repository's .config/qits/deployments.yml declares
+#                       `resources: postgresql:db, postgresql:epics:qits_epics`, and
+#                       qits-platform-deployments creates the roles and databases and injects both
+#                       triples before this container starts. See AGENTS.md.
 #   qits.projects.data-dir
 #                       this service's own private mirror root — nothing else reads it.
 #
@@ -60,10 +66,10 @@
 # repository it touches is now a private mirror it clones over the wire, through
 # `qits.artifacts.url`.
 #
-# That split is deliberate, but it is now a three-way one, not two: the H2 arrangement is a
-# prototype and must not look decided, so it refuses to start unconfigured; the mirror root has
-# nowhere safe to default to under this user either, so it refuses the same way; only the
-# credentials file is genuinely settled, and it is the one that simply works.
+# That split is deliberate, but it is now a three-way one, not two: a database is handed to this
+# application by the deployment that provisioned it and can never be guessed, so it refuses to start
+# unconfigured; the mirror root has nowhere safe to default to under this user either, so it refuses
+# the same way; only the credentials file is genuinely settled, and it is the one that simply works.
 #
 # Also NOT supplied: `qits.dns.url`, which ships as `http://qits-dns:8080` — the service name on
 # qits-net, correct for this image out of the box. It is worth knowing about anyway, because a
@@ -72,8 +78,9 @@
 # WARN per attempt as the only sign. `qits.dns.token` ships blank, matching qits-dns' own open mode;
 # set both ends together or neither.
 #
-# With those five set the binary starts in ~65ms, migrates both schemas, self-seeds the `qits`
-# project — which forks `git init --bare`, writes a tree and clones from a remote — and serves
+# With those seven set — both resource triples and the mirror root — the binary starts in ~65ms,
+# migrates both schemas, self-seeds the `qits` project — which forks `git init --bare`, writes a
+# tree and clones from a remote — and serves
 # /projects/mcp. That run is the check worth doing after a change here, because it is the only one
 # that exercises the native image's resource and reflection registrations at all.
 #
@@ -217,14 +224,15 @@ RUN chmod +x /work/qits-projects
 # bind mount still takes its ownership from the host — nothing in an image can change that.)
 RUN mkdir -p /data && chown -R 1001:root /data && chmod -R 775 /data
 
-# The credentials file, named here rather than left to a deployment: it is not the prototype, and
-# nothing in it is stored in SQL. Everything else this service keeps on `/data` — the git mirrors
-# (`qits.projects.data-dir`), the H2 files — is a deployment's to name, per the header comment
-# above; this is the one path the image still names outright.
+# The credentials file, named here rather than left to a deployment: nothing in it is stored in SQL,
+# and the path has no way of being wrong. The one other thing this service keeps on `/data` — the
+# git mirrors (`qits.projects.data-dir`) — is a deployment's to name, per the header comment above.
+# The databases are on nobody's volume any more: they live on the tier's postgres, provisioned per
+# `resources:` entry.
 #
-# Note what is NOT set beside it: no QUARKUS_DATASOURCE_* and no qits.projects.data-dir. That
-# asymmetry is the point — the credentials path works out of the box, the rest is left for a
-# deployment to supply.
+# Note what is NOT set beside it: no QITS_RESOURCE_* and no qits.projects.data-dir. That asymmetry
+# is the point — the credentials path works out of the box, the rest is left for a deployment to
+# supply.
 ENV QITS_REPOSITORIES_CREDENTIALS_FILE=/data/git-credentials
 
 EXPOSE 8080

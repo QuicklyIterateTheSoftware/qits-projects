@@ -219,19 +219,28 @@ drift a failed backup leaves is what `syncStatus` already reports on the reposit
 ## Persistence
 
 Its own named datasource `projects`, its own persistence unit, its own Flyway lineage at
-`classpath:db/projects/migration` — a file H2 under `~/.qits/data/projects` by default. `V1__init.sql`
-is the monorepo's shared V1–V45 squashed to the tables above (schema as of V45, not a replay). `V3`
-widened the archetype check constraint to the old set ∪ the new one and `V4` tightened it to the
-final nine, retiring the last legacy rows and dropping `repository_submodule` — the import's edge
-table, which nothing has read since the wrapper's `.gitmodules` became the submodule graph.
+`classpath:db/projects/migration` — a **PostgreSQL** database of its own. `V1__init.sql` is the whole
+schema: the H2 lineage's V1–V6 arrived at and translated, not replayed, because the move onto
+postgres was an unwrap and a re-bootstrap rather than a data migration.
 
 Those three tables live in **one** database and keep **real foreign keys** between them; that is
 where the split was cut, and it is why `Repository.project` is still a JPA relation. Everything
 outside them is another context's database and is referenced by string id through a port — never a
 join, because a foreign key cannot span two databases.
 
-`epics/` keeps its own separate `epics` datasource and `db/epics/migration` lineage, carried over
-from the monorepo verbatim.
+`epics/` keeps its own separate `epics` datasource, its own `db/epics/migration` lineage and its own
+physical database — which is what makes it liftable without moving anybody else's tables.
+
+**Both databases are asked for, not configured.** `.config/qits/deployments.yml` carries
+
+    resources: postgresql:db, postgresql:epics:qits_epics
+
+so qits-platform-deployments creates a login role and a database for each before this container
+starts (`qits_projects` — the default derived from the application name — and `qits_epics`) and
+injects `QITS_RESOURCE_DB_URL`/`_USERNAME`/`_PASSWORD` and the `EPICS` triple beside it. The two
+library jars map those onto `quarkus.datasource.*` themselves; a deployment names no JDBC url. There
+is no fallback: an unset variable stops the process at Flyway with the missing name in the message,
+rather than opening a store nobody meant.
 
 ## Build
 

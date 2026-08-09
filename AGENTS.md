@@ -62,8 +62,10 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   instance field like `notify`'s, but named apart from it: `notify` is for fire-and-forget and a
   repository create is waited on and can fail the caller's request).
 - `epics/` — untouched by the extraction beyond its `<parent>`: its own package, its own error
-  types, its own datasource and its own Flyway lineage. It depends on neither `domain` nor any
-  auth module, and it should stay that way — it is the module most likely to be lifted out next.
+  types, its own datasource, its own physical database (`qits_epics`) and its own Flyway lineage. It
+  depends on neither `domain` nor any auth module, and it should stay that way — it is the module
+  most likely to be lifted out next, and lifting it out now moves a database rather than tables out
+  of somebody else's.
 
 `control/` is flat. The monorepo split this code across `domain.project.*`, `domain.repository.*`
 and `domain.seeding.*` to break cycles that do not exist here.
@@ -167,9 +169,10 @@ textual, one section at a time, every other byte where it was, because this is a
 own upstream backup organisation and the slug names it; it also names the project's wrapper
 repository (`<slug>-<slug>`) and its agent container (`qits-proj-<slug>`).
 
-It was deliberately non-unique until 2026-08-08 — V1's column comment and `V2__slugs.sql` in the
-epics lineage both still say so, and neither can be corrected in place: they are applied migrations
-and Flyway checksums the file. V6 carries the correction.
+It was deliberately non-unique until 2026-08-08. The correction had to be its own migration then —
+V1's column comment said the opposite and an applied file is checksummed — but the move to postgres
+restarted both lineages, so the constraint now sits in `V1__init.sql` beside a comment that agrees
+with it.
 
 Uniqueness is reached two ways, and the difference is what the caller said:
 
@@ -359,6 +362,24 @@ own lineage under `epics/src/main/resources/db/epics/migration/`; the two never 
 Entities live in a **named** persistence unit (`projects`), not the default one. An `EntityManager`
 injection therefore needs `@PersistenceUnit("projects")`.
 
+**Two PostgreSQL databases, and both lineages restarted at V1 to say so.** This application declares
+`resources: postgresql:db, postgresql:epics:qits_epics` in `.config/qits/deployments.yml`;
+qits-platform-deployments creates a role and a database for each before the container starts and
+injects `QITS_RESOURCE_DB_*` and `QITS_RESOURCE_EPICS_*`. The two library jars map those onto
+`quarkus.datasource.projects.*` and `quarkus.datasource.epics.*` in their own shipped defaults —
+that mapping is the application's job, never the deployer's — and neither triple has a fallback: an
+unset variable leaves the expression unresolvable and the process dies at Flyway naming it.
+
+The H2 lineages (V1..V6 and V1..V3) were **deleted rather than continued**, which needed one
+precondition: the move is an unwrap and a re-bootstrap, so no database anywhere was on either and no
+appended migration would have had a reader. Each fresh V1 is where its lineage arrived, translated,
+and both files carry the decisions in their headers — the ones worth knowing without opening them:
+`repository_submodule` is simply absent (V4 had dropped it), `last_backup_at` gained the time zone
+`Instant` always meant, `clob` became `text`, the archetype check constraint stayed while every other
+enum column still refuses one, and both epics backfills went because every database reaching the file
+is empty. **A second clean start is not a precedent** — this one cost a re-bootstrap, and the
+ordinary rule (keep appending, never edit an applied migration) is back from V1 onward.
+
 ## Tests
 
 - App-level config lives in `service/src/main/resources/application.properties` and **the tests
@@ -366,7 +387,23 @@ injection therefore needs `@PersistenceUnit("projects")`.
   so `quarkus.rest.path`, the MCP root-path and the rest are already in effect. Never re-declare
   them in `src/test/resources/application.properties`: a test copy is free to drift from the shipped
   one, and then a green suite proves nothing about what actually starts. That file is for genuine
-  test-only overrides (in-memory H2, `clean-at-start`, `target/` paths, the test-jar index entry).
+  test-only overrides (the persistence-unit wiring, `clean-at-start`, the test port, `target/`
+  paths, the test-jar index entry).
+- **No dev services and no containers, ever.** A dev service is a container start, and the first
+  rule here is that a clone tests green with no docker. The stores being postgres does not change
+  that answer: `testdb/EmbeddedPg` starts **zonky's** postgres — real binaries resolved as Maven
+  artifacts, spawned as a child process — and a config source per module hands its url, username and
+  password to every `@QuarkusTest` at an ordinal above `application.properties`, because the port is
+  chosen at run time and cannot be written down. Testcontainers is not on this classpath and must
+  not arrive. Every **(module, datasource) pair names its own database** (`qp_domain_projects`,
+  `qp_epics_epics`, `qp_svc_projects`, `qp_svc_epics`, and the IT's two) so no two suites can mean
+  one schema. `EmbeddedPg` travels to `service` in `domain`'s test-jar; `epics` keeps a **copy**,
+  because that module depends on nothing and a test-scoped edge is still an edge.
+- **The service suite runs on port 0.** 8081 is Quarkus' default test port and also the address the
+  platform's own npm registry is published on, so on the machine this is most likely built on the
+  whole suite dies with `Port already bound: 8081` — which reads like a code failure and is not one.
+  `quarkus.http.test-port=0` in the service test properties is the answer; the flake below is the
+  same rock from the other side.
 - `OpenApiSchemaExportTest` writes `docs/openapi.yml`. Regenerate and commit whenever the REST
   surface changes:
 
@@ -395,13 +432,19 @@ injection therefore needs `@PersistenceUnit("projects")`.
       java --enable-native-access=ALL-UNNAMED -jar service/target/quarkus-app/quarkus-run.jar
       ./mvnw package -Dnative && ./service/target/qits-projects
 - **`PackagedSurfaceIT` is the only test that runs against the artifact.** Every `@QuarkusTest`
-  augments in the build JVM, with the whole classpath present, reflection unrestricted and the test
-  profile's in-memory H2 — a native image has none of those, and three real defects here were
-  invisible to all 168 of them and fatal to the binary (H2's `AUTO_SERVER`, the missing
-  `project-template/` resources, `RepositoryMetadata` unregistered for reflection). It runs under
-  `-Dnative`, and `-DskipITs=false` runs it against the fast-jar. It launches a real process, so it
-  reads main's `application.properties` and none of the test overrides: config reaches it through
-  `quarkus.test.arg-line`, which is why the test resources carry that key.
+  augments in the build JVM, with the whole classpath present and reflection unrestricted — a native
+  image has none of those, and three real defects here were invisible to all of them and fatal to
+  the binary (H2's `AUTO_SERVER` on a shipped datasource default, the missing `project-template/`
+  resources, `RepositoryMetadata` unregistered for reflection). It runs under `-Dnative`, and
+  `-DskipITs=false` runs it against the fast-jar. It launches a real process, so it reads main's
+  `application.properties` and none of the test overrides: paths reach it through
+  `quarkus.test.arg-line`, which is why the test resources carry that key. **The two databases
+  cannot** — their urls name a port chosen at run time — so its `@TestProfile` hands the launched
+  process both `QITS_RESOURCE_*` triples, the generic contract a deployment supplies, which leaves
+  the jars' own `${…}` indirection under test rather than restating the datasource keys. Its
+  embedded postgres reaches that profile through a **system property**, because a
+  `QuarkusTestProfile` is instantiated in two classloaders and a static field is not shared between
+  them.
 - **Anything read off the classpath by walking is a native-image question.** `ProjectTemplate` is
   the one such reader — it serves both committed skeletons, `project-template/` (a wrapper's first
   commit) and `repository-template/` (a blank component's) — and it handles three URI schemes:

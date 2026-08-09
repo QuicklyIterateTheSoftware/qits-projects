@@ -29,8 +29,22 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @ApplicationScoped
 public class AgentContainerFactory {
 
-  /** The image the per-project agent runs — the workspace toolchain plus the daemon binary. */
-  @ConfigProperty(name = "qits.projects.agent-image", defaultValue = "qits/project-agent:latest")
+  /**
+   * The image the per-project agent runs — the workspace toolchain plus the daemon binary,
+   * registry-qualified and pinned to a released version ({@code
+   * localhost:8081/qits/project-agent:<calver>}). The value ships in this service's {@code
+   * application.properties}, which carries the reasoning for both halves of that shape, and which is
+   * also the single file the release train rewrites.
+   *
+   * <p><b>No {@code defaultValue}</b>, deliberately, and unlike every other key on this class. A
+   * default here would be a second copy of the pin that the train does not move, so it would be
+   * stale from the first bump onward — and it would be a stale copy of the exact thing the pin
+   * exists to end: an unqualified {@code qits/project-agent:latest} resolving to whatever a host
+   * happens to have lying in its local image store. A deployment that loses the property should
+   * fail at startup and say which key is missing, not quietly launch a hand-built tag. Same
+   * arrangement, same reason, as qits-workspaces' {@code WorkspaceContainerFactory.image}.
+   */
+  @ConfigProperty(name = "qits.projects.agent-image")
   String image;
 
   /**

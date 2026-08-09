@@ -30,6 +30,16 @@ class AgentContainerFactoryTest {
 
   private static final String PROJECT_ID = "11111111-2222-3333-4444-555555555555";
 
+  /**
+   * Read from config rather than written down, unlike every other shipped value this class asserts.
+   * The reference is a version pin that a release train rewrites on every qits-projects-daemon
+   * release, so a literal here would go red on a bump that is working exactly as intended. What is
+   * still under test is the argv's shape — the image is the LAST element and nothing follows it —
+   * plus, below, that the shipped value is a qualified reference at all.
+   */
+  private static final String IMAGE =
+      ConfigProvider.getConfig().getValue("qits.projects.agent-image", String.class);
+
   @Inject AgentContainerFactory factory;
 
   private Map<String, String> envOf(List<String> argv) {
@@ -67,7 +77,24 @@ class AgentContainerFactoryTest {
     assertEquals("qits-net", valuesAfter(argv, "--network").get(0));
     assertTrue(argv.contains("--add-host=host.docker.internal:host-gateway"));
     assertTrue(argv.contains("--init"), "tini at PID 1, so the daemon is a reaped child");
-    assertEquals("qits/project-agent:latest", argv.get(argv.size() - 1), "the image comes last");
+    assertEquals(IMAGE, argv.get(argv.size() - 1), "the image comes last");
+  }
+
+  /**
+   * The reference must name a registry, because this string is handed to `docker run` on the HOST
+   * daemon: a bare name resolves against whatever is lying in that host's local image store, which
+   * is how `qits/project-agent:native` came to be a hand-built tag nobody could rebuild. It must
+   * also carry a tag that is not `latest`, so one qits-projects release always starts one agent
+   * image. Asserted on the shipped value, since that is what a deployment runs.
+   */
+  @Test
+  void shipsAQualifiedVersionPinnedReference() {
+    String repository = IMAGE.substring(0, IMAGE.lastIndexOf(':'));
+
+    assertTrue(
+        repository.contains("/") && repository.substring(0, repository.indexOf('/')).contains(":"),
+        "the registry host is part of the value: " + IMAGE);
+    assertFalse(IMAGE.endsWith(":latest"), "a floating tag makes the running daemon unanswerable");
   }
 
   @Test
@@ -77,7 +104,7 @@ class AgentContainerFactoryTest {
     assertFalse(argv.contains("-p"), "the daemon binds loopback; nothing is published");
     // The image is the final element, so nothing follows it: the container runs only the daemon,
     // via the image ENTRYPOINT, with no `sleep infinity` fallback to linger behind.
-    assertEquals(argv.lastIndexOf("qits/project-agent:latest"), argv.size() - 1);
+    assertEquals(argv.lastIndexOf(IMAGE), argv.size() - 1);
   }
 
   @Test

@@ -19,7 +19,8 @@
 # instead of SCMRelease. Prefer it when the agent image's publish event is wired.
 event: SCMRelease
 when:
-  - repository: { exact: qits-projects-daemon }
+  # matching repositoryName because this repository's row id is a per-platform UUID.
+  - repositoryName: { exact: qits-projects-daemon }
 steps:
   - image: qits/build-images/node-base:latest
     timeout-seconds: 300

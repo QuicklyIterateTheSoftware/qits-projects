@@ -275,9 +275,9 @@ public class ProjectController {
    */
   public static record ResolveRepositoryNameRequest() {
     /**
-     * @param repositoryId the repository the name addresses — a UUID for one this service minted,
-     *     and the directory name itself for an adopted platform repository, which is why this
-     *     answers an id rather than echoing the name back
+     * @param repositoryId the repository the name addresses. The id is the repository's own
+     *     addressable name, which for an alias can differ from the name asked about — that is why
+     *     this answers an id rather than echoing the name back.
      */
     public record Response(String repositoryId) {}
   }

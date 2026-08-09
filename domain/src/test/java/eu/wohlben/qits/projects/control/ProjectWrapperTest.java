@@ -107,9 +107,23 @@ public class ProjectWrapperTest {
     assertEquals("main", wrapper.mainBranch);
     assertEquals(
         "wrapper-naming-wrapper-naming",
+        wrapper.id,
+        "the wrapper's id is <slug>-<slug> — the addressable name IS the id, so the git host, CI"
+            + " and the deployer all key on the name rather than a UUID");
+    assertEquals(
+        "wrapper-naming-wrapper-naming",
         repositoryNameRepository.nameFor(wrapper).orElseThrow(),
         "the wrapper is addressable as <slug>-<slug>, which is what makes a committed relative"
             + " submodule url resolve the same locally and at the forge");
+  }
+
+  /** The clone half of wrapper creation keys the row the same way as the greenfield half. */
+  @Test
+  public void aClonedWrapperCarriesSlugSlugAsItsIdToo() throws Exception {
+    releaseSlug("demo");
+    var project = projectService.create("Cloned Wrapper Id", "demo", null, fixture("demo-demo.git"));
+
+    assertEquals("demo-demo", wrapperOf(project).id);
   }
 
   /** An unborn main branch would break a workspace container's clone — the skeleton prevents it. */

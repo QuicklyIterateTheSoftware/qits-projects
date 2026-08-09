@@ -62,6 +62,24 @@ public class RepositoryMcpToolsTest {
         .path("repository.id");
   }
 
+  /**
+   * A second repository needs its own name: an id is the addressable name now, so cloning the one
+   * fixture twice would collide. A blank repository on the platform's own host is the cheap way to
+   * a distinctly named sibling.
+   */
+  private String createBlankRepository(String projectId, String name) {
+    return given()
+        .contentType(ContentType.JSON)
+        .body(new ProjectController.CreateProjectRepositoryRequest(
+                null, name, RepositoryArchetype.SERVICE))
+        .when()
+        .post("/projects/api/projects/" + projectId + "/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .extract()
+        .path("repository.id");
+  }
+
   /** All text content of a tool response joined — list tools emit one content item per element. */
   private static String text(ToolResponse response) {
     return response.content().stream()
@@ -151,7 +169,7 @@ public class RepositoryMcpToolsTest {
   public void narrowsToTheScopedRepositoryWhenRepositoryHeaderIsSet() {
     String project = createProject("Narrowed");
     String repoA = createRepository(project);
-    String repoB = createRepository(project);
+    String repoB = createBlankRepository(project, "narrowed-sibling");
 
     // listRepositories returns only the narrowed repo, even though both belong to the project.
     client(project, repoA)
@@ -172,7 +190,7 @@ public class RepositoryMcpToolsTest {
   public void refusesSiblingRepositoriesWhenNarrowed() {
     String project = createProject("NarrowedGuard");
     String repoA = createRepository(project);
-    String repoB = createRepository(project);
+    String repoB = createBlankRepository(project, "guarded-sibling");
 
     // A session narrowed to repoA may not touch repoB, even though it is in the same project.
     client(project, repoA)

@@ -58,8 +58,9 @@ public class RepoDataDirReset implements BeforeAllCallback {
     try {
       Files.deleteIfExists(p);
     } catch (IOException e) {
-      // A concurrent process (e.g. a workspace container mount) may hold a child path; leaving a
-      // stale entry is harmless — the next test creates its own repo ids under the wiped root.
+      // A concurrent process (e.g. a workspace container mount) may hold a child path. Repo ids
+      // are deterministic now, so a leftover mirror can fail a later clone at the same id — loudly,
+      // which is the accepted behaviour (see PlatformStateReset).
     }
   }
 }

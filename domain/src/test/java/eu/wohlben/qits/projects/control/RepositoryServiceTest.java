@@ -49,9 +49,38 @@ public class RepositoryServiceTest {
   public void testClone() throws Exception {
     String fixtureUrl = GitFixtures.path("testing-repo.git");
     var project = projectService.create("Clone Project", null);
-    System.out.println("FIXTURE URL: " + fixtureUrl);
     var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
-    System.out.println("CLONED: " + repo.id);
+
+    assertEquals(
+        "testing-repo",
+        repo.id,
+        "the id is the url basename — the addressable name IS the id, on every creation path");
+  }
+
+  /**
+   * The id is the addressable name, always, so a name that is already a row's id cannot be created
+   * again — not even in another project, since the git host serves repositories id-addressed with
+   * no project segment. No silent fallback: a fallback id is the exact shape of the UUID bug this
+   * rule removed.
+   */
+  @Test
+  public void aTakenNameFailsTheCreateInsteadOfMintingAFallbackId() throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Collision Project", null);
+    repositoryService.cloneRepository(fixtureUrl, null, project);
+
+    var sameProject =
+        assertThrows(
+            BadRequestException.class,
+            () -> repositoryService.cloneRepository(fixtureUrl, null, project));
+    assertTrue(sameProject.getMessage().contains("testing-repo"), sameProject.getMessage());
+
+    var otherProject = projectService.create("Other Collision Project", null);
+    var acrossProjects =
+        assertThrows(
+            BadRequestException.class,
+            () -> repositoryService.cloneRepository(fixtureUrl, null, otherProject));
+    assertTrue(acrossProjects.getMessage().contains("testing-repo"), acrossProjects.getMessage());
   }
 
   @Test

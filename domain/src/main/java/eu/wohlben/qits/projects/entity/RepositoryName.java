@@ -18,7 +18,7 @@ import jakarta.persistence.UniqueConstraint;
  * repository's internal id, then serves {@code <data-dir>/<id>/origin}.
  *
  * <p>Modeled as a link table (not a {@code name} column on {@code Repository}) on purpose: a
- * repository's <b>technical identity</b> stays its opaque UUID id, deduped on exact {@code url},
+ * repository's <b>technical identity</b> stays its id — its addressable name, fixed at creation —
  * and it may carry <b>as many names as there are links to it</b>. A name is derived from the
  * referencing url's basename — the top-level repo's own url, and each superproject's committed
  * submodule url (whose basename is what git requests when resolving a relative {@code

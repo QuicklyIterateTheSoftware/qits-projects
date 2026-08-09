@@ -31,8 +31,14 @@ public class ProjectService {
 
   private static final Logger LOG = Logger.getLogger(ProjectService.class);
 
-  /** Slug length cap — see {@code ProjectSlug.PATTERN}, which allows 1-40 characters. */
-  private static final int MAX_SLUG_LENGTH = 40;
+  /**
+   * The <b>derivation</b> cap. A slug names the wrapper repository {@code <slug>-<slug>}, and that
+   * name is the wrapper's id — a git-host path segment of at most 64 characters — so a derived slug
+   * must fit twice plus the joining dash: 31+1+31 = 63. {@code ProjectSlug.PATTERN} still accepts
+   * an explicitly supplied slug of up to 40; a longer one is a statement, and wrapper creation
+   * refuses it loudly when {@code <slug>-<slug>} cannot be an id.
+   */
+  private static final int MAX_SLUG_LENGTH = 31;
 
   @Inject ProjectRepository projectRepository;
 
@@ -281,7 +287,8 @@ public class ProjectService {
 
   /**
    * Derives a git-safe slug from a display name: lowercase, every run of non-alphanumerics becomes
-   * a dash, leading/trailing dashes stripped, capped at 40 characters.
+   * a dash, leading/trailing dashes stripped, capped at {@link #MAX_SLUG_LENGTH} characters so the
+   * wrapper name {@code <slug>-<slug>} always fits a repository id.
    *
    * <p><b>Total by construction</b> — the result always satisfies {@code ProjectSlug.PATTERN}. A
    * name with nothing alphanumeric in it ({@code "***"}, a pure-unicode name) would slugify to the
@@ -454,8 +461,9 @@ public class ProjectService {
             : repositoryService.cloneRepository(trimmedUrl, archetype, project);
 
     // The name the wrapper records has to be the name the git host serves this repository under —
-    // that is the whole contract of a relative submodule url. cloneRepository may have had to
-    // disambiguate a taken basename, so the registered alias is read back rather than assumed.
+    // that is the whole contract of a relative submodule url. A taken name fails the create
+    // outright (the id is the name now, with no fallback), so the read-back cannot differ from the
+    // request; it stays because the alias table is the single source of that name.
     String memberName =
         repositoryNameRepository
             .nameFor(repo)

@@ -103,6 +103,12 @@ public class WrapperReconcileServiceTest {
     assertEquals(
         WrapperReconcileService.Outcome.CREATED, outcomes.get("submodule-grandchild").outcome());
     assertEquals(
+        "submodule-shared",
+        byName(project.id, "submodule-shared").id,
+        "a created row's id is the .gitmodules entry name — the same id the adopt branch would"
+            + " have used, so the two branches converge and the deployer's image name stays sane");
+    assertEquals("submodule-grandchild", byName(project.id, "submodule-grandchild").id);
+    assertEquals(
         RepositoryArchetype.LIBRARY,
         byName(project.id, "submodule-shared").archetype,
         "libs/ decides the archetype — the directory is the taxonomy");

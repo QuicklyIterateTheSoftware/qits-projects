@@ -275,8 +275,11 @@ public class WrapperReconcileService {
         QuarkusTransaction.requiringNew()
             .call(
                 () -> {
+                  // The entry name is the row's id: it is what the git host serves the repository
+                  // as, what CiRun.repoId will carry and what the deployer's image name repeats —
+                  // never the url basename, which an entry is free to differ from.
                   Repository repo =
-                      repositoryService.cloneRepository(backend.get(), archetype, project);
+                      repositoryService.cloneRepository(backend.get(), archetype, project, name);
                   repositoryNameRepository.ensureAlias(project, name, repo);
                   return repo;
                 });

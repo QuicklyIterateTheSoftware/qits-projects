@@ -394,6 +394,8 @@ public class ProjectRepositoryControllerTest {
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
             .path("repository.id");
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "checkout", repoId, "a blank repository's id is its name");
 
     resolveByName(projectId, "checkout")
         .then()
@@ -407,9 +409,10 @@ public class ProjectRepositoryControllerTest {
   }
 
   /**
-   * The wrapper is a {@code repository_name} row like any other, and the route has to answer for it:
-   * a container clones the project name-addressed as {@code <slug>-<slug>}. Its id is a UUID that is
-   * not its name, which is the whole reason this route answers ids.
+   * The wrapper is a {@code repository_name} row like any other, and the route has to answer for
+   * it: a container clones the project name-addressed as {@code <slug>-<slug>}. Its id IS that
+   * name — the addressable name is the id on every creation path — and the route answers ids, so
+   * the two coincide here by design.
    */
   @Test
   public void theWrapperResolvesByItsConventionalName() {
@@ -433,8 +436,8 @@ public class ProjectRepositoryControllerTest {
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repositoryId", equalTo(wrapperId));
-    org.junit.jupiter.api.Assertions.assertNotEquals(
-        slug + "-" + slug, wrapperId, "the wrapper's id is not its name — the route answers ids");
+    org.junit.jupiter.api.Assertions.assertEquals(
+        slug + "-" + slug, wrapperId, "the wrapper's id is its addressable name, <slug>-<slug>");
   }
 
   /**

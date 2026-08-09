@@ -99,8 +99,10 @@ public class RepositoryNameRepository implements PanacheRepositoryBase<Repositor
    * workspace container clones itself under. Prefers the url basename (so relative submodule
    * resolution from this repo-as-superproject stays natural); if that basename is already owned by
    * a <em>different</em> repository in the project, falls back to a deterministic {@code
-   * <basename>-<id-prefix>} that is effectively unique. Called at repository creation, so every
-   * repository has a self-name before it is ever provisioned.
+   * <basename>-<id-prefix>} that is effectively unique. The creation paths assert the name free
+   * before persisting (the id is the name, with no fallback), so from them the disambiguation can
+   * never fire; it remains only for the lazy registration of an adopted repository ({@code
+   * RepositoryNameResolver}), whose id predates this service.
    */
   public String registerSelfName(Repository repository) {
     String base = basename(repository.url);

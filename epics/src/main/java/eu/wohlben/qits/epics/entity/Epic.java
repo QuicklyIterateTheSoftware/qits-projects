@@ -1,12 +1,16 @@
 package eu.wohlben.qits.epics.entity;
 
+import eu.wohlben.qits.eventstream.CausationStamp;
+import eu.wohlben.qits.eventstream.CausedRow;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import java.time.Instant;
+import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -14,11 +18,38 @@ import org.hibernate.annotations.UpdateTimestamp;
  * The planning spine (one per docs-epic today), owned by a project. {@code projectId} references
  * {@code domain}'s {@code Project} by String id — no JPA {@code @ManyToOne} and no cross-DB FK
  * (epics is a separate physical DB); existence is validated in the {@code service} controller.
+ *
+ * <p><b>A {@link CausedRow}.</b> Epics are minted by agents as much as by people: {@code
+ * EpicMcpTools.createEpic} is the same {@code EpicService.create} the SPA reaches, on the same
+ * request thread, so the {@code CausationStamp} listener reads the scope the {@code
+ * X-Qits-Causation-Id} filter restored and the row records what asked for this epic. A person
+ * typing into the SPA sends no header and leaves a rootless row, which is the correct answer rather
+ * than a missing one.
+ *
+ * <p>The {@link AuditEntry} written beside every change is a {@code CausedRow} too, and the two are
+ * not the same fact: this column answers "what caused this epic to exist", insert-only and forever;
+ * the audit log answers the same question for every later update and for the delete, after this row
+ * is gone.
  */
 @Entity
-public class Epic extends PanacheEntityBase {
+@EntityListeners(CausationStamp.class)
+public class Epic extends PanacheEntityBase implements CausedRow {
 
   @Id public String id;
+
+  /** See the class javadoc; the platform's uniform column, never part of any constraint. */
+  @Column(name = "causation_id")
+  public UUID causationId;
+
+  @Override
+  public UUID causationId() {
+    return causationId;
+  }
+
+  @Override
+  public void causationId(UUID id) {
+    this.causationId = id;
+  }
 
   @Column(name = "project_id", nullable = false)
   public String projectId;

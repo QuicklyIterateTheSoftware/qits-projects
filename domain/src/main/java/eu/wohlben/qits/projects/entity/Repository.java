@@ -1,18 +1,51 @@
 package eu.wohlben.qits.projects.entity;
 
+import eu.wohlben.qits.eventstream.CausationStamp;
+import eu.wohlben.qits.eventstream.CausedRow;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import java.util.UUID;
 
+/**
+ * A git remote as an entity: one bare origin on disk, its backup twin, and the row that names both.
+ *
+ * <p><b>A {@link CausedRow}, and the one in this context worth tracing.</b> Rows are minted by four
+ * paths and all four run on a request thread — {@code cloneOne}, {@code createBlankRepository},
+ * {@code initWrapperOrigin} and {@code adoptExistingOrigin} — so the {@code CausationStamp}
+ * listener reads the scope the {@code X-Qits-Causation-Id} filter restored. The machine-driven one
+ * is {@code WrapperReconcileService}: a reconcile called with a cause records, per adopted or cloned
+ * member, what asked for it. A browser-driven create carries no header and is rootless, and so is
+ * every row the boot-time self-seed writes — neither is a hole, both are "nothing caused this".
+ *
+ * <p>Nothing sets the value explicitly, because there is no hop to cross: the backup executor and
+ * the pull executor UPDATE these rows and never insert one, and the stamp is insert-only.
+ */
 @Entity
-public class Repository extends PanacheEntityBase {
+@EntityListeners(CausationStamp.class)
+public class Repository extends PanacheEntityBase implements CausedRow {
 
   @Id public String id;
+
+  /** See the class javadoc; the platform's uniform column, never part of any constraint. */
+  @Column(name = "causation_id")
+  public UUID causationId;
+
+  @Override
+  public UUID causationId() {
+    return causationId;
+  }
+
+  @Override
+  public void causationId(UUID id) {
+    this.causationId = id;
+  }
 
   public String url;
 

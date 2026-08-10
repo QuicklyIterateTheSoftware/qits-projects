@@ -101,9 +101,24 @@ wrapper.
 
 ## The event bus
 
-`service/…/bus/` is the whole of it, and it is **consume-only**: this service publishes nothing.
-The machinery is the published `qits-eventstream` jar; the vocabulary is `qits-githost-events`, the
-git host's four records. Its rules live in that library's own repository and are not restated here.
+`service/…/bus/` is the whole of the bus's **SEAMS**, and they are **consume-only**: this service
+publishes nothing. The machinery is the published `qits-eventstream` jar; the vocabulary is
+`qits-githost-events`, the git host's four records. Its rules live in that library's own repository
+and are not restated here.
+
+**The word is SEAMS now, not "the bus", and the narrowing was deliberate (2026-08-10).** The
+eventstream jar also carries the platform's causation *persistence vocabulary* — `CausedRow`,
+`CausationStamp`, `@Uncaused`, three jakarta-persistence-shaped types with no publish, no subscribe
+and no wire in them — and six entities implement it, so the jar sits in `domain`'s and `epics`' poms
+now. That is not a crack in `epics`' "depends on `domain` and on `auth/*` not at all": a lift-out of
+that module takes three annotations along in one jar and no CDI graph. What the rule still forbids
+is control flow — no listener, no publisher, no `EventFrame`, no `QitsEventBus` outside
+`service/…/bus/`. What the dependency costs is honest and paid in the suites: the jar's persistence
+unit boots in both modules' tests too, so each `testdb/*EmbeddedPgConfigSource` feeds it a database
+of its own, the test properties keep the bus dark, and — the surprise — both modules now open an
+HTTP server they never wanted, because vertx-http rides in with the jar. That is what
+`quarkus.http.test-port=0` is doing in two more properties files; without it the suites die on
+`Port already bound: 8081`, which is the platform's own npm registry and not a code failure.
 
 - **`ScmBackupTriggerListener` is a `QitsDurableEventListener`, and durable is the point.** It
   replaced `api/GitHostEventController`, a fire-and-forget `POST /projects/api/events/post-receive`
@@ -425,6 +440,36 @@ and both files carry the decisions in their headers — the ones worth knowing w
 enum column still refuses one, and both epics backfills went because every database reaching the file
 is empty. **A second clean start is not a precedent** — this one cost a re-bootstrap, and the
 ordinary rule (keep appending, never edit an applied migration) is back from V1 onward.
+
+**`V2__causation.sql`, once per lineage, is that rule being followed.** Both add the platform's
+generic `causation_id uuid` column (qits-eventstream's `CausedRow`): nullable, in no constraint,
+never a foreign key — the event it names lives in qits-events' store — and with no backfill, since
+no existing row has an answer to invent. Six of the seven entities take it. The stamp fills it from
+the ambient `CausationScope` at persist, and **nothing here sets it explicitly**, because no insert
+crosses a thread hop: the backup executor and the pull executor only ever UPDATE, and the stamp is
+insert-only. Where the decisions land, and why:
+
+| entity | | |
+| --- | --- | --- |
+| `Project` | `CausedRow` | Created on the request thread (`ProjectService.create`, from REST or MCP); the boot-time self-seed is rootless, which is the honest answer. |
+| `Repository` | `CausedRow` | The one worth tracing. All four mint paths run on the request thread, and `WrapperReconcileService` is the machine-driven one — a reconcile records, per adopted or cloned member, what asked for it. |
+| `RepositoryName` | `@Uncaused` | The only opt-out. An alias is derived, idempotent state; the repository it FKs to is a `CausedRow` one join away and is the row that was actually caused. Decisively, `RepositoryNameResolver` mints the self-name in its own transaction off any request context — the provision worker, or container creation — where no scope stands, so a stamp would record null forever. No event id is ever in reach to set as data. |
+| `Epic`, `Feature`, `Task` | `CausedRow` | `EpicMcpTools` reaches the same services the SPA does, on the same thread: an agent minting a task is exactly the flow worth tracing. |
+| `AuditEntry` | `CausedRow` | Covers what the live rows cannot. The stamp is insert-only, so an epic row records the cause of its own creation and never of an update; and a deleted row is gone while its DELETE entry stays (audit rows are deliberately not FK'd back). |
+
+The decisions are **enforced, not documented**: `ArchRulesTest` (qits-arch-rules) sits in each entity
+module — `domain` and `epics`, one per module rather than one in `service`, because a module owns its
+entities and `epics` depends on nothing, so a guard downstream of it would neither see its classes
+nor survive its lift-out. A new `@Entity` that neither implements `CausedRow` nor declares
+`@Uncaused` fails the build naming the class.
+
+**`epics/src/test/resources/archunit.properties` is a workaround, not a preference.** With every
+epics entity participating, no class there carries `@Uncaused`, and the rule set's negative rule
+("nothing `@Uncaused` may implement `CausedRow`") matched zero classes — which ArchUnit fails by
+default. The module went red for being in the best state the rules describe. `archRule.
+failOnEmptyShould=false` is scoped to that module alone; `domain` keeps the default, since
+`RepositoryName` gives the same rule a class to check. The real fix is `allowEmptyShould(true)` on
+that rule in qits-arch-rules, which is another repository's to make.
 
 ## Tests
 

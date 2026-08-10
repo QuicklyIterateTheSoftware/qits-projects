@@ -1,14 +1,18 @@
 package eu.wohlben.qits.projects.entity;
 
+import eu.wohlben.qits.eventstream.CausationStamp;
+import eu.wohlben.qits.eventstream.CausedRow;
 import eu.wohlben.qits.projects.entity.Repository;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * The aggregate root: <b>one application that starts as a single wrapper repository and grows into
@@ -18,11 +22,34 @@ import java.util.List;
  * submodule/workspace code (name collisions within a project are the maintainer's own choice;
  * {@code origin} is a backup, not an authority): see the package doc ({@link
  * eu.wohlben.qits.projects}) and {@code docs/guides/project-model.md}.
+ *
+ * <p><b>A {@link CausedRow}.</b> Every project row is written on a request thread — {@code
+ * ProjectService.create}, reached from {@code ProjectController} or from the MCP tool surface — so
+ * the {@code CausationStamp} listener reads the scope the {@code X-Qits-Causation-Id} filter
+ * restored and the column records what asked for the project. A browser create carries no header
+ * and the row is rootless, which is the honest answer rather than a missing one; the self-seed at
+ * boot ({@code SelfSeedService}) is rootless for the same reason — nothing caused it but the
+ * process starting.
  */
 @Entity
-public class Project extends PanacheEntityBase {
+@EntityListeners(CausationStamp.class)
+public class Project extends PanacheEntityBase implements CausedRow {
 
   @Id public String id;
+
+  /** See the class javadoc; the platform's uniform column, never part of any constraint. */
+  @Column(name = "causation_id")
+  public UUID causationId;
+
+  @Override
+  public UUID causationId() {
+    return causationId;
+  }
+
+  @Override
+  public void causationId(UUID id) {
+    this.causationId = id;
+  }
 
   @Column(nullable = false)
   public String name;

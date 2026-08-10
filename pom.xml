@@ -87,8 +87,14 @@
              (SCMPublishCommit, SCMPublishTag, SCMDeleteBranch, SCMDeleteTag) plus their dependency
              on the bus. Depending on it buys the event names this service listens for and no part of
              the git host itself — which is why that repository splits it out as its own module. -->
-        <qits.eventstream.version>2026.810.103202</qits.eventstream.version>
+        <qits.eventstream.version>2026.810.191553</qits.eventstream.version>
         <qits.githost-events.version>1.0.0-SNAPSHOT</qits.githost-events.version>
+
+        <!-- The platform's shared ArchUnit rules, test scope in whichever module owns entities.
+             Its own repository is qits-integrations-quarkus, and its version moves with that
+             repository rather than with the eventstream jar the rules judge — deliberately, since
+             the rules name every type they judge as a string and depend on neither. -->
+        <qits.arch-rules.version>2026.810.184518</qits.arch-rules.version>
         <qits.maven.repository.url>http://localhost:8081/artifacts/maven/maven</qits.maven.repository.url>
 
         <!-- The container ITs need docker and a built qits/workspace image, which a fresh clone has
@@ -146,6 +152,13 @@
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-githost-events</artifactId>
                 <version>${qits.githost-events.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: the rules run in the build and ship in
+                     nothing. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
             </dependency>
             <!-- The reactor's own modules, so children depend on them version-less. -->
             <dependency>

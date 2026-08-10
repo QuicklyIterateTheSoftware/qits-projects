@@ -23,13 +23,27 @@ public class EpicsEmbeddedPgConfigSource implements ConfigSource {
   /** This module's database on the shared instance. Every (module, datasource) pair names its own. */
   private static final String DATABASE = "qp_epics_epics";
 
+  /**
+   * The qits-eventstream jar arrived in this module with {@code CausedRow} (the causation column on
+   * all four entities), and dark does not mean absent: its persistence unit opens a connection and
+   * runs Flyway at boot whether the bus is enabled or not, so this suite feeds it a database of its
+   * own — the same consumer contract {@code ServiceEmbeddedPgConfigSource} has always honoured for
+   * the deployable.
+   */
+  private static final String EVENTSTREAM_DATABASE = "qp_epics_eventstream";
+
   private static final String PREFIX = "quarkus.datasource.epics.";
+
+  private static final String EVENTSTREAM_PREFIX = "quarkus.datasource.eventstream.";
 
   private final Map<String, String> values =
       Map.of(
           PREFIX + "jdbc.url", EmbeddedPg.url(DATABASE),
           PREFIX + "username", EmbeddedPg.USER,
-          PREFIX + "password", EmbeddedPg.PASSWORD);
+          PREFIX + "password", EmbeddedPg.PASSWORD,
+          EVENTSTREAM_PREFIX + "jdbc.url", EmbeddedPg.url(EVENTSTREAM_DATABASE),
+          EVENTSTREAM_PREFIX + "username", EmbeddedPg.USER,
+          EVENTSTREAM_PREFIX + "password", EmbeddedPg.PASSWORD);
 
   @Override
   public int getOrdinal() {

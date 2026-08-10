@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.entity;
 
+import eu.wohlben.qits.eventstream.Uncaused;
 import eu.wohlben.qits.projects.entity.Project;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
@@ -34,8 +35,20 @@ import jakarta.persistence.UniqueConstraint;
  * same referential-integrity care {@code repository_submodule} takes). The unique {@code
  * (project_id, name)} makes alias registration idempotent and enforces one repository per name
  * within a project.
+ *
+ * <p>{@code @Uncaused} by decision, on two grounds that hold together. The {@link #repository} this
+ * row names carries the cause one join away, and it is the row that was actually caused — an alias
+ * is derived state, reconstructible from that repository's url and from the wrapper's committed
+ * {@code .gitmodules}. And the write site that would most want a stamp cannot have one: {@code
+ * RepositoryNameResolver} mints the self-name lazily, in its own transaction, on the provision
+ * worker or during container creation — off any request context, where no {@code CausationScope}
+ * stands — so the column would record null forever and read as a decision nobody made. What is left
+ * is {@code ensureAlias}, an idempotent first-writer-wins upsert whose row records which of several
+ * equivalent, repeatable registrations happened to run first; a cause there names an arbitrary
+ * winner rather than a provenance. No event id is ever in reach here to set as data.
  */
 @Entity
+@Uncaused
 @Table(
     name = "repository_name",
     uniqueConstraints =

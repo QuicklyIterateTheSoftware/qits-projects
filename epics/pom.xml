@@ -58,6 +58,16 @@
             <artifactId>quarkus-hibernate-validator</artifactId>
         </dependency>
         <dependency>
+            <!-- The causation PERSISTENCE trio only: CausedRow + CausationStamp on all four
+                 entities here. This module still depends on `domain`, on `auth/*`
+                 and on the bus's SEAMS not at all — three jakarta-persistence-shaped types are not
+                 a publish/subscribe coupling, and a lift-out of this module takes them along in one
+                 jar. Its persistence unit boots in this suite whether the bus is enabled or not,
+                 so testdb/EpicsEmbeddedPgConfigSource feeds it a database of its own. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
         </dependency>
@@ -68,6 +78,14 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The platform's shared ArchUnit rules over this module's entity package. Declared
+                 here as well as in `domain` because this module owns its own entities and depends
+                 on nothing — a rule enforced only over there would not see these four classes. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-arch-rules</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

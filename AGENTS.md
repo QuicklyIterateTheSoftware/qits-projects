@@ -99,6 +99,52 @@ different routes: `POST /{projectId}/reconcile` re-asserts the dns record, and
 `POST /{projectId}/repositories/reconcile` reconciles the project's repositories against its
 wrapper.
 
+## The event bus
+
+`service/…/bus/` is the whole of it, and it is **consume-only**: this service publishes nothing.
+The machinery is the published `qits-eventstream` jar; the vocabulary is `qits-githost-events`, the
+git host's four records. Its rules live in that library's own repository and are not restated here.
+
+- **`ScmBackupTriggerListener` is a `QitsDurableEventListener`, and durable is the point.** It
+  replaced `api/GitHostEventController`, a fire-and-forget `POST /projects/api/events/post-receive`
+  the git host made from inside somebody's `git push` — so a push landing while this process was
+  restarting cost a backup with nothing to say so. Now the claim and the schedule commit together
+  and a disconnect window is caught up from the log.
+- **All four events map to one call, and `suppressCi` is ignored.** `SCMPublishCommit`,
+  `SCMPublishTag`, `SCMDeleteBranch` and `SCMDeleteTag` each say "the refs in this repository are
+  not what the twin holds". Tags and deletions **never used to trigger a backup at all** — the old
+  hook fanned out branch updates only — so that is a fix rather than a translation. `suppressCi`
+  says whether a *build* should run, which is qits-ci's question; the push that sets it is an
+  imported upstream's whole history, which is exactly the push that most needs a twin.
+- **`consumerId()` is `projects-backup-push` and it is STORAGE.** It names every `consumed_event`
+  row and the watermark. Change it and you mint a brand-new consumer that initializes at the head of
+  the log, silently skipping everything in between.
+- **Nothing here throws.** `onPush` returns immediately and always and swallows every backup
+  failure, so the only reachable failure on this thread is a payload that will not parse or names no
+  repository — the same bytes forever, which is the poison case: a WARN and a return.
+- **`ScheduledBackupSweep` stays.** Durable delivery narrows what it is for without emptying it: an
+  unreachable forge, an expired credential and a backup that failed on its own are none of them
+  missing events.
+- **Causation is stamped on every push TO the git host, and on no push to a forge.**
+  `bus/EventstreamPushCausation` implements `control/PushCausation` over `CausationScope`;
+  `GitMirrorRegistry` hands it to `GitMirrors` as a `Supplier<String>`, and `RepoMirror.push` turns
+  it into `-c http.extraHeader=X-Qits-Causation-Id: <uuid>`. One place, so `createBranch`,
+  `deleteBranch` and every hand-built `PushSpec` carry it without a call site remembering to. The
+  header name is a literal in `gitmirror` (that module depends on **nothing**, and stays that way);
+  `EventstreamPushCausationTest` asserts it equals `CausationHeader.NAME`. A value that will not
+  parse as a UUID is dropped rather than interpolated — a cause is advisory and must never fail a
+  push, and a newline in an HTTP header would be injection. Backup pushes go to GitHub through the
+  domain's own `git` invocation, never through `RepoMirror`, so they cannot pick it up.
+- **The jar brings a MANDATORY deployment resource.** `.config/qits/deployments.yml` declares
+  `postgresql:eventstream:qits_projects_eventstream`, and the resource **name** is load-bearing
+  because the jar reads `QITS_RESOURCE_EVENTSTREAM_*`. `qits.eventstream.enabled=false` (`%dev`,
+  `%test`) stops publishing, sweeping and dialling — never the datasource, which Quarkus opens and
+  migrates at boot regardless. That is why the suite hands out a third database
+  (`testdb/ServiceEmbeddedPgConfigSource`) and why `PackagedSurfaceIT` supplies a third triple.
+- **`bus/EventWireReflection` is the native-image registration**, and `EventWireReflectionTest`
+  guards its completeness against the registered listener beans. Read that class's javadoc before
+  adding a wire type; the failure it prevents is invisible to every JVM test by construction.
+
 ## Adding a dependency on another context
 
 Don't. Declare a port in `domain/…/projects/control/`, inject it as `Instance<T>`, and make absent a

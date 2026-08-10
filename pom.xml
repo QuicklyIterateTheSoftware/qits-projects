@@ -78,6 +78,19 @@
         <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
         <mapstruct.version>1.6.3</mapstruct.version>
 
+        <!-- The platform event bus: the outbox, the idempotent PUT, the durable listener and
+             CausationScope. Published by libs/qits-eventstream into the platform Maven repository,
+             which is the whole reason the <repositories> block below exists — these two are the only
+             dependencies here that are neither on Maven Central nor built in this reactor.
+
+             qits-githost-events is the git host's VOCABULARY and nothing else: four records
+             (SCMPublishCommit, SCMPublishTag, SCMDeleteBranch, SCMDeleteTag) plus their dependency
+             on the bus. Depending on it buys the event names this service listens for and no part of
+             the git host itself — which is why that repository splits it out as its own module. -->
+        <qits.eventstream.version>2026.810.103202</qits.eventstream.version>
+        <qits.githost-events.version>1.0.0-SNAPSHOT</qits.githost-events.version>
+        <qits.maven.repository.url>http://localhost:8081/artifacts/maven/maven</qits.maven.repository.url>
+
         <!-- The container ITs need docker and a built qits/workspace image, which a fresh clone has
              not got — and the ones that survived the cut here are the MCP/task-prompt delivery ITs
              that drive a real container. `mvn verify` must be green without them. -->
@@ -123,6 +136,17 @@
                 <artifactId>mapstruct</artifactId>
                 <version>${mapstruct.version}</version>
             </dependency>
+            <!-- The platform jars this repo consumes. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-eventstream</artifactId>
+                <version>${qits.eventstream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-githost-events</artifactId>
+                <version>${qits.githost-events.version}</version>
+            </dependency>
             <!-- The reactor's own modules, so children depend on them version-less. -->
             <dependency>
                 <!-- The git substrate: mirrors, wire reads and pushes. Framework-free like the
@@ -158,6 +182,16 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <repositories>
+        <!-- The platform's own Maven repository, where qits-eventstream and qits-githost-events are
+             published. The id is what a locally cached copy is recorded under, so it has to stay
+             `qits-maven` or an offline build refuses an artifact it already has. -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
 
     <build>
         <pluginManagement>

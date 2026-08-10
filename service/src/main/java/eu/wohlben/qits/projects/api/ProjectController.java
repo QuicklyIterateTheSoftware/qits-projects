@@ -287,11 +287,12 @@ public class ProjectController {
    * name-addressed git scheme {@code /artifacts/git/<projectId>/<repoName>}, which it reaches
    * through its optional {@code githost.RepositoryNameResolver} port.
    *
-   * <p><b>Unguarded, and documented rather than hidden</b> — the {@code GitHostEventController}
-   * precedent. This service has no machine auth: reaching it at all means being inside the trusted
-   * network, so a guard here would look like a control and be worth nothing. qits-artifacts
-   * generates its client from {@code docs/openapi.yml}, so the one route it calls belongs in that
-   * document.
+   * <p><b>Unguarded, and documented rather than hidden.</b> This service has no machine auth:
+   * reaching it at all means being inside the trusted network, so a guard here would look like a
+   * control and be worth nothing. The git host generates its client from {@code docs/openapi.yml},
+   * so the one route it calls belongs in that document — and this is now the ONLY such route, since
+   * the post-receive intake that set the precedent is gone: the git host announces a push as a
+   * durable domain event instead, consumed by {@code bus/ScmBackupTriggerListener}.
    *
    * <p>404 for an unknown project and for an unknown name alike, in the same words: a caller
    * resolving a name has nothing to do with the difference, and spelling it out would say which

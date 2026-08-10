@@ -55,6 +55,31 @@
             <artifactId>qits-projects-daemon-protocol</artifactId>
         </dependency>
         <dependency>
+            <!-- The platform event bus. It arrives HERE and not in `domain` on purpose, twice over:
+                 `bus/` is an inbound adapter like `api/` and `wiring/`, and this jar brings a THIRD
+                 datasource with its own Flyway lineage — putting it on domain's classpath would make
+                 every one of that module's @QuarkusTests boot an outbox they have no use for.
+
+                 IT ADDS A MANDATORY DEPLOYMENT RESOURCE. `.config/qits/deployments.yml` declares
+                 `postgresql:eventstream:qits_projects_eventstream` for it; the jar's own shipped
+                 defaults map QITS_RESOURCE_EVENTSTREAM_* onto quarkus.datasource.eventstream.*, and
+                 an unset variable leaves the expression unresolvable so the process refuses to boot
+                 rather than opening some fallback store. Being dark in %test does not change that:
+                 qits.eventstream.enabled=false stops publishing, sweeping and dialling, never the
+                 datasource — hence the third database in ServiceEmbeddedPgConfigSource. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The git host's event vocabulary: the four SCM records bus/ScmBackupTriggerListener
+                 subscribes to. Declared explicitly rather than taken transitively through the bus,
+                 because this module uses the classes by name (the signature set and the reflection
+                 registration both spell them) and a compile-time use belongs in the pom that makes
+                 it. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-githost-events</artifactId>
+        </dependency>
+        <dependency>
             <!-- domain's test-support only (see its jar plugin config): the port implementations
                  this module's @QuarkusTests need on the classpath, not a second copy of them. -->
             <groupId>${project.groupId}</groupId>

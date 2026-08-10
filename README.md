@@ -72,8 +72,7 @@ Everything it serves sits under its gateway segment, `/projects`:
 |---|---|
 | `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links — except under the prefixes below |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
-| `/projects/api/events/post-receive` | what the git host calls after it accepts a push — see **The backup twin** below |
-| `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/artifacts/git/<projectId>/<repoName>` through. Unguarded and in the document, like the post-receive intake |
+| `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/artifacts/git/<projectId>/<repoName>` through. Unguarded and in the document — the only route the git host calls, now that the post-receive intake has become a domain event |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
 | `/projects/q/openapi`, `/projects/q/swagger-ui` | the API document and its UI (`quarkus.http.non-application-root-path`) |
@@ -189,8 +188,8 @@ Two triggers keep the twin current, and they are not redundant:
 
 | | |
 |---|---|
-| `POST /projects/api/events/post-receive` | qits-artifacts fans its `post-receive` here, so the twin is current within seconds of real work. Debounced per repository, because one `git push` of several branches is several events. Always answers 204 — the sender is a git hook inside somebody's push and can act on nothing else |
-| the hourly sweep | `ScheduledBackupSweep`, packaged runs only. The safety net for what the event path cannot notice: an event lost to a restart, a forge that was down for a minute, a credential that expired between pushes |
+| the git host's SCM events | `SCMPublishCommit`, `SCMPublishTag`, `SCMDeleteBranch` and `SCMDeleteTag` on the platform bus, consumed **durably** by `bus/ScmBackupTriggerListener`, so the twin is current within seconds of real work and a push that landed while this service was restarting is caught up rather than lost. All four map to one backup of the repository they name — a deletion and a tag change the refs a twin should hold exactly as a commit does, which the old HTTP hook never told us. `suppressCi` is ignored: it says whether a *build* should run, and an imported history is precisely the push that must not build and must be backed up. Debounced per repository, because one `git push` is several events |
+| the hourly sweep | `ScheduledBackupSweep`, packaged runs only. The safety net for what no event can announce: a forge that was down for a minute, a credential that expired between pushes, a backup that failed for its own reasons |
 | `POST /projects/api/repositories/{repoId}/backup-sync` | ask for one now — the button beside a red status. 202, debounced like the rest |
 | `POST /projects/api/projects/{projectId}/repositories/backup-sync` | ask for all of them now, `{scheduled: <n>}` — what you press after a sign-in |
 

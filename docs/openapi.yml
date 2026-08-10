@@ -344,17 +344,6 @@ components:
       - SYNC_TARGET_UPDATED
       - DEREGISTERED
       - SKIPPED
-    PostReceiveEventRequest:
-      type: object
-      properties:
-        repoId:
-          type: string
-        branch:
-          type: string
-        oldSha:
-          type: string
-        newSha:
-          type: string
     ProjectDnsRecordDto:
       type: object
       properties:
@@ -898,27 +887,6 @@ paths:
       summary: Transition
       tags:
       - Epic Controller
-  /projects/api/events/post-receive:
-    post:
-      summary: Tell this service the git host accepted a push
-      description: "Schedules a backup of the repository onto its forge twin, debounced\
-        \ per repository so a push of several branches produces one backup run. Always\
-        \ 204, including for a repository this service does not know: the sender is\
-        \ a git hook in the critical path of somebody's push and has nothing to do\
-        \ with an error."
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PostReceiveEventRequest"
-        required: true
-      responses:
-        "204":
-          description: Accepted; the backup runs off-thread
-        "400":
-          description: Bad Request
-      tags:
-      - Git Host Event Controller
   /projects/api/features/{featureId}/tasks:
     get:
       parameters:
@@ -1750,4 +1718,4 @@ paths:
       - Task Controller
 info:
   title: qits-projects API
-  version: 2026.809.155701
+  version: 2026.810.124357

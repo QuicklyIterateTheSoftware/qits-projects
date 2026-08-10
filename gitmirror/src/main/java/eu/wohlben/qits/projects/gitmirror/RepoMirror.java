@@ -10,8 +10,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * One repository's local mirror, and every git operation this service performs on it.
@@ -42,6 +44,18 @@ import java.util.function.Consumer;
  */
 public final class RepoMirror {
 
+  /**
+   * The header a push carries so the git host can publish its SCM events under the cause that made
+   * the push happen — a release, an arriving domain event, whatever the caller was running because
+   * of.
+   *
+   * <p><b>Spelled as a literal here rather than imported.</b> The name belongs to {@code
+   * eu.wohlben.qits.eventstream.CausationHeader}, and this module depends on nothing at all — the
+   * property its own pom argues for at length. A test in the deployable asserts the two strings are
+   * equal, so the duplication cannot drift unnoticed.
+   */
+  public static final String CAUSATION_HEADER = "X-Qits-Causation-Id";
+
   private final GitCli cli;
   private final GitRemotes remotes;
   private final String repoId;
@@ -49,6 +63,7 @@ public final class RepoMirror {
   private final Path skeletonRoot;
   private final Duration networkTimeout;
   private final Duration freshness;
+  private final Supplier<String> causationId;
 
   private final ReentrantLock fetchLock = new ReentrantLock();
   private volatile long fetchedAtMillis = 0L;
@@ -59,7 +74,8 @@ public final class RepoMirror {
       String repoId,
       Path root,
       Duration networkTimeout,
-      Duration freshness) {
+      Duration freshness,
+      Supplier<String> causationId) {
     this.cli = cli;
     this.remotes = remotes;
     this.repoId = repoId;
@@ -67,6 +83,7 @@ public final class RepoMirror {
     this.skeletonRoot = root.resolve("skeleton").resolve(repoId);
     this.networkTimeout = networkTimeout;
     this.freshness = freshness;
+    this.causationId = causationId == null ? () -> null : causationId;
   }
 
   public String repoId() {
@@ -607,11 +624,18 @@ public final class RepoMirror {
 
   /**
    * Push from the mirror. The objects are already on the host for every refspec built out of a ref
-   * the mirror fetched, so these pushes carry almost no bytes; what they carry is a
-   * <b>post-receive</b>, which is the point.
+   * the mirror fetched, so these pushes carry almost no bytes; what they carry is the git host's
+   * announcement of the new refs, which is the point.
+   *
+   * <p><b>Every push here goes to the git host</b> — {@link GitRemotes#pushUrl} and nowhere else —
+   * which is why the causation header is attached in this one method rather than at the call sites.
+   * A repository's external backup remote is pushed by the domain through its own {@code git}
+   * invocation and never through here, so it cannot pick the header up by accident.
    */
   public PushOutcome push(PushSpec spec) {
-    List<String> argv = new ArrayList<>(List.of("git", "push", "--porcelain"));
+    List<String> argv = new ArrayList<>(List.of("git"));
+    causeHeader().ifPresent(header -> argv.addAll(List.of("-c", header)));
+    argv.addAll(List.of("push", "--porcelain"));
     spec.options().forEach(option -> argv.add("--push-option=" + option));
     if (spec.atomic()) {
       argv.add("--atomic");
@@ -642,6 +666,32 @@ public final class RepoMirror {
   /** Delete a branch on the git host — through the protection hook, exactly like any other push. */
   public PushOutcome deleteBranch(String branch) {
     return push(PushSpec.of(PushSpec.Ref.deleteBranch(branch)));
+  }
+
+  /**
+   * The {@code -c http.extraHeader=…} value for this push, or empty when nothing caused it.
+   *
+   * <p><b>The id has to parse as a UUID or no header is sent.</b> That is not a formality: the value
+   * is interpolated into an HTTP header, so anything carrying a newline would be header injection,
+   * and a cause is advisory — a push must never fail because the thing that caused it could not be
+   * named. Parsing is therefore the check <em>and</em> the sanitiser, and it costs nothing, since
+   * every real value is {@code CausationScope.current().toString()}.
+   */
+  private Optional<String> causeHeader() {
+    return causeHeaderFor(causationId.get());
+  }
+
+  /** {@link #causeHeader()}'s whole decision, as a function of the id, so the suite can drive it. */
+  static Optional<String> causeHeaderFor(String cause) {
+    if (cause == null || cause.isBlank()) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(
+          "http.extraHeader=" + CAUSATION_HEADER + ": " + UUID.fromString(cause.trim()));
+    } catch (IllegalArgumentException notAnId) {
+      return Optional.empty();
+    }
   }
 
   // -----------------------------------------------------------------------------------------

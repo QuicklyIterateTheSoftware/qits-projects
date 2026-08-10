@@ -74,13 +74,18 @@ import org.junit.jupiter.api.condition.OS;
 public class PackagedSurfaceIT {
 
   /**
-   * Hands the launched artifact its two databases the way a deployment does — as the generic
-   * resource triples {@code QITS_RESOURCE_DB_*} and {@code QITS_RESOURCE_EPICS_*}, not as the
-   * {@code quarkus.datasource.*} keys. The domain and epics jars ship {@code
-   * jdbc.url=${QITS_RESOURCE_DB_URL}} and {@code ${QITS_RESOURCE_EPICS_URL}}, so supplying the
-   * variables leaves the <b>shipped</b> expressions themselves under test. These overrides reach
-   * the launched process as system properties, and expression expansion reads the whole config, so
-   * the same six names resolve there.
+   * Hands the launched artifact its three databases the way a deployment does — as the generic
+   * resource triples {@code QITS_RESOURCE_DB_*}, {@code QITS_RESOURCE_EPICS_*} and {@code
+   * QITS_RESOURCE_EVENTSTREAM_*}, not as the {@code quarkus.datasource.*} keys. The domain, epics
+   * and qits-eventstream jars ship {@code jdbc.url=${QITS_RESOURCE_DB_URL}} and its two siblings, so
+   * supplying the variables leaves the <b>shipped</b> expressions themselves under test. These
+   * overrides reach the launched process as system properties, and expression expansion reads the
+   * whole config, so the same nine names resolve there.
+   *
+   * <p>The third triple is not optional and is the whole reason this javadoc changed: the bus jar is
+   * dark outside a deployment, and dark stops publishing and dialling rather than connecting — so a
+   * packaged process handed no eventstream url dies at Flyway naming the missing variable, which is
+   * exactly the refuse-to-boot stance this IT exists to keep honest.
    *
    * <p>The databases are on an embedded postgres this JVM starts. <b>Their urls travel through
    * system properties rather than static fields</b>: a test profile is instantiated in more than
@@ -100,7 +105,10 @@ public class PackagedSurfaceIT {
           "QITS_RESOURCE_DB_PASSWORD", EmbeddedPg.PASSWORD,
           "QITS_RESOURCE_EPICS_URL", databaseUrl("qp_it_epics"),
           "QITS_RESOURCE_EPICS_USERNAME", EmbeddedPg.USER,
-          "QITS_RESOURCE_EPICS_PASSWORD", EmbeddedPg.PASSWORD);
+          "QITS_RESOURCE_EPICS_PASSWORD", EmbeddedPg.PASSWORD,
+          "QITS_RESOURCE_EVENTSTREAM_URL", databaseUrl("qp_it_eventstream"),
+          "QITS_RESOURCE_EVENTSTREAM_USERNAME", EmbeddedPg.USER,
+          "QITS_RESOURCE_EVENTSTREAM_PASSWORD", EmbeddedPg.PASSWORD);
     }
 
     private static synchronized String databaseUrl(String database) {

@@ -11,13 +11,22 @@
 # whichever tier listens to the built branch.
 deployment_target: environment
 
-# TWO DATABASES, because this application opens two datasources with two Flyway lineages: `projects`
-# (domain/) and `epics` (epics/). qits-platform-deployments creates a login role and a database for
-# each on the postgres of this tier before the container starts, and injects
-# QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD — the generic contract the two library jars map
+# THREE DATABASES, because this application opens three datasources with three Flyway lineages:
+# `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and
+# durable-claim tables). qits-platform-deployments creates a login role and a database for each on
+# the postgres of this tier before the container starts, and injects
+# QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD — the generic contract the three library jars map
 # onto quarkus.datasource.* in their own shipped defaults.
 #
 # `db` takes the DERIVED default database, qits_projects: `qits_` plus the application name without
-# its qits- prefix, dashes to underscores. `epics` NAMES its database, and has to: the default is
-# derived from the application and both entries would have asked for qits_projects.
-resources: postgresql:db, postgresql:epics:qits_epics
+# its qits- prefix, dashes to underscores. `epics` and `eventstream` NAME their databases, and have
+# to: the default is derived from the application, so all three entries would have asked for
+# qits_projects.
+#
+# THE EVENTSTREAM ENTRY IS NOT OPTIONAL AND ITS NAME IS LOAD-BEARING. This service consumes the git
+# host's SCM events durably (bus/ScmBackupTriggerListener), which is what replaced the post-receive
+# HTTP call its backup trigger used to arrive on. The jar reads QITS_RESOURCE_EVENTSTREAM_*, so the
+# resource name here is what makes those variables exist; rename it and the expression is
+# unresolvable and the process refuses to boot at Flyway. Being dark (`qits.eventstream.enabled`)
+# would not save it — dark stops publishing, sweeping and dialling, never the datasource.
+resources: postgresql:db, postgresql:epics:qits_epics, postgresql:eventstream:qits_projects_eventstream

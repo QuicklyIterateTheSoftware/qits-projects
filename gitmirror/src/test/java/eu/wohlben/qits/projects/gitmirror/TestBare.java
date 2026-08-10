@@ -66,6 +66,17 @@ final class TestBare {
     }
   }
 
+  /**
+   * A real working checkout with one commit on {@code main} — something a mirror root can be nested
+   * inside, which is what a developer's clone and every {@code target/} directory actually are.
+   */
+  static Path checkout(Path dir) throws Exception {
+    Files.createDirectories(dir);
+    run(dir.toFile(), "git", "init", "-q", "-b", "main");
+    commit(dir, "README.md", "# enclosing\n", "initial commit");
+    return dir;
+  }
+
   static String refIn(Path repo, String rev) throws Exception {
     return output(repo.toFile(), "git", "rev-parse", rev).trim();
   }

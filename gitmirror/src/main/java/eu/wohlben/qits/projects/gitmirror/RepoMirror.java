@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -101,11 +102,30 @@ public final class RepoMirror {
 
   /** Fetch when the mirror is older than the freshness window; clone it first if it is absent. */
   public void refresh() {
-    if (Files.isDirectory(gitDir)
-        && System.currentTimeMillis() - fetchedAtMillis < freshness.toMillis()) {
+    if (isMirror() && System.currentTimeMillis() - fetchedAtMillis < freshness.toMillis()) {
       return;
     }
     refreshNow();
+  }
+
+  /**
+   * Whether {@link #gitDir} holds a repository, asked by the presence of {@code HEAD} — which every
+   * bare repository has and no half-written directory does.
+   *
+   * <p><b>{@code Files.isDirectory(gitDir)} is what this replaced, and the difference is not
+   * pedantry.</b> A directory that exists but holds no repository sent {@link #refreshNow} down the
+   * <em>fetch</em> branch, and a git command run in a directory that is not a repository does not
+   * fail — it walks UP looking for one. The mirror root lives inside a checkout in development and
+   * under a test's {@code target/} on every build, so the repository git found was the enclosing
+   * <b>working clone</b>, and the fetch is {@code --prune +refs/*:refs/*}: it rewrote and pruned
+   * every ref in it. Measured, on this repository, on 2026-08-10 — a half-deleted mirror left by a
+   * test's state reset, and every local branch gone, unpushed work included.
+   *
+   * <p>{@link #guardEnv} closes the same hole from the other side, and both stay: this decides which
+   * branch is correct, that one makes the wrong branch harmless.
+   */
+  private boolean isMirror() {
+    return Files.isRegularFile(gitDir.resolve("HEAD"));
   }
 
   /**
@@ -116,7 +136,11 @@ public final class RepoMirror {
   public void refreshNow() {
     fetchLock.lock();
     try {
-      if (!Files.isDirectory(gitDir)) {
+      if (!isMirror()) {
+        // Not "absent" — not a REPOSITORY. A leftover directory takes this branch too, and
+        // cloneMirror deletes it before cloning, so a gutted mirror heals instead of being fetched
+        // into. See isMirror for what fetching into one used to do.
+        deleteQuietly(gitDir);
         cloneMirror();
       } else {
         fetch();
@@ -732,9 +756,44 @@ public final class RepoMirror {
     return unbounded(gitDir.toFile(), env, argv);
   }
 
+  /**
+   * The environment every git call here carries, so that <b>no</b> invocation can address a
+   * repository this class does not mean.
+   *
+   * <p>Two keys, and they answer two different halves:
+   *
+   * <ul>
+   *   <li>{@code GIT_DIR}, when the call runs <em>in</em> the mirror. It names the repository
+   *       outright, so git performs no discovery at all and a directory that is not a repository is
+   *       an error rather than a search.
+   *   <li>{@code GIT_CEILING_DIRECTORIES}, always — including on the calls that run nowhere in
+   *       particular ({@code clone}, {@code init}, {@code ls-remote}). It stops discovery from
+   *       climbing past the mirror root, so even a future call added without a working directory
+   *       cannot reach the checkout this process happens to be running inside.
+   * </ul>
+   *
+   * <p><b>This is a guard, not the fix.</b> The defect was {@link #refreshNow} choosing the fetch
+   * branch for a directory holding no repository; {@link #isMirror} is what corrects that, and its
+   * javadoc records what the miss cost. This exists because the cost was a silent rewrite of an
+   * unrelated repository's refs, and a class that shells {@code git} with {@code --prune
+   * +refs/*:refs/*} should not be one careless call away from that a second time.
+   *
+   * <p>The caller's overlay is applied over this, so an explicit {@code GIT_WORK_TREE} or {@code
+   * GIT_INDEX_FILE} still wins — {@code GitCli.run} puts the map last for that reason.
+   */
+  private Map<String, String> guardEnv(File cwd, Map<String, String> env) {
+    Map<String, String> guarded = new LinkedHashMap<>();
+    guarded.put("GIT_CEILING_DIRECTORIES", gitDir.getParent().toAbsolutePath().toString());
+    if (cwd != null && cwd.toPath().toAbsolutePath().equals(gitDir.toAbsolutePath())) {
+      guarded.put("GIT_DIR", gitDir.toAbsolutePath().toString());
+    }
+    guarded.putAll(env);
+    return guarded;
+  }
+
   private GitCli.Result unbounded(File cwd, Map<String, String> env, String... argv) {
     try {
-      return cli.run(cwd, env, null, null, argv);
+      return cli.run(cwd, guardEnv(cwd, env), null, null, argv);
     } catch (Exception e) {
       throw new GitMirrorException(
           "git " + String.join(" ", argv) + " failed" + (cwd != null ? " in " + cwd : ""), e);
@@ -748,8 +807,9 @@ public final class RepoMirror {
 
   /** {@link #wire(String, Path, String...)} with a per-line tap on the merged output. */
   private GitCli.Result wire(String what, Path cwd, Consumer<String> onLine, String... argv) {
+    File dir = cwd == null ? null : cwd.toFile();
     try {
-      return cli.run(cwd == null ? null : cwd.toFile(), Map.of(), onLine, networkTimeout, argv);
+      return cli.run(dir, guardEnv(dir, Map.of()), onLine, networkTimeout, argv);
     } catch (Exception e) {
       throw new GitMirrorException(what + ": " + e.getMessage(), e);
     }

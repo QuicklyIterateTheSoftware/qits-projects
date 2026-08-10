@@ -76,6 +76,62 @@ class RepoMirrorTest {
   }
 
   @Test
+  void aMirrorDirectoryHoldingNoRepositoryIsRecloned() throws Exception {
+    RepoMirror mirror = mirrors.of(repoId);
+    mirror.refreshNow();
+    assertTrue(mirror.resolve("refs/heads/main").isPresent());
+
+    // What a half-finished delete leaves behind: the directory, and nothing in it. This used to be
+    // indistinguishable from a healthy mirror, because the branch was chosen on isDirectory.
+    deleteContents(mirror.gitDir());
+    assertTrue(Files.isDirectory(mirror.gitDir()), "the directory survives; the repository does not");
+
+    mirror.refreshNow();
+
+    assertEquals(
+        TestBare.refIn(bare, "main"),
+        mirror.resolve("refs/heads/main").orElseThrow(),
+        "a gutted mirror heals by cloning again");
+  }
+
+  @Test
+  void aGuttedMirrorInsideACheckoutLeavesThatCheckoutsRefsAlone() throws Exception {
+    // THE REGRESSION, and it cost real work: the mirror root lives inside a checkout in development
+    // and under target/ on every build. A git command run in a directory that is not a repository
+    // walks UP until it finds one, so fetching into a gutted mirror ran
+    // `fetch --prune +refs/*:refs/*` against the ENCLOSING repository and pruned every ref it had.
+    Path enclosing = TestBare.checkout(tmp.resolve("enclosing-checkout"));
+    String before = TestBare.refIn(enclosing, "main");
+
+    GitMirrors nested =
+        new GitMirrors(
+            new GitCli(),
+            remotes,
+            enclosing.resolve("target").resolve("projects-data"),
+            Duration.ofSeconds(60),
+            Duration.ZERO);
+    RepoMirror mirror = nested.of(repoId);
+    mirror.refreshNow();
+    deleteContents(mirror.gitDir());
+
+    mirror.refreshNow();
+
+    assertEquals(before, TestBare.refIn(enclosing, "main"), "the enclosing checkout is untouched");
+    assertEquals(TestBare.refIn(bare, "main"), mirror.resolve("refs/heads/main").orElseThrow());
+  }
+
+  /** Empties a directory without removing it — a delete that got halfway. */
+  private static void deleteContents(Path root) throws Exception {
+    try (var paths = Files.walk(root)) {
+      for (Path p : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+        if (!p.equals(root)) {
+          Files.deleteIfExists(p);
+        }
+      }
+    }
+  }
+
+  @Test
   void aFetchPrunesBranchesTheHostNoLongerHas() throws Exception {
     RepoMirror mirror = mirrors.of(repoId);
     mirror.refreshNow();

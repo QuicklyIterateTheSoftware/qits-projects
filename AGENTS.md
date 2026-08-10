@@ -335,7 +335,7 @@ one wrong fails silently: no url leaves the daemon idle, no token leaves its API
     QITS_PROJECTS_DAEMON_API_BASE_PATH   /projects/container/<projectId>/
     QITS_PROJECTS_DAEMON_PROJECT_ID      the project served
     QITS_PROJECTS_DAEMON_REPO_NAME       the wrapper, <slug>-<slug> — the clone is name-addressed
-    QITS_PROJECTS_DAEMON_GIT_BASE        stated, never derived: the git host is qits-artifacts
+    QITS_PROJECTS_DAEMON_GIT_BASE        stated, never derived: the git host is qits-githost
     QITS_PROJECTS_DAEMON_API_TOKEN       qits.projects.daemon-api-token
     QITS_PROJECTS_DAEMON_API_PORT        13338, also the authority the proxy pins
     QITS_PROJECTS_DAEMON_HOOKS_PORT      13337

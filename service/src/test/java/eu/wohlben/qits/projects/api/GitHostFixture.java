@@ -21,14 +21,14 @@ import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 
 /**
- * Stands in for qits-artifacts' git host, for {@link PackagedSurfaceIT} only.
+ * Stands in for qits-githost, for {@link PackagedSurfaceIT} only.
  *
  * <p>The packaged binary wires {@code ConfiguredGitHostAddress} + {@code HttpGitHostRepositories} —
  * the shipped, production beans, with no test double compiled in — so the CDI fakes {@code
  * FakeGitHostAddress}/{@code FakeGitHostRepositories} (domain test scope, which win inside a {@code
  * @QuarkusTest}'s own JVM) cannot reach a process a {@code @QuarkusIntegrationTest} launches
  * separately. This is that packaged run's counterpart: a real HTTP server in <b>this</b> JVM, handed
- * to the launched process as {@code qits.artifacts.url} (a {@code QuarkusTestResourceLifecycleManager}
+ * to the launched process as {@code qits.githost.url} (a {@code QuarkusTestResourceLifecycleManager}
  * return value becomes a {@code -D} argument on the launched process for both the fast-jar and the
  * native binary — see {@code ArtifactLauncher.includeAsSysProps}) — so the binary talks to something
  * real instead of an unresolved host name.
@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * http-backend} as CGI for the three smart-HTTP routes, because {@code RepoMirror}'s push needs a
  * real {@code receive-pack} — a static-file handler only speaks the read-only dumb protocol and
  * refuses a push outright ({@code fatal: dumb http transport does not support...}). That is what
- * qits-artifacts' own {@code GitHostRoutes} does behind {@code /artifacts/git/<repoId>}, so shelling
+ * qits-githost's own {@code GitHostRoutes} does behind {@code /git/<repoId>}, so shelling
  * the same CGI program here reproduces the wire protocol rather than a fresh reading of it.
  *
  * <p>Bare repositories live under a fixed root as {@code <repoId>.git}, created by the lifecycle
@@ -50,7 +50,7 @@ import java.util.regex.Pattern;
 public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
 
   private static final Pattern REPO_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,63}");
-  private static final String BASE = "/artifacts/git/";
+  private static final String BASE = "/git/";
 
   private final ObjectMapper mapper = new ObjectMapper();
 
@@ -74,7 +74,7 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
-    return Map.of("qits.artifacts.url", "http://127.0.0.1:" + server.getAddress().getPort());
+    return Map.of("qits.githost.url", "http://127.0.0.1:" + server.getAddress().getPort());
   }
 
   @Override
@@ -115,7 +115,7 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
     }
   }
 
-  // --- the lifecycle verbs: PUT/GET /artifacts/git/<repoId> -----------------------------------
+  // --- the lifecycle verbs: PUT/GET /git/<repoId> -----------------------------------
 
   /** {@code PUT}/{@code GET …/:repoId} — the same contract {@code HttpGitHostRepositories} speaks. */
   private void lifecycle(HttpExchange exchange, String repoId) throws IOException {
@@ -176,7 +176,7 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
     }
   }
 
-  /** Same argv-safety discipline as qits-artifacts' own {@code isValidBranchName}. */
+  /** Same argv-safety discipline as qits-githost's own {@code isValidBranchName}. */
   private static boolean isValidBranchName(String name) {
     return name != null
         && !name.isBlank()

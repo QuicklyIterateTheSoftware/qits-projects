@@ -377,7 +377,7 @@ public class ProjectRepositoryControllerTest {
         .body("repository.lastBackup", nullValue());
   }
 
-  // --- name resolution: what qits-artifacts' name-addressed git scheme reads ---
+  // --- name resolution: what qits-githost's name-addressed git scheme reads ---
 
   private io.restassured.response.Response resolveByName(String projectId, String repoName) {
     return given()

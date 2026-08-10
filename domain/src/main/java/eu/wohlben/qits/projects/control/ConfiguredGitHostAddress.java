@@ -5,9 +5,16 @@ import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * The shipped {@link GitHostAddress}: {@code qits.artifacts.url} plus the {@code
- * /artifacts/git/<repoId>} route qits-platform-artifacts serves
- * (projects-volume-decoupling-plan.md §2.3).
+ * The shipped {@link GitHostAddress}: {@code qits.githost.url} plus the {@code /git/<repoId>} route
+ * qits-githost serves (projects-volume-decoupling-plan.md §2.3).
+ *
+ * <p><b>The git host is qits-githost, not qits-artifacts.</b> The byte-plane split moved the git
+ * smart-HTTP server into a service of its own — a repository is not an artifact, it only shared the
+ * storage layout — so both the key and the route segment moved with it. The old spelling was {@code
+ * qits.artifacts.url} plus {@code /artifacts/git/<repoId>}; a deployment still passing {@code
+ * QITS_ARTIFACTS_URL} configures nothing now, which is the loud failure rather than the quiet one
+ * of aiming every mirror clone, fetch, push and lifecycle call at a service that no longer serves
+ * git.
  *
  * <p><b>{@code @DefaultBean}.</b> It yields to any other bean of the type, which is what lets a test
  * double point every mirror at a local bare with no change on the production side. Keep the
@@ -15,7 +22,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * ArcProcessor#validate}, for every test at once.
  *
  * <p>The path segment is spelled here and not configured. It is the git host's contract, not a
- * deployment's choice — {@code GitHostRoutes.BASE} in qits-platform-artifacts is the same literal —
+ * deployment's choice — {@code GitHostRoutes.BASE} in qits-githost is the same literal —
  * and a second copy in a properties file would be a second place for it to drift.
  */
 @ApplicationScoped
@@ -25,17 +32,22 @@ public class ConfiguredGitHostAddress implements GitHostAddress {
   /**
    * Scheme, host and port with <b>no path</b> — the shape {@code qits.observability.url} already
    * uses, so one value works whether the call goes direct on qits-net or through the gateway.
+   *
+   * <p>The default names an ENVIRONMENT service, so it carries an environment: qits-githost is
+   * deployed once per environment as {@code <env>-qits-githost}, and only a deployment knows which
+   * one it is. The default is the dev spelling so a developer's process reaches the standing
+   * environment; a deployment's run-args own the real value.
    */
-  @ConfigProperty(name = "qits.artifacts.url", defaultValue = "http://qits-platform-artifacts:8080")
-  String artifactsUrl;
+  @ConfigProperty(name = "qits.githost.url", defaultValue = "http://dev-qits-githost:8080")
+  String gitHostUrl;
 
   @Override
   public String fetchUrl(String repoId) {
-    String base = artifactsUrl == null ? "" : artifactsUrl.trim();
+    String base = gitHostUrl == null ? "" : gitHostUrl.trim();
     while (base.endsWith("/")) {
       base = base.substring(0, base.length() - 1);
     }
-    return base + "/artifacts/git/" + repoId;
+    return base + "/git/" + repoId;
   }
 
   /** One address, so reads and writes cannot drift apart in a deployment. */

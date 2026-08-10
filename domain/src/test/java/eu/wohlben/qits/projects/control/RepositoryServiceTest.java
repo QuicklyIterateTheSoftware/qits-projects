@@ -312,7 +312,7 @@ public class RepositoryServiceTest {
    * <p>Stood up with a plain {@code pre-receive} that refuses every update, which is as far as the
    * fake host goes: native git renders a shell hook's decline as {@code ! [remote rejected] <ref>
    * (pre-receive hook declined)} — its own fixed wording, not the script's stderr. A hook that puts
-   * its own sentence in those parentheses is qits-artifacts' JGit {@code ProtectedRefHook}, and
+   * its own sentence in those parentheses is qits-githost's JGit {@code ProtectedRefHook}, and
    * proving that text is its test suite's job; what this pins is the mapping.
    */
   @Test

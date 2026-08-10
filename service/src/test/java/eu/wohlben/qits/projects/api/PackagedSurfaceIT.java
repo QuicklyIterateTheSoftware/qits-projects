@@ -65,8 +65,8 @@ import org.junit.jupiter.api.condition.OS;
  * HttpGitHostRepositories}/{@code ConfiguredGitHostAddress}, not the {@code Fake*} CDI doubles
  * {@code domain}'s and this module's own {@code @QuarkusTest}s use (those win only inside the JVM
  * that starts them, and this test starts a separate process). {@link GitHostFixture} is that
- * process' stand-in for qits-artifacts: a real HTTP server in this JVM, handed to the launched
- * process as {@code qits.artifacts.url}.
+ * process' stand-in for qits-githost: a real HTTP server in this JVM, handed to the launched
+ * process as {@code qits.githost.url}.
  */
 @QuarkusIntegrationTest
 @QuarkusTestResource(GitHostFixture.class)

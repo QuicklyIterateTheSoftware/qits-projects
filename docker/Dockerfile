@@ -61,10 +61,10 @@
 # disk rather than in SQL, the same reason the git mirrors above are not in the database either.
 #
 # The on-disk contract that used to put `qits.repositories.data-dir` on this list is two-way now,
-# not three: qits-artifacts serves the bare origins over git smart-HTTP, and qits-workspaces still
+# not three: qits-githost serves the bare origins over git smart-HTTP, and qits-workspaces still
 # reads pre-move workspace sidecars off the same volume. This service mounts neither — every
 # repository it touches is now a private mirror it clones over the wire, through
-# `qits.artifacts.url`.
+# `qits.githost.url`.
 #
 # That split is deliberate, but it is now a three-way one, not two: a database is handed to this
 # application by the deployment that provisioned it and can never be guessed, so it refuses to start
@@ -88,7 +88,7 @@
 # The builder JDK MUST be 25: native-image cannot read bytecode newer than its own JDK, and this
 # project targets release 25.
 #
-# `localhost:8081/quay/…` is qits-artifacts' pull-through mirror of quay.io: the first build fetches
+# `localhost:8081/quay/…` is the platform's pull-through mirror of quay.io: the first build fetches
 # the image from upstream and caches it, every later build is served from local disk. The tag is
 # upstream's, unchanged — the mirror revalidates it, so `jdk-25` still moves when quay moves it.
 FROM localhost:8081/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build

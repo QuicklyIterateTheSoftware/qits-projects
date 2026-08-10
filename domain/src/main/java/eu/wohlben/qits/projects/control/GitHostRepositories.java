@@ -4,7 +4,7 @@ import java.util.Optional;
 
 /**
  * The git host's lifecycle verbs this context needs — does it hold a repository, and can one be
- * created — over the wire contract qits-artifacts' {@code GitHostRoutes} serves
+ * created — over the wire contract qits-githost's {@code GitHostRoutes} serves
  * (projects-volume-decoupling-plan.md §2.1, §2.3, §3.2).
  *
  * <p><b>Mandatory, unlike every other port in this repo's README table.</b> Every one of those is
@@ -21,11 +21,11 @@ import java.util.Optional;
  */
 public interface GitHostRepositories {
 
-  /** {@code GET /artifacts/git/<repoId>}'s 200 body: the repository's id and current default branch. */
+  /** {@code GET /git/<repoId>}'s 200 body: the repository's id and current default branch. */
   record HostRepository(String repoId, String defaultBranch) {}
 
   /**
-   * {@code PUT /artifacts/git/<repoId>} — creates the repository with {@code defaultBranch} if the
+   * {@code PUT /git/<repoId>} — creates the repository with {@code defaultBranch} if the
    * host does not hold it yet. <b>Idempotent</b>: a repeat call against an id that already exists
    * succeeds as a no-op, which is what makes create-then-publish safely re-runnable after a push
    * that failed partway — there is no delete verb to unwind with, and none is needed (§2.2).
@@ -38,7 +38,7 @@ public interface GitHostRepositories {
   boolean ensure(String repoId, String defaultBranch);
 
   /**
-   * {@code GET /artifacts/git/<repoId>} — present means the host holds this repository, which is
+   * {@code GET /git/<repoId>} — present means the host holds this repository, which is
    * what {@code adoptExistingOrigin} asks instead of a {@code Files.isDirectory} on the old shared
    * volume.
    *

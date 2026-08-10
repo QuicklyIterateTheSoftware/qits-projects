@@ -743,7 +743,7 @@ public class RepositoryService {
 
   /**
    * The id shape every repository row carries — created or adopted, the id is the repository's
-   * addressable name. Identical to qits-artifacts' git-host route pattern, because the id
+   * addressable name. Identical to qits-githost's git-host route pattern, because the id
    * <em>is</em> the segment that host serves and the directory name under the data dir — so a
    * traversal-shaped id ({@code ..}, a slash, a leading dash) must not be registrable here either.
    */
@@ -782,7 +782,7 @@ public class RepositoryService {
    * mirror, no pull, no push and no workspace: it exists here only so the row can be found by id.
    *
    * <p>No name alias either. An alias is what makes {@code /git/<projectId>/<name>} resolve, and
-   * every existing caller reaches these repositories id-addressed at {@code /artifacts/git/<id>}.
+   * every existing caller reaches these repositories id-addressed at {@code /git/<id>}.
    * Registering one eagerly would also have to disambiguate against a basename already taken in the
    * same project, which would produce a name nobody asked for; {@link RepositoryNameResolver}
    * registers one lazily and by the same rules if a workspace ever needs it.

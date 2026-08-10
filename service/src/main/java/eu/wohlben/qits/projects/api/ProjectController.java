@@ -283,8 +283,8 @@ public class ProjectController {
   }
 
   /**
-   * Resolves a project-scoped repository name to its id — the read behind qits-artifacts'
-   * name-addressed git scheme {@code /artifacts/git/<projectId>/<repoName>}, which it reaches
+   * Resolves a project-scoped repository name to its id — the read behind qits-githost's
+   * name-addressed git scheme {@code /git/<projectId>/<repoName>}, which it reaches
    * through its optional {@code githost.RepositoryNameResolver} port.
    *
    * <p><b>Unguarded, and documented rather than hidden.</b> This service has no machine auth:

@@ -38,7 +38,7 @@ detection, prompt drafts, workspace history. That is
 *inside* a workspace container — commands, terminals, agents — is
 [qits-workspace-daemon](https://github.com/QuicklyIterateTheSoftware/qits-workspace-daemon). The git
 smart-HTTP host that serves these bare origins over the wire is
-[qits-artifacts](https://github.com/QuicklyIterateTheSoftware/qits-artifacts).
+[qits-githost](https://github.com/QuicklyIterateTheSoftware/qits-githost).
 
 ## Layout
 
@@ -72,7 +72,7 @@ Everything it serves sits under its gateway segment, `/projects`:
 |---|---|
 | `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links — except under the prefixes below |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
-| `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/artifacts/git/<projectId>/<repoName>` through. Unguarded and in the document — the only route the git host calls, now that the post-receive intake has become a domain event |
+| `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/git/<projectId>/<repoName>` through. Unguarded and in the document — the only route the git host calls, now that the post-receive intake has become a domain event |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
 | `/projects/q/openapi`, `/projects/q/swagger-ui` | the API document and its UI (`quarkus.http.non-application-root-path`) |
@@ -135,11 +135,11 @@ deliberate tiers (`dev`, and later `preprod`/`prod`) created over qits-cd's own 
 tier and not one per project. Nothing here creates, names or reconciles one.
 
 Reached the other way: qits-workspaces' `RepositoryLookup` and `RepositoryAddressResolver`, and
-qits-artifacts' `githost.RepositoryNameResolver`, are ports **those** repos declare and this one
+qits-githost's `githost.RepositoryNameResolver`, are ports **those** repos declare and this one
 satisfies. This jar does not implement them — the assembling application does, by adapting
 `RepositoryRepository` / `RepositoryNameRepository` (which live here) to their interfaces, or, for
 a service that runs apart, by calling the by-name route in the table above. Note the name collision:
-artifacts' `githost.RepositoryNameResolver` (a port) and this context's
+qits-githost's `githost.RepositoryNameResolver` (a port) and this context's
 `control.RepositoryNameResolver` (the alias resolver) are unrelated types.
 
 ## The startup self-seed

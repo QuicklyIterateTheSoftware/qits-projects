@@ -18,16 +18,16 @@ import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * The shipped {@link GitHostRepositories}: {@code PUT}/{@code GET} against qits-artifacts'
- * {@code /artifacts/git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §3.2).
+ * The shipped {@link GitHostRepositories}: {@code PUT}/{@code GET} against qits-githost's
+ * {@code /git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §3.2).
  *
  * <p>The url is {@link GitHostAddress#fetchUrl}: the same {@code
- * <qits.artifacts.url>/artifacts/git/<repoId>} the mirror's clone, fetch and {@code ls-remote} use,
+ * <qits.githost.url>/git/<repoId>} the mirror's clone, fetch and {@code ls-remote} use,
  * which is exactly the lifecycle route's own address (§2.3 names three verbs on that one path). One
  * port supplies it so the two cannot drift apart in a deployment.
  *
  * <p><b>{@code Map}, never a DTO</b>, for the request body and the parsed response — the same
- * discipline qits-artifacts' {@code GitHostRoutes} keeps on the wire (§2.3: "Responses are {@code
+ * discipline qits-githost's {@code GitHostRoutes} keeps on the wire (§2.3: "Responses are {@code
  * JsonObject}, never a DTO"). A record reached only through a bare {@code ObjectMapper} needs
  * {@code @RegisterForReflection} to survive a native image; a {@code Map} needs nothing, so this
  * class adds zero native-image registrations.
@@ -87,7 +87,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
       return false;
     }
     throw new GitHostException(
-        "qits-platform-artifacts answered "
+        "qits-githost answered "
             + response.statusCode()
             + " creating "
             + repoId
@@ -107,7 +107,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
     }
     if (response.statusCode() != 200) {
       throw new GitHostException(
-          "qits-platform-artifacts answered "
+          "qits-githost answered "
               + response.statusCode()
               + " reading "
               + repoId
@@ -121,7 +121,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
           new HostRepository(repoId, defaultBranch == null ? null : defaultBranch.toString()));
     } catch (IOException e) {
       throw new GitHostException(
-          "Could not read qits-platform-artifacts' answer for " + repoId + " at " + url, e);
+          "Could not read qits-githost's answer for " + repoId + " at " + url, e);
     }
   }
 
@@ -130,7 +130,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
       return client.send(request, HttpResponse.BodyHandlers.ofString());
     } catch (IOException e) {
       throw new GitHostException(
-          "qits-platform-artifacts unreachable " + verbing + " " + request.uri(), e);
+          "qits-githost unreachable " + verbing + " " + request.uri(), e);
     } catch (InterruptedException e) {
       // Never swallow the interrupt: this runs on a request thread the container may be shutting
       // down.

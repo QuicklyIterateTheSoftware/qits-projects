@@ -15,7 +15,7 @@
          a ref moves. Nothing about projects, repositories or rows is here — those stay in `domain`,
          which calls this through a handful of records and two declared ports.
 
-         WHY IT IS ITS OWN MODULE. This service used to reach into the bare origins qits-artifacts
+         WHY IT IS ITS OWN MODULE. This service used to reach into the bare origins qits-githost
          serves, on the shared `qits-repositories` volume, and write refs there directly. That is
          what made skeleton commits, branch creates and deletes, and pulled-in commits fire no
          post-receive and produce no CI run. Removing it means every one of those becomes a push —

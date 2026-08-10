@@ -24,10 +24,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link HttpGitHostRepositories} against a local server standing in for qits-artifacts — plain
+ * {@link HttpGitHostRepositories} against a local server standing in for qits-githost — plain
  * JUnit over a directly-constructed bean, {@code DnsDomainRegistrarTest}'s idiom. What is under
  * test is the wire shape: the exact absolute url, method and body {@code ensure}/{@code find} send
- * (§2.3's {@code PUT}/{@code GET /artifacts/git/<repoId>}), and which status codes become which
+ * (§2.3's {@code PUT}/{@code GET /git/<repoId>}), and which status codes become which
  * outcome.
  */
 class HttpGitHostRepositoriesTest {
@@ -73,7 +73,7 @@ class HttpGitHostRepositoriesTest {
     return new GitHostAddress() {
       @Override
       public String fetchUrl(String repoId) {
-        return base + "/artifacts/git/" + repoId;
+        return base + "/git/" + repoId;
       }
 
       @Override
@@ -104,7 +104,7 @@ class HttpGitHostRepositoriesTest {
     assertEquals(1, received.size());
     Received request = received.get(0);
     assertEquals("PUT", request.method());
-    assertEquals("/artifacts/git/repo-1", request.path());
+    assertEquals("/git/repo-1", request.path());
     assertEquals(Map.of("defaultBranch", "main"), new ObjectMapper().readValue(request.body(), Map.class));
   }
 
@@ -153,7 +153,7 @@ class HttpGitHostRepositoriesTest {
     assertEquals(1, received.size());
     Received request = received.get(0);
     assertEquals("GET", request.method());
-    assertEquals("/artifacts/git/repo-1", request.path());
+    assertEquals("/git/repo-1", request.path());
   }
 
   @Test

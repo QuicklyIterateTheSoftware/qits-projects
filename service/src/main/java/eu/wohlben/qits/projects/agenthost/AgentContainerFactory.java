@@ -124,14 +124,14 @@ public class AgentContainerFactory {
   String ownPort;
 
   /**
-   * The git host the daemon's boot self-clone reads from, including qits-artifacts' own {@code
-   * /artifacts/git} prefix. Stated outright rather than left to the daemon's derivation, which
+   * The git host the daemon's boot self-clone reads from, including qits-githost's own {@code
+   * /git} prefix. Stated outright rather than left to the daemon's derivation, which
    * would guess a <em>different</em> service's address off this one's authority and say so in a
    * WARN.
    */
   @ConfigProperty(
       name = "qits.projects.agent-git-base",
-      defaultValue = "http://qits-artifacts:8080/artifacts/git")
+      defaultValue = "http://dev-qits-githost:8080/git")
   String gitBase;
 
   /**
@@ -273,7 +273,7 @@ public class AgentContainerFactory {
     // (<gitBase>/<projectId>/<repoName>) because a wrapper's submodule urls are relative and an
     // id-addressed root breaks every one of them, so both halves are required.
     container.env("QITS_PROJECTS_DAEMON_REPO_NAME", repoName);
-    // Stated, never derived: the git host is qits-artifacts, a different service from the one the
+    // Stated, never derived: the git host is qits-githost, a different service from the one the
     // control socket points at, so the daemon's own fallback would be a guess with a WARN on it.
     container.env("QITS_PROJECTS_DAEMON_GIT_BASE", gitBase);
     // The bearer the daemon's loopback API requires. Unset means the API does not bind at all.

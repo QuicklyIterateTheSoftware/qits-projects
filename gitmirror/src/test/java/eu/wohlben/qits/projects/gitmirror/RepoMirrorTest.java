@@ -224,7 +224,7 @@ class RepoMirrorTest {
 
   @Test
   void aPushTheHookRejectsIsAnAnswerNotAnException() throws Exception {
-    // The protection hook is qits-artifacts' job in production; this fixture stands in for its
+    // The protection hook is qits-githost's job in production; this fixture stands in for its
     // refusal shape by rejecting a delete of the checked-out branch some servers guard the same
     // way — what matters here is only that PushOutcome, not an exception, carries the refusal.
     RepoMirror mirror = mirrors.of(repoId);

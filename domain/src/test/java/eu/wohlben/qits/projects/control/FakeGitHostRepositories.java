@@ -11,8 +11,8 @@ import java.util.Optional;
 
 /**
  * The test-side {@link GitHostRepositories}: {@code git init --bare -b <branch>} at the address
- * {@link GitHostAddress} names, standing in for qits-artifacts' {@code PUT}/{@code GET
- * /artifacts/git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §5).
+ * {@link GitHostAddress} names, standing in for qits-githost's {@code PUT}/{@code GET
+ * /git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §5).
  *
  * <p>The only implementation of this <b>mandatory</b> port on the {@code domain} test classpath —
  * {@code HttpGitHostRepositories} lives in {@code service/src/main} and is not visible here — so no
@@ -79,7 +79,7 @@ public class FakeGitHostRepositories implements GitHostRepositories {
   /**
    * Installs a {@code pre-receive} hook on {@code repoId}'s bare that refuses an UPDATE or DELETE of
    * the repository's own default branch unless the push carries a matching {@code -o
-   * qits.token=<value>} — the shape of qits-artifacts' real {@code ProtectedRefHook}, reduced to
+   * qits.token=<value>} — the shape of qits-githost's real {@code ProtectedRefHook}, reduced to
    * what this suite needs (no {@code qits.release} fast-forward door: this service never presents
    * that option). {@code requiredToken} may be blank, standing for "no token configured on the
    * host" — {@code -o qits.token=<anything>} then never matches, the same as the real hook treats an

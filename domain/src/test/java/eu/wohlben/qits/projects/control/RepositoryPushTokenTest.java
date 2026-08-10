@@ -15,7 +15,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * The git host's push-token bypass ({@code -o qits.token=<value>}, qits-artifacts' {@code
+ * The git host's push-token bypass ({@code -o qits.token=<value>}, qits-githost's {@code
  * ProtectedRefHook}), configured here under the SAME key that hook reads
  * ({@code qits.repositories.git.push-token}) so a deployment sets one value once. Its own {@code
  * @TestProfile} because the token has to be a real, non-blank value for these two cases — every

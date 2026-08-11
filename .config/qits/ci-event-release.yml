@@ -33,8 +33,8 @@
 # THE CLIENT IS PACKAGED, NOT INSTALLED BY THE IMAGE BUILD. service/src/main/webui is the
 # qits-spa-projects submodule and it is built HERE, in this step container, which sits on qits-net
 # and can reach the platform's npm registry. The Dockerfile's builder stage only packages the bundle
-# this half produced. (The image build joins qits-net now too, for the Maven half — see half two —
-# but the split stands.)
+# this half produced. (The image build takes a network of its own now, for the Maven half — host
+# networking, see half two — but the split stands.)
 #
 # THIS FILE IS INERT UNTIL qits-workspaces PUBLISHES SCMRelease, and it lands first on purpose: the
 # bus is at-most-once with no catch-up and no replay, so a trigger file must be in place before the
@@ -112,13 +112,13 @@ steps:
       cd -
 
       # --- half two: the image ------------------------------------------------------------------
-      # On qits-net, because the builder stage now resolves qits-eventstream and its two companions
-      # from the platform's Maven repository, which answers there and nowhere else. The address is
-      # derived from the injected env rather than spelled: the artifacts store is an environment
-      # service and its alias carries the tier. ci-post-receive.yml carries the full reasoning.
+      # On HOST networking, because the builder stage now resolves qits-eventstream and its two
+      # companions from the platform's Maven repository, and buildkit refuses a custom network on a
+      # build. The address is derived from the injected env rather than spelled: the artifacts store
+      # is an environment service. ci-post-receive.yml carries the full reasoning.
       ref="$QITS_REGISTRY/$QITS_IMAGE_REPOSITORY/qits-projects:$QITS_CI_SHA"
-      docker build --network qits-net \
-        --build-arg QITS_MAVEN_REPOSITORY_URL="$QITS_MAVEN_REGISTRY_URL" \
+      docker build --network host \
+        --build-arg QITS_MAVEN_REPOSITORY_URL="http://$QITS_REGISTRY/artifacts/maven/maven" \
         -t "$ref" -f docker/Dockerfile .
       docker push "$ref"
       docker rmi "$ref" || true

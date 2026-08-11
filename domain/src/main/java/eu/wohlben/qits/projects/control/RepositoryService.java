@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.control;
 
+import eu.wohlben.qits.db.DbRetry;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.InternalServerErrorException;
 import eu.wohlben.qits.projects.error.NotFoundException;
@@ -1977,17 +1978,30 @@ public class RepositoryService {
    * GET /projects/api/projects/{projectId}/repositories/by-name/{repoName}}. One resolving a
    * repository the other does not would show as drift that is not there.
    *
+   * <p><b>Held through a postgres cutover, not failed.</b> This read is qits-githost's 404 by proxy:
+   * the git host asks here for every name-addressed clone, fetch and push, and a connection lost
+   * mid-flight would answer "no such repository" for one that exists — which a git client caches as
+   * an answer rather than as an outage. {@link DbRetry} retries connection-class failures only, for
+   * 15 seconds; anything else is rethrown at once and an absent name still answers empty on the
+   * first attempt. The wrap sits OUTSIDE any transaction on purpose (neither caller is {@code
+   * @Transactional}, and this method opens none): retrying inside an open one would re-run
+   * statements on a connection already marked rollback-only. See db-patience-plan.md.
+   *
    * @param name the addressable name, with no {@code .git} suffix — callers reading it off a url or
    *     a path segment normalize first
    */
   public Optional<Repository> findByProjectAndName(String projectId, String name) {
-    return repositoryNameRepository
-        .findRepositoryByProjectAndName(projectId, name)
-        .or(
-            () ->
-                repositoryRepository
-                    .findByIdOptional(name)
-                    .filter(repo -> repo.project != null && repo.project.id.equals(projectId)));
+    return DbRetry.call(
+        "repository name resolution",
+        () ->
+            repositoryNameRepository
+                .findRepositoryByProjectAndName(projectId, name)
+                .or(
+                    () ->
+                        repositoryRepository
+                            .findByIdOptional(name)
+                            .filter(
+                                repo -> repo.project != null && repo.project.id.equals(projectId))));
   }
 
   // -----------------------------------------------------------------------------------------

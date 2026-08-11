@@ -82,6 +82,16 @@
             <artifactId>qits-eventstream</artifactId>
         </dependency>
         <dependency>
+            <!-- The database-patience pair, and both halves are used here. PatientPgDriver is what
+                 this module's shipped defaults name as the `projects` datasource's driver, so the
+                 class must be on the runtime classpath; DbRetry wraps the by-name read seam
+                 (RepositoryService#findByProjectAndName) and RepositoryNameResolver's own loop, the
+                 two reads a caller is waiting on that a postgres cutover would otherwise turn into
+                 a 404 for a repository that exists. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
         </dependency>

@@ -80,6 +80,14 @@
             <artifactId>qits-githost-events</artifactId>
         </dependency>
         <dependency>
+            <!-- PatientPgDriver. It arrives transitively through `domain` and `epics` too, and is
+                 declared here because THIS module's application.properties names it as well — for
+                 the eventstream datasource the bus jar brings, whose own defaults do not carry the
+                 baseline yet. A config key naming a class belongs in the pom that spells it. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
             <!-- domain's test-support only (see its jar plugin config): the port implementations
                  this module's @QuarkusTests need on the classpath, not a second copy of them. -->
             <groupId>${project.groupId}</groupId>
@@ -183,6 +191,16 @@
                  (migration-plan.md §4) and no auth/* module is carried here. -->
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-test-security</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- DatasourceBaselineRules, the config half of the platform's shared rules. It lives
+                 HERE and not in the entity modules because this is the only module whose config
+                 sees every datasource the application deploys with — `projects`, `epics` and the
+                 bus's `eventstream` — and the baseline is a property of the deployed application.
+                 The ArchUnit half stays one per entity module (see ArchRulesTest there). -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-arch-rules</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

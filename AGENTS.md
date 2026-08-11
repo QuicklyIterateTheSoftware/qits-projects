@@ -431,6 +431,39 @@ injects `QITS_RESOURCE_DB_*` and `QITS_RESOURCE_EPICS_*`. The two library jars m
 that mapping is the application's job, never the deployer's — and neither triple has a fallback: an
 unset variable leaves the expression unresolvable and the process dies at Flyway naming it.
 
+**Every postgresql datasource carries a three-line resilience block, and `DatasourceBaselineTest`
+fails the build if one loses a line.** The lines are `jdbc.driver=eu.wohlben.qits.db.PatientPgDriver`,
+`jdbc.validate-on-borrow=true` and `jdbc.acquisition-timeout=15S`, and they only work as a set:
+stock Agroal does *not* wait for a database that is gone (a failed connection **creation** goes
+straight to the caller, so `acquisition-timeout` alone bounds nothing but a starved pool), the
+patient driver is what holds the request while postgres comes back, and validation at borrow is what
+turns a dead pooled connection into a fresh creation attempt for it to be patient about. The
+measurements are in the superproject's `db-patience-plan.md`.
+
+Three datasources, three places the block is written, and the third is the odd one: `projects` in
+domain's jar, `epics` in the sibling's, and `eventstream` in **this application's own**
+`application.properties` — the one exception to "nothing the bus needs is spelled here", because the
+baseline belongs to the deployed application whoever shipped the datasource, and qits-eventstream's
+jar does not carry it yet. Drop those three lines when it does.
+
+The enforcement lives in `service` and **not** one per module, the opposite placement to
+`ArchRulesTest` above and for the mirror-image reason: those rules judge classes a module owns, while
+this one judges configuration only the deployable has all of. It is a `@QuarkusTest` on purpose —
+`application.properties` is a Quarkus config source, so a plain unit test would read the jars'
+defaults and none of this module's own lines.
+
+**`DbRetry` (qits-db-core) wraps read seams a cutover would otherwise turn into a wrong answer.** One
+is wrapped here: `RepositoryService.findByProjectAndName`, the read behind
+`GET …/repositories/by-name/{repoName}` — qits-githost's 404 by proxy, and a git client caches "no
+such repository" as an answer rather than as an outage. `RepositoryNameResolver.resolve` is wrapped
+too, around its own unique-constraint loop rather than inside it: that loop is the alias race and
+retries with no pause, and it used to swallow connection losses for three attempts and then report
+them as a race that never happened. Two rules govern every new wrap — **outside**
+`QuarkusTransaction.requiringNew()` and never inside an open transaction or a `synchronized` monitor
+— and the retried block must be re-runnable, which is why these are reads. `RepositoryNameCutoverTest`
+is the proof, and it pins both halves: the read survives a severed connection, and a name that
+resolves to nothing still answers 404 on the first attempt.
+
 The H2 lineages (V1..V6 and V1..V3) were **deleted rather than continued**, which needed one
 precondition: the move is an unwrap and a re-bootstrap, so no database anywhere was on either and no
 appended migration would have had a reader. Each fresh V1 is where its lineage arrived, translated,
@@ -463,13 +496,13 @@ entities and `epics` depends on nothing, so a guard downstream of it would neith
 nor survive its lift-out. A new `@Entity` that neither implements `CausedRow` nor declares
 `@Uncaused` fails the build naming the class.
 
-**`epics/src/test/resources/archunit.properties` is a workaround, not a preference.** With every
-epics entity participating, no class there carries `@Uncaused`, and the rule set's negative rule
-("nothing `@Uncaused` may implement `CausedRow`") matched zero classes — which ArchUnit fails by
-default. The module went red for being in the best state the rules describe. `archRule.
-failOnEmptyShould=false` is scoped to that module alone; `domain` keeps the default, since
-`RepositoryName` gives the same rule a class to check. The real fix is `allowEmptyShould(true)` on
-that rule in qits-arch-rules, which is another repository's to make.
+**`epics` needed an `archunit.properties` and no longer does.** Every epics entity participates, so
+no class there carries `@Uncaused` and the rule set's negative rule ("nothing `@Uncaused` may
+implement `CausedRow`") matched zero classes — which ArchUnit fails by default, and the module went
+red for being in the best state the rules describe. The module-scoped
+`archRule.failOnEmptyShould=false` bought time; the real fix was `allowEmptyShould(true)` on that
+rule in qits-arch-rules, it shipped in 2026.811.152803, and the file went with the pin. Do not
+reintroduce it: a rule that matches nothing anywhere else is still a typo worth failing on.
 
 ## Tests
 

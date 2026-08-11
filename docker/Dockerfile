@@ -133,17 +133,23 @@ COPY . .
 #
 #   service/src/main/webui is qits-spa-projects, and it depends on @qits/ui-components. That package
 #   exists ONLY on the platform's own npm registry (qits-artifacts). A RUN step in a docker build
-#   reaches the public internet — Maven Central, npmjs.org, nodejs.org — and can reach the platform
-#   registry by NO address: not the qits-net alias, not localhost:8081, not host.docker.internal. So
-#   the install cannot happen here, and an install that "worked" here would have resolved the @qits
-#   scope against npmjs.org, where that name does not exist and never will. Before the client took
-#   that dependency this stage did run the real install; it died on `npm error Exit handler never
-#   called!` the first time the webui's own .npmrc pointed at a registry with no route from here.
+#   reaches the public internet — Maven Central, npmjs.org, nodejs.org — and reached the platform
+#   registry by no address at all: not the qits-net alias, not localhost:8081, not
+#   host.docker.internal. So the install could not happen here, and an install that "worked" here
+#   would have resolved the @qits scope against npmjs.org, where that name does not exist and never
+#   will. Before the client took that dependency this stage did run the real install; it died on
+#   `npm error Exit handler never called!` the first time the webui's own .npmrc pointed at a
+#   registry with no route from here.
 #
 # The bundle is therefore built BEFORE this image, by the pipeline step in
 # .config/qits/ci-post-receive.yml, which runs on qits-net where the registry is reachable, and
 # arrives in the build context as service/src/main/webui/dist/ (see .dockerignore). `--version` is
 # the null command: it proves the package manager is really there and does nothing else.
+#
+# THE "NO ADDRESS" IS PAST TENSE SINCE THE MAVEN FIX. Both pipelines now build with
+# `--network qits-net`, so the platform's aliases do resolve in here — that is what makes the Maven
+# repository below reachable. It does not undo the split: the bundle still arrives pre-built, and
+# moving that install back into this stage is a change to weigh on its own, not a fix.
 #
 # THIS DOES NOT FAIL QUIETLY. The `test -f` below stops a context with no bundle before the
 # multi-minute native compile, and Quinoa's own build-dir check would stop it after. A forgotten
@@ -161,6 +167,23 @@ COPY . .
 #
 # One `cp` re-materialises it in the layer that is about to move it. It has to be in THIS `RUN` and
 # not a tidier one of its own — a layer boundary is exactly what it is undoing.
+#
+# --- the platform's Maven repository, which this stage has to be TOLD ------------------------------
+# `domain` and `epics` depend on qits-eventstream, `service` on qits-githost-events, and the test
+# tree on qits-arch-rules — three jars published nowhere but the platform's own Maven repository.
+# The pom defaults its address to localhost:8081, right for a developer on the deployment host and
+# dead inside this container, where nothing listens on that port. That is how the first CI image
+# build after the causation work died: `Could not transfer artifact … qits-eventstream … Connection
+# refused`. So the address arrives as a build-arg — defaulted to the developer-host one, so a plain
+# host-side `docker build` still works — and the pipeline passes the network address along with
+# `--network qits-net`, which is what makes the repository reachable at all.
+#
+# ENV as well as ARG, and a settings file, because Maven refuses plain-HTTP repositories that are
+# not on localhost. `.qits-maven-settings.xml` mirrors the `qits-maven` id by exact match, which
+# beats that blocker, and points it at `${env.QITS_MAVEN_REPOSITORY_URL}` — so it permits this one
+# supplied URL rather than reopening HTTP for every repository.
+ARG QITS_MAVEN_REPOSITORY_URL=http://localhost:8081/artifacts/maven/maven
+ENV QITS_MAVEN_REPOSITORY_URL=$QITS_MAVEN_REPOSITORY_URL
 RUN d=service/src/main/webui/dist/qits-spa-projects/browser; \
     test -f "$d/index.html" || { \
       echo "No built client at $d." >&2; \
@@ -168,7 +191,8 @@ RUN d=service/src/main/webui/dist/qits-spa-projects/browser; \
       echo "in service/src/main/webui first — this stage cannot, see the Quinoa flags above." >&2; \
       exit 1; }; \
     cp -a "$d" "$d.layer" && rm -rf "$d" && mv "$d.layer" "$d" && \
-    ./mvnw -B -ntp -pl service -am package -Dnative -DskipTests \
+    ./mvnw -B -ntp -s .qits-maven-settings.xml -pl service -am package -Dnative -DskipTests \
+      -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL" \
       -Dquarkus.native.native-image-xmx=4g \
       -Dquarkus.quinoa.package-manager-install=true \
       -Dquarkus.quinoa.package-manager-install.node-version=22.22.0 \

@@ -8,9 +8,10 @@
 #   2. build this repo's docker/Dockerfile, whose builder stage packages that already-built bundle
 #      and never runs an install.
 #
-# A RUN step inside a docker build reaches the public internet but reaches the platform registry by
+# A RUN step inside a docker build reaches the public internet but reached the platform registry by
 # no address at all (not the qits-net alias, not localhost:8081, not host.docker.internal). That is
-# why the halves are split, and it is why this step's image is node-docker-base rather than ci-base:
+# why the halves are split — the build joins qits-net now, for Maven, but the bundle still arrives
+# pre-built. It is also why this step's image is node-docker-base rather than ci-base:
 # it needs node, npm and git for half one and the docker CLI for half two. The same split, for the
 # same reason, as qits-gateway's pipeline — the two should keep matching.
 #
@@ -106,8 +107,21 @@ steps:
       npm run build
       cd -
 
+      # THE BUILD JOINS qits-net, and that is new. The builder stage resolves qits-eventstream,
+      # qits-githost-events and qits-arch-rules from the platform's own Maven repository, which
+      # answers on that network and nowhere else. Until the causation work added those dependencies
+      # the stage needed no network at all; the first run after it died on `Could not transfer
+      # artifact … qits-eventstream … Connection refused`, the pom's developer-host default dialled
+      # from inside a container where nothing listens.
+      #
+      # The address is DERIVED, never spelled. The artifacts store is an environment service and its
+      # alias carries the tier, so a URL written here is right in one environment and wrong in the
+      # next; $QITS_MAVEN_REGISTRY_URL is what every step container is handed, and `set -eu` above
+      # stops the step if it is unset rather than letting the build fall back to localhost.
       ref="$QITS_REGISTRY/$QITS_IMAGE_REPOSITORY/qits-projects:$QITS_CI_SHA"
-      docker build -t "$ref" -f docker/Dockerfile .
+      docker build --network qits-net \
+        --build-arg QITS_MAVEN_REPOSITORY_URL="$QITS_MAVEN_REGISTRY_URL" \
+        -t "$ref" -f docker/Dockerfile .
       docker push "$ref"
       docker rmi "$ref" || true
 

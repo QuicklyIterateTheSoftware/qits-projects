@@ -44,8 +44,15 @@ public class TaskService {
 
   @Inject AuditService auditService;
 
+  @Inject ReadPatience patience;
+
+  /**
+   * The feature's tasks, oldest first, held through a postgres cutover ({@link ReadPatience}). Same
+   * placement as {@link FeatureService#listByEpic}: the wrap is on the read path only, and the
+   * identical repository call inside this module's writes is left alone.
+   */
   public List<Task> listByFeature(String featureId) {
-    return taskRepository.listByFeature(featureId);
+    return patience.hold("task list", () -> taskRepository.listByFeature(featureId));
   }
 
   public Task get(String id) {

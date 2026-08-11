@@ -43,6 +43,8 @@ public class EpicService {
 
   @Inject AuditService auditService;
 
+  @Inject ReadPatience patience;
+
   /**
    * The outcome of a {@link #transition}: the epic in its new status, plus the successor draft when
    * the move was to {@link EpicStatus#SUPERSEDED} (null otherwise).
@@ -56,15 +58,22 @@ public class EpicService {
   /**
    * Epics of a project, optionally narrowed to one status. {@code status} is the enum name; a value
    * naming no status is a 400 rather than an empty list, so a typo in the filter is visible.
+   *
+   * <p>The read itself is held through a postgres cutover ({@link ReadPatience}): this is the
+   * board's top level, and a severed connection would draw a project with no epics in it. The
+   * status is parsed before the wrap, so a typo is still a 400 on the first attempt rather than a
+   * question retried for fifteen seconds. Neither caller — the controller and the MCP tool — opens
+   * a transaction, which is what makes the wrap legal here.
    */
   public List<Epic> listByProject(String projectId, String status) {
     if (status == null || status.isBlank()) {
-      return epicRepository.listByProject(projectId);
+      return patience.hold("epic list", () -> epicRepository.listByProject(projectId));
     }
     EpicStatus filter =
         EpicLifecycle.parse(status)
             .orElseThrow(() -> new BadRequestException("Unknown epic status: " + status));
-    return epicRepository.listByProjectAndStatus(projectId, filter);
+    return patience.hold(
+        "epic list by status", () -> epicRepository.listByProjectAndStatus(projectId, filter));
   }
 
   public Epic get(String id) {

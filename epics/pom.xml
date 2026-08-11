@@ -69,10 +69,10 @@
         </dependency>
         <dependency>
             <!-- PatientPgDriver, which this module's shipped defaults name as the `epics`
-                 datasource's driver. Declared here rather than inherited: this module depends on
+                 datasource's driver, and DbRetry, which control/ReadPatience wraps the board's
+                 list reads in. Declared here rather than inherited: this module depends on
                  `domain` not at all, and a datasource whose driver class is missing from the
-                 classpath fails at the first connect. No DbRetry seam here yet — the epics reads
-                 are wave 2 in db-patience-plan.md. -->
+                 classpath fails at the first connect. -->
             <groupId>${project.groupId}</groupId>
             <artifactId>qits-db-core</artifactId>
         </dependency>

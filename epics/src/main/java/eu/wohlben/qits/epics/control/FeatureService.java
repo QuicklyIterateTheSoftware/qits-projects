@@ -43,8 +43,16 @@ public class FeatureService {
 
   @Inject AuditService auditService;
 
+  @Inject ReadPatience patience;
+
+  /**
+   * The epic's features, oldest first, held through a postgres cutover ({@link ReadPatience}). The
+   * caller is a plain GET with no transaction of its own; the same repository call inside this
+   * module's writes (slug uniqueness, cascade delete) goes to the repository directly and stays
+   * unwrapped, because a retry inside an open transaction re-runs on a rollback-only connection.
+   */
   public List<Feature> listByEpic(String epicId) {
-    return featureRepository.listByEpic(epicId);
+    return patience.hold("feature list", () -> featureRepository.listByEpic(epicId));
   }
 
   public Feature get(String id) {

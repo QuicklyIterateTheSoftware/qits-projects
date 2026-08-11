@@ -28,6 +28,8 @@ public class AuditService {
 
   @Inject ObjectMapper objectMapper;
 
+  @Inject ReadPatience patience;
+
   @Transactional
   public void record(
       AuditEntityType entityType,
@@ -52,14 +54,20 @@ public class AuditService {
     auditRepository.persist(entry);
   }
 
-  /** Audit history for one entity, newest first. */
+  /**
+   * Audit history for one entity, newest first, held through a postgres cutover ({@link
+   * ReadPatience}). This log is the git replacement: an empty history reads as "nothing ever
+   * happened to this row", which is the one wrong answer it must never give. Both reads are
+   * transactionless GETs, unlike {@link #record} above, which joins its caller's write.
+   */
   public List<AuditEntry> listForEntity(AuditEntityType type, String entityId) {
-    return auditRepository.listForEntity(type, entityId);
+    return patience.hold(
+        "entity audit history", () -> auditRepository.listForEntity(type, entityId));
   }
 
   /** Audit history for an entire epic subtree (epic + its features + tasks), newest first. */
   public List<AuditEntry> listForEpic(String epicId) {
-    return auditRepository.listByEpic(epicId);
+    return patience.hold("epic audit history", () -> auditRepository.listByEpic(epicId));
   }
 
   private String serialize(Object snapshot) {

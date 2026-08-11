@@ -464,6 +464,26 @@ them as a race that never happened. Two rules govern every new wrap — **outsid
 is the proof, and it pins both halves: the read survives a severed connection, and a name that
 resolves to nothing still answers 404 on the first attempt.
 
+**The epics board's list reads are wrapped too, and `epics` routes them through one bean.**
+`control/ReadPatience` holds the deadline (`qits.epics.read-deadline`, 15S) so the five seams —
+`EpicService.listByProject`, `FeatureService.listByEpic`, `TaskService.listByFeature` and
+`AuditService`'s two histories — cannot drift apart, and so a suite can shorten it: a give-up test at
+fifteen seconds is a fifteen-second test. What they are worth: a severed connection would draw a
+project with no epics, a feature with no tasks, or an audit log saying nothing ever happened, and
+every one of those reads as an answer.
+
+The identical repository calls **inside** this module's writes are deliberately left unwrapped —
+slug uniqueness in `insert`/`create`, the cascade deletes, and `listDependents`, which no read path
+reaches at all. They run inside `@Transactional`, where a retry would re-run statements on a
+connection already marked rollback-only. That is why the wraps sit in the services and not in the
+repositories: a repository-level wrap would catch both callers and there is no way to tell them
+apart from down there. `EpicService.get` and its two siblings are unwrapped for the same reason —
+the write paths call them.
+
+`EpicListCutoverTest` is the proof, one seam standing for the five since they share the bean: the
+list answers after a severed connection, and a database that stays gone still fails at the deadline
+rather than never.
+
 The H2 lineages (V1..V6 and V1..V3) were **deleted rather than continued**, which needed one
 precondition: the move is an unwrap and a re-bootstrap, so no database anywhere was on either and no
 appended migration would have had a reader. Each fresh V1 is where its lineage arrived, translated,

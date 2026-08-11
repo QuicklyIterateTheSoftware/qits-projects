@@ -14,7 +14,6 @@ import eu.wohlben.qits.epics.persistence.FeatureRepository;
 import eu.wohlben.qits.epics.persistence.TaskRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +43,8 @@ public class EpicService {
   @Inject AuditService auditService;
 
   @Inject ReadPatience patience;
+
+  @Inject WritePatience writes;
 
   /**
    * The outcome of a {@link #transition}: the epic in its new status, plus the successor draft when
@@ -82,27 +83,40 @@ public class EpicService {
         .orElseThrow(() -> new NotFoundException("Epic not found: " + id));
   }
 
-  @Transactional
+  /**
+   * A new epic, in its own transaction, held through a postgres cutover ({@link WritePatience}). The
+   * validations run before the wrap so a missing title is still a 400 on the first attempt rather
+   * than a question retried for fifteen seconds; the id and the slug are minted <em>inside</em> it,
+   * which is what makes a second attempt a fresh row rather than a duplicate of a lost one.
+   */
   public Epic create(String projectId, String title, String description, String changedBy) {
     Validations.requireText(projectId, "projectId");
     Validations.requireText(title, "title");
-    Epic epic = insert(projectId, title, description);
-    auditService.record(
-        AuditEntityType.EPIC, epic.id, epic.id, AuditOperation.CREATE, changedBy, epic);
-    return epic;
+    return writes.hold(
+        "epic create",
+        () -> {
+          Epic epic = insert(projectId, title, description);
+          auditService.record(
+              AuditEntityType.EPIC, epic.id, epic.id, AuditOperation.CREATE, changedBy, epic);
+          return epic;
+        });
   }
 
-  @Transactional
+  /** Retitles an epic, held through a cutover ({@link WritePatience}). */
   public Epic update(String id, String title, String description, String changedBy) {
-    Epic epic = get(id);
-    // Title and description are scope, so an edit needs a draft.
-    EpicLifecycle.requireRefining(epic);
-    Validations.requireText(title, "title");
-    epic.title = title;
-    epic.description = description;
-    auditService.record(
-        AuditEntityType.EPIC, epic.id, epic.id, AuditOperation.UPDATE, changedBy, epic);
-    return epic;
+    return writes.hold(
+        "epic update",
+        () -> {
+          Epic epic = get(id);
+          // Title and description are scope, so an edit needs a draft.
+          EpicLifecycle.requireRefining(epic);
+          Validations.requireText(title, "title");
+          epic.title = title;
+          epic.description = description;
+          auditService.record(
+              AuditEntityType.EPIC, epic.id, epic.id, AuditOperation.UPDATE, changedBy, epic);
+          return epic;
+        });
   }
 
   /**
@@ -113,46 +127,56 @@ public class EpicService {
    * <p>A target naming no status is a 409 too: the caller asked for a phase that does not exist,
    * which is the same kind of answer as asking for one that is not reachable. An absent target is a
    * 400, because that is a malformed request rather than a refused move.
+   *
+   * <p>Held through a cutover ({@link WritePatience}), the whole move in one transaction —
+   * supersede's successor tree included, so a retry never leaves half a copy behind.
    */
-  @Transactional
   public Transition transition(String id, String target, String changedBy) {
     Validations.requireText(target, "target");
-    Epic epic = get(id);
-    EpicStatus to =
-        EpicLifecycle.parse(target)
-            .orElseThrow(() -> new ConflictException("Unknown epic status: " + target));
-    EpicLifecycle.requireTransition(epic.status, to);
+    return writes.hold(
+        "epic transition",
+        () -> {
+          Epic epic = get(id);
+          EpicStatus to =
+              EpicLifecycle.parse(target)
+                  .orElseThrow(() -> new ConflictException("Unknown epic status: " + target));
+          EpicLifecycle.requireTransition(epic.status, to);
 
-    Epic successor = (to == EpicStatus.SUPERSEDED) ? supersede(epic, changedBy) : null;
-    epic.status = to;
-    if (successor != null) {
-      epic.supersededByEpicId = successor.id;
-    }
-    auditService.record(
-        AuditEntityType.EPIC, epic.id, epic.id, AuditOperation.UPDATE, changedBy, epic);
-    return new Transition(epic, successor);
+          Epic successor = (to == EpicStatus.SUPERSEDED) ? supersede(epic, changedBy) : null;
+          epic.status = to;
+          if (successor != null) {
+            epic.supersededByEpicId = successor.id;
+          }
+          auditService.record(
+              AuditEntityType.EPIC, epic.id, epic.id, AuditOperation.UPDATE, changedBy, epic);
+          return new Transition(epic, successor);
+        });
   }
 
-  @Transactional
+  /** Removes an epic and its subtree, held through a cutover ({@link WritePatience}). */
   public void delete(String id, String changedBy) {
-    Epic epic = get(id);
-    // Deliberately allowed in every status: this removes the row rather than editing a frozen
-    // scope, and the audit log outlives it.
-    // Delete the subtree in-service (not via DB cascade) so every removed feature/task gets its own
-    // DELETE audit row. Feature dependencies are epic-local (validated on write), so no other epic
-    // can reference these rows — no external dependents to clear.
-    for (Feature feature : featureRepository.listByEpic(id)) {
-      for (Task task : taskRepository.listByFeature(feature.id)) {
-        taskRepository.delete(task);
-        auditService.record(
-            AuditEntityType.TASK, task.id, id, AuditOperation.DELETE, changedBy, task);
-      }
-      featureRepository.delete(feature);
-      auditService.record(
-          AuditEntityType.FEATURE, feature.id, id, AuditOperation.DELETE, changedBy, feature);
-    }
-    epicRepository.delete(epic);
-    auditService.record(AuditEntityType.EPIC, id, id, AuditOperation.DELETE, changedBy, epic);
+    writes.run(
+        "epic delete",
+        () -> {
+          Epic epic = get(id);
+          // Deliberately allowed in every status: this removes the row rather than editing a frozen
+          // scope, and the audit log outlives it.
+          // Delete the subtree in-service (not via DB cascade) so every removed feature/task gets
+          // its own DELETE audit row. Feature dependencies are epic-local (validated on write), so
+          // no other epic can reference these rows — no external dependents to clear.
+          for (Feature feature : featureRepository.listByEpic(id)) {
+            for (Task task : taskRepository.listByFeature(feature.id)) {
+              taskRepository.delete(task);
+              auditService.record(
+                  AuditEntityType.TASK, task.id, id, AuditOperation.DELETE, changedBy, task);
+            }
+            featureRepository.delete(feature);
+            auditService.record(
+                AuditEntityType.FEATURE, feature.id, id, AuditOperation.DELETE, changedBy, feature);
+          }
+          epicRepository.delete(epic);
+          auditService.record(AuditEntityType.EPIC, id, id, AuditOperation.DELETE, changedBy, epic);
+        });
   }
 
   /** A fresh epic row in {@link EpicStatus#REFINING}, unaudited — both callers audit their own. */

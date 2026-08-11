@@ -12,7 +12,6 @@ import eu.wohlben.qits.epics.persistence.FeatureRepository;
 import eu.wohlben.qits.epics.persistence.TaskRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
@@ -45,6 +44,8 @@ public class FeatureService {
 
   @Inject ReadPatience patience;
 
+  @Inject WritePatience writes;
+
   /**
    * The epic's features, oldest first, held through a postgres cutover ({@link ReadPatience}). The
    * caller is a plain GET with no transaction of its own; the same repository call inside this
@@ -61,33 +62,42 @@ public class FeatureService {
         .orElseThrow(() -> new NotFoundException("Feature not found: " + id));
   }
 
-  @Transactional
+  /** A new feature, held through a postgres cutover ({@link WritePatience}). */
   public Feature create(
       String epicId,
       String title,
       String description,
       String dependsOnFeatureId,
       String changedBy) {
-    Validations.requireText(title, "title");
-    EpicLifecycle.requireRefining(requireEpic(epicId));
-    if (dependsOnFeatureId != null) {
-      requireDependencyInEpic(dependsOnFeatureId, epicId);
-    }
-    Feature feature = new Feature();
-    feature.id = UUID.randomUUID().toString();
-    feature.epicId = epicId;
-    feature.title = title;
-    // Minted once, at create, and never re-derived on update — see Epic.slug.
-    feature.slug =
-        Slugs.unique(
-            Slugs.slugify(title, feature.id, "feature-"),
-            featureRepository.listByEpic(epicId).stream().map(f -> f.slug).toList());
-    feature.description = description;
-    feature.dependsOnFeatureId = dependsOnFeatureId;
-    featureRepository.persist(feature);
-    auditService.record(
-        AuditEntityType.FEATURE, feature.id, epicId, AuditOperation.CREATE, changedBy, feature);
-    return feature;
+    return writes.hold(
+        "feature create",
+        () -> {
+          Validations.requireText(title, "title");
+          EpicLifecycle.requireRefining(requireEpic(epicId));
+          if (dependsOnFeatureId != null) {
+            requireDependencyInEpic(dependsOnFeatureId, epicId);
+          }
+          Feature feature = new Feature();
+          feature.id = UUID.randomUUID().toString();
+          feature.epicId = epicId;
+          feature.title = title;
+          // Minted once, at create, and never re-derived on update — see Epic.slug.
+          feature.slug =
+              Slugs.unique(
+                  Slugs.slugify(title, feature.id, "feature-"),
+                  featureRepository.listByEpic(epicId).stream().map(f -> f.slug).toList());
+          feature.description = description;
+          feature.dependsOnFeatureId = dependsOnFeatureId;
+          featureRepository.persist(feature);
+          auditService.record(
+              AuditEntityType.FEATURE,
+              feature.id,
+              epicId,
+              AuditOperation.CREATE,
+              changedBy,
+              feature);
+          return feature;
+        });
   }
 
   /**
@@ -96,8 +106,9 @@ public class FeatureService {
    *
    * <p>The freeze is applied per field: whatever this call touches must be allowed by the epic's
    * phase. A call that supplies both kinds therefore always fails — no status allows both.
+   *
+   * <p>Held through a postgres cutover ({@link WritePatience}).
    */
-  @Transactional
   public Feature update(
       String id,
       String title,
@@ -107,80 +118,91 @@ public class FeatureService {
       Instant implementedOn,
       boolean clearImplementedOn,
       String changedBy) {
-    Feature feature = get(id);
-    boolean touchesMarker = implementedOn != null || clearImplementedOn;
-    // An edit that supplies nothing at all is counted as structural: it is the scope endpoint.
-    boolean touchesScope =
-        title != null
-            || description != null
-            || dependsOnFeatureId != null
-            || clearDependsOn
-            || !touchesMarker;
-    Epic epic = requireEpic(feature.epicId);
-    if (touchesScope) {
-      EpicLifecycle.requireRefining(epic);
-    }
-    if (touchesMarker) {
-      EpicLifecycle.requireImplementation(epic);
-    }
-    if (title != null) {
-      Validations.requireText(title, "title");
-      feature.title = title;
-    }
-    if (description != null) {
-      feature.description = description;
-    }
-    if (clearDependsOn) {
-      feature.dependsOnFeatureId = null;
-    } else if (dependsOnFeatureId != null) {
-      if (dependsOnFeatureId.equals(id)) {
-        throw new BadRequestException("A feature cannot depend on itself");
-      }
-      requireDependencyInEpic(dependsOnFeatureId, feature.epicId);
-      requireNoCycle(id, dependsOnFeatureId);
-      feature.dependsOnFeatureId = dependsOnFeatureId;
-    }
-    if (clearImplementedOn) {
-      feature.implementedOn = null;
-    } else if (implementedOn != null) {
-      feature.implementedOn = implementedOn;
-    }
-    auditService.record(
-        AuditEntityType.FEATURE,
-        feature.id,
-        feature.epicId,
-        AuditOperation.UPDATE,
-        changedBy,
-        feature);
-    return feature;
+    return writes.hold(
+        "feature update",
+        () -> {
+          Feature feature = get(id);
+          boolean touchesMarker = implementedOn != null || clearImplementedOn;
+          // An edit that supplies nothing at all is counted as structural: it is the scope endpoint.
+          boolean touchesScope =
+              title != null
+                  || description != null
+                  || dependsOnFeatureId != null
+                  || clearDependsOn
+                  || !touchesMarker;
+          Epic epic = requireEpic(feature.epicId);
+          if (touchesScope) {
+            EpicLifecycle.requireRefining(epic);
+          }
+          if (touchesMarker) {
+            EpicLifecycle.requireImplementation(epic);
+          }
+          if (title != null) {
+            Validations.requireText(title, "title");
+            feature.title = title;
+          }
+          if (description != null) {
+            feature.description = description;
+          }
+          if (clearDependsOn) {
+            feature.dependsOnFeatureId = null;
+          } else if (dependsOnFeatureId != null) {
+            if (dependsOnFeatureId.equals(id)) {
+              throw new BadRequestException("A feature cannot depend on itself");
+            }
+            requireDependencyInEpic(dependsOnFeatureId, feature.epicId);
+            requireNoCycle(id, dependsOnFeatureId);
+            feature.dependsOnFeatureId = dependsOnFeatureId;
+          }
+          if (clearImplementedOn) {
+            feature.implementedOn = null;
+          } else if (implementedOn != null) {
+            feature.implementedOn = implementedOn;
+          }
+          auditService.record(
+              AuditEntityType.FEATURE,
+              feature.id,
+              feature.epicId,
+              AuditOperation.UPDATE,
+              changedBy,
+              feature);
+          return feature;
+        });
   }
 
-  @Transactional
+  /**
+   * Removes a feature, its tasks and its dependents' pointers, held through a cutover ({@link
+   * WritePatience}) — one transaction, so a retry never leaves half a cascade behind.
+   */
   public void delete(String id, String changedBy) {
-    Feature feature = get(id);
-    String epicId = feature.epicId;
-    EpicLifecycle.requireRefining(requireEpic(epicId));
-    // Clear same-epic dependents' pointer in-service (audited) rather than leaning on the DB
-    // SET NULL, which would leave no trace.
-    for (Feature dependent : featureRepository.listDependents(id)) {
-      dependent.dependsOnFeatureId = null;
-      auditService.record(
-          AuditEntityType.FEATURE,
-          dependent.id,
-          dependent.epicId,
-          AuditOperation.UPDATE,
-          changedBy,
-          dependent);
-    }
-    // Delete child tasks in-service so each gets a DELETE audit row.
-    for (Task task : taskRepository.listByFeature(id)) {
-      taskRepository.delete(task);
-      auditService.record(
-          AuditEntityType.TASK, task.id, epicId, AuditOperation.DELETE, changedBy, task);
-    }
-    featureRepository.delete(feature);
-    auditService.record(
-        AuditEntityType.FEATURE, id, epicId, AuditOperation.DELETE, changedBy, feature);
+    writes.run(
+        "feature delete",
+        () -> {
+          Feature feature = get(id);
+          String epicId = feature.epicId;
+          EpicLifecycle.requireRefining(requireEpic(epicId));
+          // Clear same-epic dependents' pointer in-service (audited) rather than leaning on the DB
+          // SET NULL, which would leave no trace.
+          for (Feature dependent : featureRepository.listDependents(id)) {
+            dependent.dependsOnFeatureId = null;
+            auditService.record(
+                AuditEntityType.FEATURE,
+                dependent.id,
+                dependent.epicId,
+                AuditOperation.UPDATE,
+                changedBy,
+                dependent);
+          }
+          // Delete child tasks in-service so each gets a DELETE audit row.
+          for (Task task : taskRepository.listByFeature(id)) {
+            taskRepository.delete(task);
+            auditService.record(
+                AuditEntityType.TASK, task.id, epicId, AuditOperation.DELETE, changedBy, task);
+          }
+          featureRepository.delete(feature);
+          auditService.record(
+              AuditEntityType.FEATURE, id, epicId, AuditOperation.DELETE, changedBy, feature);
+        });
   }
 
   private Epic requireEpic(String epicId) {

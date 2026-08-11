@@ -96,12 +96,15 @@
                qits-arch-rules  the platform's shared ArchUnit rules plus the datasource-baseline
                                 config assertion, test scope wherever they are declared;
                qits-db-core     PatientPgDriver (named by config on every postgresql datasource) and
-                                DbRetry (the read seams that must survive a postgres cutover).
+                                DbRetry — the read seams that must survive a postgres cutover, and
+                                since 2026.811.165001 `inNewTx`, which opens the transaction of a
+                                write seam so an attempt that certainly did not commit can be made
+                                again.
 
              The version moves with that repository rather than with the eventstream jar the rules
              judge — deliberately, since the rules name every type they judge as a string and depend
              on neither. -->
-        <qits.integrations-quarkus.version>2026.811.152803</qits.integrations-quarkus.version>
+        <qits.integrations-quarkus.version>2026.811.165001</qits.integrations-quarkus.version>
         <qits.maven.repository.url>http://localhost:8081/artifacts/maven/maven</qits.maven.repository.url>
 
         <!-- The container ITs need docker and a built qits/workspace image, which a fresh clone has

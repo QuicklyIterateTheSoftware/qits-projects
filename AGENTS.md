@@ -484,6 +484,45 @@ the write paths call them.
 list answers after a severed connection, and a database that stays gone still fails at the deadline
 rather than never.
 
+**`DbRetry.inNewTx` holds WRITES through the same cutover, and it is a different offer from
+`DbRetry.call`.** It owns the transaction — every attempt is `QuarkusTransaction.requiringNew()` —
+so it can separate an attempt that *certainly* did not commit (the body threw a connection-class
+failure; Quarkus rolls a failed body back and never commits it) from one nobody can place (anything
+the transaction manager reports, a `RollbackException` included, because Narayana spells a lost
+commit and a real rollback the same way). Only the first is retried. Three rules govern every wrap:
+
+- **The body is database-only.** It re-runs, so an SSE hint, an HTTP call or a git push inside it
+  would happen twice. That is the rule that decides which seams are wrapped here and which are not.
+- **It replaces `@Transactional`, never joins it.** A method that kept the annotation would run in a
+  transaction the retry cannot open again, and a caller already in one is a wrap that must not exist.
+- **Flush last.** Hibernate flushes at commit by default, which puts the write on the far side of the
+  line `inNewTx` can classify — the whole write would land in the undecidable commit phase and never
+  be retried. `WritePatience` does it for the epics seams; the two domain seams do it by hand.
+
+**`epics` routes all ten writes through one bean, `control/WritePatience`** (`qits.epics.write-deadline`,
+15S) — `EpicService`'s create/update/transition/delete, `FeatureService`'s and `TaskService`'s
+create/update/delete. Every one is rows and nothing else, and no caller is transactional:
+`EpicMcpTools` is deliberately transaction-free (two persistence units, non-XA) and the controllers
+are too, with their change hints fired *after* the service returns. `AuditService.record` keeps its
+`@Transactional` and joins, exactly as it joined the annotation's.
+
+**`domain` wraps the two writes that are only rows, and leaves the rest alone on purpose.**
+`ProjectService.update` (a rename) and `RepositoryService.recordBackupOutcome` (the bookkeeping after
+the push to the twin has already happened — the case `inNewTx` exists for) call `DbRetry` directly,
+the module's existing idiom. Everything else in those two services reaches out of the database inside
+its transaction and a retry would do it a second time: `cloneRepository`, `cloneWrapperOrigin`,
+`createBlankRepository`, `initWrapperOrigin` and `adoptExistingOrigin` clone, push and call the git
+host over HTTP; `setMainBranch` and `deleteBranch` run `ls-remote` and a push; `deleteInternal`,
+`deregisterRow` and `ProjectService.delete` tear down workspaces and remove mirror directories;
+`attachBackupRemote` is rows only but its sole caller `adoptWrapperRepository` is `@Transactional`,
+so a wrap there would nest. `RepositoryNameResolver` keeps its `DbRetry.call` around the race loop.
+Honest partial coverage, not a contorted wrap.
+
+`EpicWriteCutoverTest` is the proof, one seam standing for the ten since they share the bean.
+`FailingEpicWrites` fails **after** `super.persist`, which is what makes exactly-once a real
+question: the create lands one epic row and one audit row, a failure that is not the connection is
+reported after exactly one attempt, and a cutover that never ends still gives up at the deadline.
+
 The H2 lineages (V1..V6 and V1..V3) were **deleted rather than continued**, which needed one
 precondition: the move is an unwrap and a re-bootstrap, so no database anywhere was on either and no
 appended migration would have had a reader. Each fresh V1 is where its lineage arrived, translated,

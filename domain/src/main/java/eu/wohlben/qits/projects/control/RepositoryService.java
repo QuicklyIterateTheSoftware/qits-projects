@@ -535,17 +535,33 @@ public class RepositoryService {
    *
    * <p>A row that has since been deleted is not an error to report to anyone: the attempt was
    * against a repository that no longer exists, and there is nothing left to write on.
+   *
+   * <p><b>Held through a postgres cutover</b> ({@link DbRetry#inNewTx}), and this is the bookkeeping
+   * case that method exists for: the push to the twin has already happened when this runs, so a
+   * connection lost here leaves the world and the row disagreeing — a backup that succeeded and a
+   * repository that still reads as never tried. {@code inNewTx} retries only an attempt that
+   * certainly did not commit, which replaces {@code @Transactional} rather than sitting outside it;
+   * none of the three callers is in a transaction, and none needs a request context, which is what
+   * lets the sweep's background thread use it too. The flush moves the UPDATE out of the commit
+   * phase, where the outcome would be unknowable, into the statement phase, where it is not.
+   *
+   * <p>The retried body writes fixed values onto one row, so it is the shape the retry is safe for
+   * whatever happens; the residue {@code inNewTx} reports — a lost commit acknowledgement — costs
+   * one bookkeeping row that the next attempt rewrites anyway.
    */
-  @Transactional
   public void recordBackupOutcome(String repoId, BackupOutcome outcome, String detail) {
-    Repository repo = repositoryRepository.findByIdOptional(repoId).orElse(null);
-    if (repo == null) {
-      return;
-    }
-    repo.lastBackupAt = java.time.Instant.now();
-    repo.lastBackupOutcome = outcome;
-    repo.lastBackupDetail =
-        outcome == BackupOutcome.SUCCEEDED ? null : shortDetail(detail);
+    DbRetry.runInNewTx(
+        "backup outcome record",
+        () -> {
+          Repository repo = repositoryRepository.findByIdOptional(repoId).orElse(null);
+          if (repo == null) {
+            return;
+          }
+          repo.lastBackupAt = java.time.Instant.now();
+          repo.lastBackupOutcome = outcome;
+          repo.lastBackupDetail = outcome == BackupOutcome.SUCCEEDED ? null : shortDetail(detail);
+          repositoryRepository.getEntityManager().flush();
+        });
   }
 
   /**

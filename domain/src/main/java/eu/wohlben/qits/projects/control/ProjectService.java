@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.control;
 
+import eu.wohlben.qits.db.DbRetry;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.DomainException;
 import eu.wohlben.qits.projects.error.NotFoundException;
@@ -332,18 +333,41 @@ public class ProjectService {
     return projectRepository.listAll();
   }
 
-  @Transactional
+  /**
+   * Renames or re-describes a project — this service's one write with nothing but rows in it, and
+   * so the one that can be <b>held through a postgres cutover</b> ({@link DbRetry#inNewTx}).
+   *
+   * <p>{@code inNewTx} owns the transaction, retrying only an attempt that certainly did not commit
+   * — the body threw a connection-class failure, which Quarkus rolls back and never commits. That
+   * replaces {@code @Transactional} rather than sitting outside it: a joined transaction is not one
+   * the retry could open again. The caller, {@code ProjectController.update}, opens none.
+   *
+   * <p><b>The flush is what makes the retry reach this write.</b> Hibernate flushes a dirty entity
+   * at commit, which would put the UPDATE in the commit phase — the one round trip nobody can place,
+   * and the one {@code inNewTx} reports rather than repeats. Flushing last moves it into the
+   * statement phase, where a severed connection is a certain no-commit.
+   *
+   * <p>Every other write in this service reaches out of the database inside its transaction — a
+   * clone, an HTTP call to the git host, a workspace teardown, a mirror directory removed — and a
+   * retry would do those a second time. They are deliberately left alone; see {@link #delete} and
+   * {@link #createRepositoryUnderProject}.
+   */
   public Project update(String id, String name, String description) {
-    Project project = get(id);
+    return DbRetry.inNewTx(
+        "project update",
+        () -> {
+          Project project = get(id);
 
-    if (name != null && !name.isBlank()) {
-      project.name = name;
-    }
-    if (description != null) {
-      project.description = description;
-    }
+          if (name != null && !name.isBlank()) {
+            project.name = name;
+          }
+          if (description != null) {
+            project.description = description;
+          }
 
-    return project;
+          projectRepository.getEntityManager().flush();
+          return project;
+        });
   }
 
   @Transactional

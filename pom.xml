@@ -87,7 +87,7 @@
              (SCMPublishCommit, SCMPublishTag, SCMDeleteBranch, SCMDeleteTag) plus their dependency
              on the bus. Depending on it buys the event names this service listens for and no part of
              the git host itself — which is why that repository splits it out as its own module. -->
-        <qits.eventstream.version>2026.810.191553</qits.eventstream.version>
+        <qits.eventstream.version>2026.811.155429</qits.eventstream.version>
         <qits.githost-events.version>1.0.0-SNAPSHOT</qits.githost-events.version>
 
         <!-- qits-integrations-quarkus ships two jars this repo consumes, released together, so they

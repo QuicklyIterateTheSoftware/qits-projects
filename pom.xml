@@ -86,9 +86,17 @@
              qits-githost-events is the git host's VOCABULARY and nothing else: four records
              (SCMPublishCommit, SCMPublishTag, SCMDeleteBranch, SCMDeleteTag) plus their dependency
              on the bus. Depending on it buys the event names this service listens for and no part of
-             the git host itself — which is why that repository splits it out as its own module. -->
+             the git host itself — which is why that repository splits it out as its own module.
+
+             THE VOCABULARY JAR CARRIED 1.0.0-SNAPSHOT UNTIL 2026-08-12, and the snapshot worked for
+             months without ever being released: the bootstrap seed-published it into the registry,
+             which is not a release and does not survive the artifacts store being re-seeded without
+             it. Nothing went red at the time, because every build after that re-seed reused docker's
+             cached maven layer — so the resolution the pin governs was never actually performed. A
+             green build that resolved nothing is not evidence that it could, which is the whole
+             reason to name a release here. qits-githost cut one on 2026-08-12 and this is it. -->
         <qits.eventstream.version>2026.811.155429</qits.eventstream.version>
-        <qits.githost-events.version>1.0.0-SNAPSHOT</qits.githost-events.version>
+        <qits.githost-events.version>2026.812.172928</qits.githost-events.version>
 
         <!-- qits-integrations-quarkus ships two jars this repo consumes, released together, so they
              carry ONE version property rather than drifting apart:

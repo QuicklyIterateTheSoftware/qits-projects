@@ -83,7 +83,13 @@ public class DockerAgentRuntime implements ContainerRuntime {
 
   /**
    * Ensure the shared network exists before any container joins it. Inspect-then-create so a
-   * network already provisioned by compose (its usual owner) is left untouched.
+   * network already provisioned by compose (its usual owner) is left untouched, whatever driver it
+   * has — the platform runs on a bridge today and on an overlay after the swarm re-bootstrap, and
+   * both carry agent containers.
+   *
+   * <p>A <b>missing</b> network is created as an attachable overlay, not as the default bridge. A
+   * swarm service cannot join a bridge, so rebuilding qits-net as one here would cut every platform
+   * service off from the agent containers. An attachable overlay carries both.
    */
   void ensureNetwork() {
     String net = containerFactory.network();
@@ -93,12 +99,32 @@ public class DockerAgentRuntime implements ContainerRuntime {
     if (runCapturing(List.of(runtime, "network", "inspect", net)).exitCode() == 0) {
       return;
     }
+    ExecResult overlay =
+        runCapturing(List.of(runtime, "network", "create", "-d", "overlay", "--attachable", net));
+    if (overlay.exitCode() == 0 || alreadyExists(overlay)) {
+      return;
+    }
+    // A daemon that is not in a swarm has no overlay driver, which is the developer machine this
+    // service also runs on. Fall back to the default bridge there — wrong under swarm, which is
+    // why the overlay is tried first and this path says so in the log.
+    LOG.warnf(
+        "Could not create the agent network '%s' as an overlay, falling back to the default"
+            + " driver: %s",
+        net, overlay.output());
     ExecResult result = runCapturing(List.of(runtime, "network", "create", net));
-    if (result.exitCode() != 0) {
+    if (result.exitCode() != 0 && !alreadyExists(result)) {
       LOG.warnf(
           "Could not ensure the shared agent network '%s' (no daemon will reach qits-projects): %s",
           net, result.output());
     }
+  }
+
+  /**
+   * Docker's answer when another process created the network between the inspect and the create.
+   * The network is there, which is all this method wanted, so neither create tries again.
+   */
+  private static boolean alreadyExists(ExecResult result) {
+    return result.output() != null && result.output().contains("already exists");
   }
 
   @Override
@@ -220,8 +246,13 @@ public class DockerAgentRuntime implements ContainerRuntime {
     }
   }
 
-  /** Runs the command capturing its combined output; never throws, always answers an exit code. */
-  private ExecResult runCapturing(List<String> command) {
+  /**
+   * Runs the command capturing its combined output; never throws, always answers an exit code.
+   *
+   * <p>Package-private, and the single place this class starts a process, so a test can replace the
+   * whole runtime by overriding one method.
+   */
+  ExecResult runCapturing(List<String> command) {
     ProcessBuilder builder = new ProcessBuilder(command);
     builder.redirectErrorStream(true);
     try {

@@ -99,16 +99,20 @@ class AgentContainerLifecycleTest {
     assertEquals(java.util.List.of("touch:" + projectId), runtime.calls());
   }
 
+  /**
+   * A stopped container is started where it stands — one verb, and the same container afterwards.
+   * Provisioning instead would mint a second one, and the state a stop deliberately preserves (the
+   * writable layer, and the checkout if the volume were ever missed) would go with the first.
+   */
   @Test
-  void aContainerThatIsNotRunningIsBroughtBackRatherThanProvisioned() {
+  void aContainerThatIsNotRunningIsStartedAgainRatherThanProvisioned() {
     runtime.given(projectId, slug, false);
+    String before = runtime.dockerId(projectId);
 
     agentContainers.ensure(projectId);
 
-    assertEquals(
-        java.util.List.of("restart:" + projectId),
-        runtime.calls(),
-        "the place is brought back onto its own checkout volume, never provisioned afresh");
+    assertEquals(java.util.List.of("restart:" + projectId), runtime.calls());
+    assertEquals(before, runtime.dockerId(projectId), "the same container, started again");
   }
 
   @Test
@@ -181,6 +185,31 @@ class AgentContainerLifecycleTest {
         .then()
         .statusCode(200)
         .body("container.runtimeStatus", org.hamcrest.Matchers.is("STOPPED"));
+  }
+
+  /**
+   * The round trip the stop policy exists for, end to end over the routes: stop, then ensure, and
+   * the same container is running again. This is what "stop, never remove" buys and what a
+   * provision-on-wake would silently take away.
+   */
+  @Test
+  void aStoppedAgentComesBackAsTheSameContainer() {
+    runtime.given(projectId, slug, true);
+    String before = runtime.dockerId(projectId);
+
+    given().when().post(base() + "/stop").then().statusCode(200);
+    given()
+        .when()
+        .post(base() + "/ensure")
+        .then()
+        .statusCode(200)
+        .body("container.runtimeStatus", org.hamcrest.Matchers.is("RUNNING"));
+
+    assertEquals(
+        java.util.List.of("stop:" + projectId, "restart:" + projectId),
+        runtime.calls(),
+        "one stop and one wake — no provision anywhere in a stop/start cycle");
+    assertEquals(before, runtime.dockerId(projectId));
   }
 
   @Test

@@ -91,29 +91,28 @@ public interface ContainerRuntime {
   /**
    * Bring a present-but-not-running container back up — the lossless half of the stop policy.
    *
-   * <p><b>It is a re-create, not a start in place, and that is the orchestrator's shape rather than
-   * a choice made here.</b> qits-containers has no start verb at all: its whole container vocabulary
-   * is ensure, stop and delete. An {@code ensure} of a place whose container is stopped and whose
-   * spec is unchanged reaches that service's {@code RESTART} step, which issues a second
-   * {@code docker run} under a name docker already holds — so docker refuses, the row settles
-   * {@code MISSING}, and the caller is answered <b>200</b> with a container sitting right there in
-   * {@code exited}. Read against the shipped 2026.812.173301 contract; nothing in that repository's
-   * suite covers the case, because its fake driver accepts a duplicate name.
+   * <p><b>It is a start in place, and it keeps the container's docker id.</b> One {@code ensure}
+   * does it: qits-containers sees a place whose spec is unchanged and whose container is stopped,
+   * and starts the container the row already names rather than running a second one. So the
+   * checkout, the submodules, any uncommitted work <em>and</em> everything the container wrote
+   * outside its volumes all survive — which is the whole reason the stop policy stops rather than
+   * removes.
    *
-   * <p>What does work is its <b>recreate</b> step, which stops, removes and runs again under the
-   * same name and the same row. It is reached by an ensure that both allows a recreate and carries a
-   * spec that differs from the stored one, so this method sends one — see the incarnation stamp in
-   * {@code AgentContainerFactory}. A re-create is also the only way an agent picks up an image bump,
-   * so the arm earns its place twice.
+   * <p><b>It permits a replacement, and only a real spec change triggers one.</b> The request
+   * carries {@code Recreate.ifChanged} ({@code AgentContainerFactory.forRestart}), so an agent-image
+   * bump that landed while this agent was asleep is applied by replacing the container at wake. That
+   * is the one moment a bump can be picked up without taking a container away from somebody working
+   * in it — the running arm asks for no recreate at all. A replacement loses the writable layer and
+   * nothing else, since every path this service cares about is a named volume and the daemon skips
+   * its self-clone on an already-populated {@code /workspace}.
    *
-   * <p><b>Nothing a session cares about is lost by it</b>: the checkout, its submodules, the build
-   * caches and the agent's credential home are all named volumes, the orchestrator removes none of
-   * them under {@code IDLE_STOP}, and the daemon skips its self-clone on an already-populated
-   * {@code /workspace}. What does not survive is the container's own writable layer, which holds
-   * nothing this service put there.
-   *
-   * <p>Collapse this back into a plain ensure the day qits-containers grows a start verb, or the day
-   * its {@code RESTART} step removes before it runs.
+   * <p><b>This used to be a forced re-create, and the reason is worth keeping.</b> qits-containers
+   * had no start verb: an ensure of a stopped place under an unchanged spec fell through to a second
+   * {@code docker run} under a name docker already held, so the row settled {@code MISSING} and the
+   * caller was answered 200 about a container still sitting there in {@code exited}. This method
+   * worked around it by making the spec differ on every call. That defect is fixed (qits-containers
+   * 354fd7f, which added a bounded {@code start} to its driver seam and a real-daemon test that a
+   * stop-then-ensure returns the same docker id), and the workaround is gone with it.
    */
   String restart(String projectId, String projectSlug, String repoName);
 

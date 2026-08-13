@@ -2,7 +2,6 @@ package eu.wohlben.qits.projects.agenthost;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -230,23 +229,23 @@ class AgentContainerFactoryTest {
   }
 
   /**
-   * Bringing a stopped agent back is the one ask that may replace a container, and it takes both
-   * halves to work: the permission, and a spec that differs from the stored one. qits-containers has
-   * no start verb, and its unchanged-spec path cannot start a container whose name docker already
-   * holds — see {@code ContainerRuntime.restart}.
+   * Waking a stopped agent permits a replacement and asks for nothing else.
+   *
+   * <p>Both halves are asserted, and the second is the one that would rot. {@code Recreate.ifChanged}
+   * is what lets an agent-image bump be applied at wake; the spec being <b>byte-for-byte the spec of
+   * a first provision</b> is what makes the ordinary wake a start in place, because qits-containers
+   * replaces only a container whose spec differs from the one it stored. Anything varying per call in
+   * here — a timestamp, a nonce, a uuid — would silently turn every wake back into a replacement,
+   * which is exactly the workaround this repo carried while that service had no start verb.
    */
   @Test
-  void aRecreationAsksForAReplacementAndCarriesSomethingToReplaceOn() {
-    EnsureRequest first = factory.forRecreation(PROJECT_ID, "demo", "demo-demo");
-    EnsureRequest second = factory.forRecreation(PROJECT_ID, "demo", "demo-demo");
+  void aRestartPermitsAReplacementAndIsOtherwiseTheSameRequest() {
+    EnsureRequest first = factory.forRestart(PROJECT_ID, "demo", "demo-demo");
+    EnsureRequest second = factory.forRestart(PROJECT_ID, "demo", "demo-demo");
 
     assertEquals(Recreate.ifChanged, first.recreate());
-    assertNotEquals(
-        first.spec().env().get(AgentContainerFactory.INCARNATION),
-        second.spec().env().get(AgentContainerFactory.INCARNATION),
-        "a stamp that repeated would be a spec that did not change");
-    assertNull(
-        spec().env().get(AgentContainerFactory.INCARNATION),
-        "a first provision carries none: there is nothing there to replace");
+    assertEquals(spec(), first.spec(), "an unchanged spec is what makes a wake a start in place");
+    assertEquals(first.spec(), second.spec(), "and it has to be unchanged on every call, not once");
+    assertEquals(first.policy(), second.policy());
   }
 }

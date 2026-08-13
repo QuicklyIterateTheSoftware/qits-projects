@@ -122,7 +122,7 @@ public class ContainersAgentRuntime implements ContainerRuntime {
   @Override
   public String restart(String projectId, String projectSlug, String repoName) {
     String name = factory.containerName(projectSlug);
-    return bringUp(projectId, name, factory.forRecreation(projectId, projectSlug, repoName));
+    return bringUp(projectId, name, factory.forRestart(projectId, projectSlug, repoName));
   }
 
   @Override

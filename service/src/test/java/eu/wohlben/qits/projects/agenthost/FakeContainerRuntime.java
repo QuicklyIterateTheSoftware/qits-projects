@@ -36,6 +36,15 @@ public class FakeContainerRuntime implements ContainerRuntime {
   /** Volumes {@link #ensureProjectVolume} was asked to create, in order. */
   private final List<String> volumes = new CopyOnWriteArrayList<>();
 
+  /**
+   * A stand-in for the docker id, so a test can tell a container that was <b>started again</b> from
+   * one that was replaced. Only {@link #run} mints a fresh one; {@link #restart} keeps whatever the
+   * place had, which is what the orchestrator does for an unchanged spec.
+   */
+  private final Map<String, String> dockerIds = new LinkedHashMap<>();
+
+  private int minted;
+
   /** When set, the next {@link #run} throws it — the FAILED arm of the ladder. */
   private volatile RuntimeException runFailure;
 
@@ -43,7 +52,14 @@ public class FakeContainerRuntime implements ContainerRuntime {
     places.clear();
     calls.clear();
     volumes.clear();
+    dockerIds.clear();
+    minted = 0;
     runFailure = null;
+  }
+
+  /** The id of the container at this place, or null — see {@link #dockerIds}. */
+  public String dockerId(String projectId) {
+    return dockerIds.get(projectId);
   }
 
   public List<String> calls() {
@@ -61,6 +77,7 @@ public class FakeContainerRuntime implements ContainerRuntime {
   /** Put a place in the table without going through the ladder, to set a test's start state. */
   public void given(String projectId, String projectSlug, boolean running) {
     places.put(projectId, new ContainerInfo(containerName(projectSlug), running));
+    dockerIds.putIfAbsent(projectId, "container-" + ++minted);
   }
 
   @Override
@@ -83,13 +100,20 @@ public class FakeContainerRuntime implements ContainerRuntime {
       throw failure;
     }
     places.put(projectId, new ContainerInfo(containerName(projectSlug), true));
+    dockerIds.put(projectId, "container-" + ++minted);
     return containerName(projectSlug);
   }
 
+  /**
+   * The container this place already has, started where it stands. It keeps its id, because that is
+   * what the orchestrator does for an unchanged spec — the replacement arm exists only for a spec
+   * that genuinely changed, and no test here stages one.
+   */
   @Override
   public String restart(String projectId, String projectSlug, String repoName) {
     calls.add("restart:" + projectId);
     places.put(projectId, new ContainerInfo(containerName(projectSlug), true));
+    dockerIds.putIfAbsent(projectId, "container-" + ++minted);
     return containerName(projectSlug);
   }
 

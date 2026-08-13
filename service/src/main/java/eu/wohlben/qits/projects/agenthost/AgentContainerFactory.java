@@ -20,7 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -273,42 +272,38 @@ public class AgentContainerFactory {
    * PID 1 means the daemon is a reaped child and a long-lived container that spawns agents,
    * compilers and test runners does not collect zombies for as long as it runs.
    *
-   * <p><b>{@code Recreate.never}</b> — {@link EnsureRequest#of} — so a spec change never replaces a
-   * container somebody is working in. An agent image bump is picked up the next time the place is
-   * recreated, which is what {@code ContainersAgentRuntime.restart} does on every stopped container.
+   * <p><b>{@code Recreate.never}</b>, so a spec change never replaces a container somebody is
+   * working in. An agent image bump is picked up the next time the agent is woken from a stop —
+   * see {@link #forRestart}, which is the one ask that permits a replacement.
    */
   public EnsureRequest forProject(String projectId, String projectSlug, String repoName) {
-    return request(projectId, projectSlug, repoName, null);
+    return request(projectId, projectSlug, repoName, Recreate.never);
   }
 
   /**
-   * The same request, asking for the container to be <b>replaced</b> — what a stopped agent is
-   * brought back with, because the orchestrator has no start verb. {@code ContainerRuntime.restart}
-   * carries the argument in full.
+   * The same spec, asking for a replacement <b>only if it has actually changed</b> — what a stopped
+   * agent is woken with. {@code ContainerRuntime.restart} carries the argument in full.
    *
-   * <p><b>Two differences from {@link #forProject}, and neither is optional.</b> {@code
-   * Recreate.ifChanged} is the permission, and {@link #INCARNATION} is what makes the permission
-   * bite: qits-containers replaces a container only when the spec it is handed differs from the one
-   * it stored, and a stopped agent asked for again under an identical spec reaches a step that
-   * cannot start it. A fresh stamp per call is what tells the two apart. It is a real fact about the
-   * container rather than a token — this is a new incarnation of the place — and the daemon ignores
-   * it.
+   * <p><b>One difference from {@link #forProject}, and it is the whole of it:</b>
+   * {@code Recreate.ifChanged}. Under an <em>unchanged</em> spec the orchestrator starts the
+   * container this place already has, in place, keeping its docker id and everything outside its
+   * volumes; under a changed one — an agent-image bump landing while the agent was asleep — it
+   * replaces it, which is the only moment a bump can be picked up without taking a container away
+   * from somebody working in it.
    *
-   * <p>The stamp goes in <b>last</b>, so every other value keeps the order {@link #forProject}
-   * gives it and the two requests differ in exactly the two ways named above.
+   * <p>So waking is a <b>start</b> in the ordinary case and a replacement only when there is
+   * something to replace on. It did not used to be: qits-containers had no start verb, an ensure of
+   * a stopped place under an unchanged spec could not bring it back, and this method forced the
+   * replacement by stamping a per-call value into the environment. That is gone with the defect —
+   * qits-containers 354fd7f — and nothing is left in its place, because a request that differs on
+   * every call is a request that can never be started in place.
    */
-  public EnsureRequest forRecreation(String projectId, String projectSlug, String repoName) {
-    return request(projectId, projectSlug, repoName, UUID.randomUUID().toString());
+  public EnsureRequest forRestart(String projectId, String projectSlug, String repoName) {
+    return request(projectId, projectSlug, repoName, Recreate.ifChanged);
   }
-
-  /**
-   * The environment key carrying which incarnation of a place a container is. Present only on a
-   * recreate; see {@link #forRecreation}.
-   */
-  public static final String INCARNATION = "QITS_PROJECTS_AGENT_INCARNATION";
 
   private EnsureRequest request(
-      String projectId, String projectSlug, String repoName, String incarnation) {
+      String projectId, String projectSlug, String repoName, Recreate recreate) {
     Map<String, String> env = new LinkedHashMap<>();
     env.put("TZ", timezone());
     // The dial-home url, composed here because the daemon runs in-container and cannot resolve this
@@ -366,10 +361,6 @@ public class AgentContainerFactory {
       env.put("npm_config_store_dir", PNPM_MOUNT + "/store");
     }
 
-    if (incarnation != null) {
-      env.put(INCARNATION, incarnation);
-    }
-
     // Insertion-ordered, so the request body a test asserts is the same body every time. The
     // orchestrator sorts them again on its own side before they reach an argv.
     Map<String, String> labels = new LinkedHashMap<>();
@@ -406,9 +397,7 @@ public class AgentContainerFactory {
             // tini at PID 1 — see the method javadoc. The old argv set --init unconditionally and
             // this is that flag, unchanged.
             true);
-    return incarnation == null
-        ? EnsureRequest.of(spec, policy())
-        : new EnsureRequest(spec, policy(), Recreate.ifChanged);
+    return new EnsureRequest(spec, policy(), recreate);
   }
 
   /**

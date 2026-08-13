@@ -405,12 +405,13 @@ project's. What survives of the old label check is one arm down, in
 already holds the name, and answers 409 rather than letting the registry refuse it as a unique
 constraint nobody can act on.
 
-**The stop policy discards no checkout, and it is no longer a `docker start`.** `POST
-…/agent-container/stop` and the `qits.projects.agent-idle-timeout` sweep (PT4H) both stop the
-container; the checkout survives because it is a named volume the orchestrator will not remove under
-`IDLE_STOP`, and the daemon skips its self-clone on an already-populated `/workspace`. Bringing one
-back is a **re-create**, because qits-containers has no start verb at all — see "The container
-orchestrator" below. Idleness is measured from the
+**The stop policy is stop, never remove.** `POST …/agent-container/stop` and the
+`qits.projects.agent-idle-timeout` sweep (PT4H) both leave the container in place, so the next ensure
+starts *that* container again — same docker id, same writable layer. The checkout would survive a
+replacement too (it is a named volume the orchestrator will not remove under `IDLE_STOP`, and the
+daemon skips its self-clone on an already-populated `/workspace`), which is what makes a wake safe
+even when an image bump turns it into one — see "The container orchestrator" below. Idleness is
+measured from the
 last thing the daemon said — `Hello`, heartbeat, agent activity — so it means "nobody is using this
 project", not "nothing is happening": a long silent build still heartbeats. A container this process
 has never heard from is stamped on sight and ages out one window later, rather than being immortal
@@ -460,20 +461,24 @@ Five things bite.
   the only way a post-cutover token is ever picked up. Retrying is safe because `ensure` is a PUT per
   place. `SPEC_CONFLICT`, `IMAGE_MISSING` and a 400 on a value are one attempt each — no window fixes
   them. **A 2xx whose observed state is `MISSING`/`GONE` is a failed bring-up**, not a started one.
-- **There is no start verb, and the stopped arm is a re-create because of it.** qits-containers'
-  `ensure` of a place whose container is stopped under an *unchanged* spec reaches its `RESTART`
-  step, which issues a second `docker run` under a name docker already holds: docker refuses, the row
-  settles `MISSING`, and the caller is answered **200** with a container sitting there in `exited`.
-  Nothing in that repository's suite covers it, because its fake driver accepts a duplicate name. Its
-  **recreate** step does work — stop, remove, run, same name and same row — and it is reached by an
-  ensure that carries `Recreate.ifChanged` *and* a spec that differs from the stored one. So
-  `forRecreation` stamps `QITS_PROJECTS_AGENT_INCARNATION`, a fresh value per call, and that is what
-  makes the permission bite. It is a real fact about the container rather than a token, and the
-  daemon ignores it. **Collapse the whole arm into a plain ensure the day that service grows a start
-  verb**, or the day its `RESTART` removes before it runs.
-  <br>A delete-then-ensure would be the obvious alternative and it does not work: `ct_container`'s
-  `container_name` is unique across **every** row including the settled ones, and a deleted row keeps
-  the name for `qits.containers.row-prune-horizon` (P7D).
+- **Waking a stopped agent is a start in place, and a replacement only if the spec really changed.**
+  One `ensure` does both: qits-containers starts the container the row already names when the spec is
+  unchanged (same docker id, everything outside the volumes intact), and replaces it when it differs.
+  So `forRestart` sends `Recreate.ifChanged` and nothing else — that permission is what lets an
+  agent-image bump landing while the agent slept be applied at wake, which is the one moment it can
+  be applied without taking a container away from somebody working in it. The running arm asks for no
+  recreate at all.
+  <br>**This arm was a forced re-create until 2026-08-13**, and the reason is worth keeping: that
+  service had no start verb, its `RESTART` step fell through to a second `docker run` under a name
+  docker already held, and a stopped place asked for again settled `MISSING` behind a **200**. The
+  workaround here was an env stamp that differed per call, so the spec was never "unchanged" and the
+  recreate step ran instead. qits-containers 354fd7f fixed it — a bounded `start` on its driver seam,
+  a real-daemon test that stop-then-ensure returns the same docker id — and the stamp is gone with
+  it. Do not reintroduce a per-call value into this spec: a request that differs every time is a
+  request that can never be started in place.
+  <br>A delete-then-ensure was never the alternative: `ct_container`'s `container_name` is unique
+  across **every** row including the settled ones, and a deleted row keeps the name for
+  `qits.containers.row-prune-horizon` (P7D).
 - **The idle sweep stays here, and it resolves identity itself.** Its tunnel teardown and
   `registry.forget` are in-memory state of this process that the orchestrator cannot touch. The spec
   still carries an `IDLE_STOP` policy with the same window as the belt for a qits-projects that died

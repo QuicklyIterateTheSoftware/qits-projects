@@ -79,7 +79,8 @@ class ContainersAgentRuntimeTest {
   /**
    * The spec builder, stubbed down to the four values this class reads off it. What a real request
    * carries is asserted where it is built ({@code agenthost/AgentContainerFactoryTest}); what
-   * matters here is only that the two bring-up arms send two different {@code recreate} words.
+   * matters here is only that the two bring-up arms send two different {@code recreate} words —
+   * the wake permitting a replacement, the provision not.
    *
    * <p>{@code @Vetoed} is not optional. {@code @ApplicationScoped} is inherited, so without it this
    * subclass is a second {@code AgentContainerFactory} bean and every {@code @QuarkusTest} in the
@@ -104,7 +105,7 @@ class ContainersAgentRuntimeTest {
     }
 
     @Override
-    public EnsureRequest forRecreation(String projectId, String projectSlug, String repoName) {
+    public EnsureRequest forRestart(String projectId, String projectSlug, String repoName) {
       return new EnsureRequest(spec(), Policy.idleStop(14400L), Recreate.ifChanged);
     }
 
@@ -260,8 +261,10 @@ class ContainersAgentRuntimeTest {
   }
 
   /**
-   * The stopped arm asks for a replacement and takes no name check — the place already holds its own
-   * name, so the only thing a listing could find is itself.
+   * Waking a stopped place is <b>one</b> ensure and no name check — the place already holds its own
+   * name, so the only thing a listing could find is itself. It permits a replacement without asking
+   * for one: under an unchanged spec the orchestrator starts the container that is already there,
+   * and only a spec that really differs is replaced.
    */
   @Test
   void bringingAStoppedPlaceBackIsOneEnsureAndNoNameCheck() throws Exception {
@@ -272,9 +275,11 @@ class ContainersAgentRuntimeTest {
 
       assertEquals(1, stub.received().size());
       assertEquals("PUT", stub.last().method());
-      assertTrue(
-          stub.last().body().contains("\"recreate\":\"ifChanged\""),
-          "a replacement is the only path from a stopped container to a running one");
+      assertEquals(
+          "/containers/api/containers/dev-qits-projects/project-agent/" + PROJECT,
+          stub.last().path(),
+          "the same place, addressed by the project id");
+      assertTrue(stub.last().body().contains("\"recreate\":\"ifChanged\""));
     }
   }
 

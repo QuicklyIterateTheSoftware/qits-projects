@@ -213,26 +213,12 @@ WORKDIR /work
 # non-interactively instead of asking for the credentials the session exists to collect.
 # --nodocs and no weak deps because an image is not a workstation.
 #
-# The docker CLI is the third: `DockerAgentRuntime` shells the binary named by
-# `qits.projects.agent-container-runtime` for every run/start/stop/inspect that creates or reattaches
-# a project's agent container, so without it the agent harness fails at its first `docker run` with
-# an IOException naming a missing executable — the same shape as a missing git, and just as fatal to
-# the feature. It comes from Docker's own repository because no UBI repository carries a
-# docker-compatible client at all; the repo definition is removed again afterwards so the shipped
-# image does not carry a third-party package source it has no reason to consult.
-#
-# THE DOCKER SOCKET IS NOT IN THIS IMAGE. Run with
-# `-v /var/run/docker.sock:/var/run/docker.sock`, or no agent container can be created. That mount
-# hands this container control of the host's docker daemon, which is root-equivalent — an agent
-# container is a sandbox precisely because it does *not* get the socket, and this service is the
-# thing on the other side of that boundary. Leaving the mount to the deployment keeps it an explicit
-# act. Without it the service still starts and serves; every agent start fails with a docker
-# connection error.
-RUN printf '[docker-ce-stable]\nname=Docker CE Stable\nbaseurl=https://download.docker.com/linux/centos/9/$basearch/stable\nenabled=1\ngpgcheck=1\ngpgkey=https://download.docker.com/linux/centos/gpg\n' \
-      > /etc/yum.repos.d/docker-ce.repo \
- && microdnf install -y --nodocs --setopt=install_weak_deps=0 git-core util-linux-core docker-ce-cli \
- && microdnf clean all \
- && rm -f /etc/yum.repos.d/docker-ce.repo
+# Those two are the whole list. A project's agent container is started through **qits-containers**
+# over HTTP — `qits.containers.url` (`QITS_CONTAINERS_URL`) plus a machine token — so this image
+# needs no docker CLI and no socket mount. It used to carry a `docker-ce-cli` from Docker's own
+# repository, for a runtime that shelled the binary; that runtime is deleted.
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 git-core util-linux-core \
+ && microdnf clean all
 
 # `quarkus.package.output-name` names the binary `qits-projects` (no -runner suffix), so the process
 # is identifiable in `ps`/`docker top`. It is built by `service`, the one module of the three that is

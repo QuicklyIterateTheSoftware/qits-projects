@@ -2299,8 +2299,9 @@ public class RepositoryService {
     // services cascade off the repository row deletion below.
     // SEAM (migration-plan.md §6, repository <-> workspace). Was an inline docker teardown of this
     // repository's workspace containers and their persistent /workspace volumes (containers first —
-    // docker refuses an in-use volume). ContainerRuntime/DockerExecutor are qits-workspaces'. The
-    // ordering is a precondition of the delete, so it stays a synchronous call, now through a port.
+    // docker refuses an in-use volume). That teardown is qits-workspaces' `ContainerRuntime`, which
+    // is itself a call to qits-containers now — no service on this path shells docker. The ordering
+    // is a precondition of the delete, so it stays a synchronous call, now through a port.
     if (!workspaceLifecycle.isUnsatisfied()) {
       try {
         workspaceLifecycle.get().releaseRepository(repoId);

@@ -2,8 +2,16 @@ package eu.wohlben.qits.projects.agenthost;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.containers.client.ContainersWire.EnsureRequest;
+import eu.wohlben.qits.containers.client.ContainersWire.PolicyType;
+import eu.wohlben.qits.containers.client.ContainersWire.Recreate;
+import eu.wohlben.qits.containers.client.ContainersWire.SharedMount;
+import eu.wohlben.qits.containers.client.ContainersWire.Spec;
+import eu.wohlben.qits.containers.client.ContainersWire.VolumeMount;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -12,18 +20,22 @@ import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.jupiter.api.Test;
 
 /**
- * What a project-agent container is actually started with.
+ * What a project-agent container is actually started with — the request qits-containers is handed.
  *
  * <p>A {@code @QuarkusTest} rather than a hand-built factory, deliberately: half of what is asserted
- * here is the <b>shipped configuration</b> — the image name, the API token, the git base, the
- * shared volume names — and a hand-built instance would prove those against values the test itself
- * chose. The argv this asserts is the argv a deployment renders.
+ * here is the <b>shipped configuration</b> — the image name, the API token, the git base, the shared
+ * volume names — and a hand-built instance would prove those against values the test itself chose.
+ * The spec this asserts is the spec a deployment sends.
  *
  * <p>The env block is the sharp end. Every {@code QITS_PROJECTS_DAEMON_*} name is read from the
- * daemon repo's own AGENTS.md "Environment" table, and getting one wrong fails <em>silently</em> —
- * a daemon with no url stays idle and the container simply never dials home, a daemon with no token
+ * daemon repo's own AGENTS.md "Environment" table, and getting one wrong fails <em>silently</em> — a
+ * daemon with no url stays idle and the container simply never dials home, a daemon with no token
  * does not bind its API and every proxied request 502s. Nothing at build time on either side
  * notices, so this test is the notice.
+ *
+ * <p>The sandbox is the other. Two flags are deliberately <b>off</b> here that are on for a CI step
+ * container, and a refactor that turned them on would break the toolchain this image exists to
+ * carry — so their absence is asserted as hard as the limits' presence.
  */
 @QuarkusTest
 class AgentContainerFactoryTest {
@@ -34,58 +46,38 @@ class AgentContainerFactoryTest {
    * Read from config rather than written down, unlike every other shipped value this class asserts.
    * The reference is a version pin that a release train rewrites on every qits-projects-daemon
    * release, so a literal here would go red on a bump that is working exactly as intended. What is
-   * still under test is the argv's shape — the image is the LAST element and nothing follows it —
-   * plus, below, that the shipped value is a qualified reference at all.
+   * still under test is that the shipped value is a qualified, pinned reference at all.
    */
   private static final String IMAGE =
       ConfigProvider.getConfig().getValue("qits.projects.agent-image", String.class);
 
   @Inject AgentContainerFactory factory;
 
-  private Map<String, String> envOf(List<String> argv) {
-    Map<String, String> env = new java.util.LinkedHashMap<>();
-    for (int i = 0; i < argv.size() - 1; i++) {
-      if ("-e".equals(argv.get(i))) {
-        String[] pair = argv.get(i + 1).split("=", 2);
-        env.put(pair[0], pair.length > 1 ? pair[1] : "");
-      }
-    }
-    return env;
-  }
-
-  private List<String> valuesAfter(List<String> argv, String flag) {
-    List<String> values = new java.util.ArrayList<>();
-    for (int i = 0; i < argv.size() - 1; i++) {
-      if (flag.equals(argv.get(i))) {
-        values.add(argv.get(i + 1));
-      }
-    }
-    return values;
+  private Spec spec() {
+    return factory.forProject(PROJECT_ID, "demo", "demo-demo").spec();
   }
 
   @Test
   void namesAndLabelsTheContainerAfterItsProject() {
-    List<String> argv = factory.forProject(PROJECT_ID, "demo", "demo-demo").toRunArgv();
+    Spec spec = spec();
 
-    assertEquals("qits-proj-demo", valuesAfter(argv, "--name").get(0));
-    assertTrue(
-        valuesAfter(argv, "--label").contains("qits.managed=project-agent"),
-        "the listing and the idle sweep both filter on qits.managed");
-    assertTrue(
-        valuesAfter(argv, "--label").contains("qits.project=" + PROJECT_ID),
-        "a deleted project's container keeps its name, so the label is what proves ownership");
-    assertEquals("qits-net", valuesAfter(argv, "--network").get(0));
-    assertTrue(argv.contains("--add-host=host.docker.internal:host-gateway"));
-    assertTrue(argv.contains("--init"), "tini at PID 1, so the daemon is a reaped child");
-    assertEquals(IMAGE, argv.get(argv.size() - 1), "the image comes last");
+    assertEquals("qits-proj-demo", spec.explicitName(), "the orchestrator would derive one");
+    assertEquals(
+        Map.of("qits.managed", "project-agent", "qits.project", PROJECT_ID),
+        spec.extraLabels(),
+        "human hints: the orchestrator's own qits.containers.* labels name the place");
+    assertEquals("qits-net", spec.network());
+    assertEquals(List.of("host.docker.internal:host-gateway"), spec.addHosts());
+    assertEquals(Boolean.TRUE, spec.init(), "tini at PID 1, so the daemon is a reaped child");
+    assertEquals(IMAGE, spec.image());
   }
 
   /**
-   * The reference must name a registry, because this string is handed to `docker run` on the HOST
-   * daemon: a bare name resolves against whatever is lying in that host's local image store, which
-   * is how `qits/project-agent:native` came to be a hand-built tag nobody could rebuild. It must
-   * also carry a tag that is not `latest`, so one qits-projects release always starts one agent
-   * image. Asserted on the shipped value, since that is what a deployment runs.
+   * The reference must name a registry, because it is resolved by the daemon the orchestrator holds:
+   * a bare name resolves against whatever is lying in that host's local image store, which is how
+   * {@code qits/project-agent:native} came to be a hand-built tag nobody could rebuild. It must also
+   * carry a tag that is not {@code latest}, so one qits-projects release always starts one agent
+   * image.
    */
   @Test
   void shipsAQualifiedVersionPinnedReference() {
@@ -97,19 +89,22 @@ class AgentContainerFactoryTest {
     assertFalse(IMAGE.endsWith(":latest"), "a floating tag makes the running daemon unanswerable");
   }
 
+  /**
+   * The container runs only {@code qits-projects-daemon}, via the image ENTRYPOINT, with no
+   * {@code sleep infinity} fallback: one that cannot run the daemon must fail to start rather than
+   * linger with this service's uid and mounts and no control plane reaching it.
+   */
   @Test
-  void publishesNoPortsAndAppendsNoCommand() {
-    List<String> argv = factory.forProject(PROJECT_ID, "demo", "demo-demo").toRunArgv();
+  void overridesNoEntrypointAndAppendsNoCommand() {
+    Spec spec = spec();
 
-    assertFalse(argv.contains("-p"), "the daemon binds loopback; nothing is published");
-    // The image is the final element, so nothing follows it: the container runs only the daemon,
-    // via the image ENTRYPOINT, with no `sleep infinity` fallback to linger behind.
-    assertEquals(argv.lastIndexOf(IMAGE), argv.size() - 1);
+    assertNull(spec.entrypoint());
+    assertNull(spec.args());
   }
 
   @Test
   void injectsTheDaemonEnvironmentContract() {
-    Map<String, String> env = envOf(factory.forProject(PROJECT_ID, "demo", "demo-demo").toRunArgv());
+    Map<String, String> env = spec().env();
 
     assertEquals(
         "ws://qits-projects:8080/projects/daemon/" + PROJECT_ID,
@@ -136,11 +131,11 @@ class AgentContainerFactoryTest {
 
   @Test
   void statesTheOneMcpServerAndNoOther() {
-    Map<String, String> env = envOf(factory.forProject(PROJECT_ID, "demo", "demo-demo").toRunArgv());
+    Map<String, String> env = spec().env();
 
     // Same host and port as the control socket above, and this service's own MCP root path — the
-    // server carrying the epic tools a refinement session drafts through. Stated, so the daemon
-    // does not have to derive it from the socket's authority.
+    // server carrying the epic tools a refinement session drafts through. Stated, so the daemon does
+    // not have to derive it from the socket's authority.
     assertEquals("http://qits-projects:8080/projects/mcp", env.get("QITS_REPOSITORY_MCP_URL"));
     assertEquals(
         ConfigProvider.getConfig()
@@ -154,34 +149,104 @@ class AgentContainerFactoryTest {
         env.keySet().stream().filter(name -> name.contains("MCP")).toList());
   }
 
+  /**
+   * The checkout is the workload's <b>own</b> volume and the other three are the platform's, and the
+   * wire distinguishes them for a reason this harness leans on: a shared mount is never claimed,
+   * created or removed on this workload's behalf, and an owned one under {@code IDLE_STOP} is not
+   * removed either. Nothing here discards a checkout, and nothing here can take the platform's
+   * credential volume away from qits-workspaces.
+   */
   @Test
   void mountsTheSharedVolumesAndTheProjectCheckout() {
-    List<String> argv = factory.forProject(PROJECT_ID, "demo", "demo-demo").toRunArgv();
-    List<String> mounts = valuesAfter(argv, "-v");
-    Map<String, String> env = envOf(argv);
+    Spec spec = spec();
+    Map<String, String> env = spec.env();
 
-    assertTrue(
-        mounts.contains("qits_shared_dot_claude:/claude-home"),
-        "the same credential volume qits-workspaces mounts — shared platform-wide on purpose");
-    assertTrue(mounts.contains("qits_shared_m2:/caches/m2"));
-    assertTrue(mounts.contains("qits_shared_pnpm:/caches/pnpm"));
-    assertTrue(
-        mounts.contains("qits_project_" + PROJECT_ID + ":/workspace"),
+    assertEquals(
+        List.of(new VolumeMount("qits_project_" + PROJECT_ID, "/workspace")),
+        spec.volumeMounts(),
         "the checkout volume is keyed on the project id, never the slug");
+    assertEquals(
+        List.of(
+            new SharedMount("qits_shared_dot_claude", "/claude-home"),
+            new SharedMount("qits_shared_m2", "/caches/m2"),
+            new SharedMount("qits_shared_pnpm", "/caches/pnpm")),
+        spec.sharedMounts(),
+        "the same names qits-workspaces uses — shared platform-wide on purpose");
     assertEquals("/claude-home/.claude", env.get("CLAUDE_CONFIG_DIR"));
     assertEquals("-Dmaven.repo.local=/caches/m2", env.get("MAVEN_OPTS"));
   }
 
   @Test
   void capsMemoryHardAndLeavesTheUnsetLimitsOff() {
-    List<String> argv = factory.forProject(PROJECT_ID, "demo", "demo-demo").toRunArgv();
+    Spec spec = spec();
 
-    assertEquals(List.of("4g"), valuesAfter(argv, "--memory"));
+    assertEquals("4g", spec.security().memory());
     assertEquals(
-        List.of("4g"),
-        valuesAfter(argv, "--memory-swap"),
+        "4g",
+        spec.security().memorySwap(),
         "the same value, so the container cannot spill the difference into host swap");
-    assertFalse(argv.contains("--pids-limit"), "blank config adds no flag");
-    assertFalse(argv.contains("--cpus"), "blank config adds no flag");
+    assertNull(spec.security().pidsLimit(), "blank config sets no cap");
+    assertNull(spec.security().cpus(), "blank config sets no cap");
+  }
+
+  /**
+   * The two flags a CI step container carries and this one must not. A step runs a repository's own
+   * script and is fenced; a project agent is a development environment a person works in, running an
+   * image the platform built, and dropping every capability there would break the toolchain it
+   * exists to carry. Turning either on is a change to what this container is for, not a hardening
+   * tweak.
+   *
+   * <p>The docker socket is the third, and it is absent for the plainer reason: a project agent
+   * builds inside itself and publishes nothing.
+   */
+  @Test
+  void isNotSandboxedLikeACiStepAndHoldsNoDockerSocket() {
+    Spec spec = spec();
+
+    assertFalse(spec.security().capDropAll());
+    assertFalse(spec.security().noNewPrivileges());
+    assertFalse(spec.hostDockerSocket());
+  }
+
+  /**
+   * The lifecycle, and the two ways an ensure may be answered.
+   *
+   * <p>{@code IDLE_STOP} is what makes the orchestrator's own sweep a belt under this service's, and
+   * what makes it refuse to remove the checkout volume. {@code Recreate.never} is what keeps a spec
+   * change from replacing a container somebody is working in.
+   */
+  @Test
+  void asksForAStoppableLifetimeAndNeverAnUnaskedReplacement() {
+    EnsureRequest request = factory.forProject(PROJECT_ID, "demo", "demo-demo");
+
+    assertEquals(PolicyType.IDLE_STOP, request.policy().type());
+    assertEquals(
+        ConfigProvider.getConfig()
+            .getValue("qits.projects.agent-idle-timeout", java.time.Duration.class)
+            .toSeconds(),
+        request.policy().idleAfterSeconds(),
+        "one window, two sweeps: this service's and the orchestrator's belt under it");
+    assertEquals(Recreate.never, request.recreate());
+  }
+
+  /**
+   * Bringing a stopped agent back is the one ask that may replace a container, and it takes both
+   * halves to work: the permission, and a spec that differs from the stored one. qits-containers has
+   * no start verb, and its unchanged-spec path cannot start a container whose name docker already
+   * holds — see {@code ContainerRuntime.restart}.
+   */
+  @Test
+  void aRecreationAsksForAReplacementAndCarriesSomethingToReplaceOn() {
+    EnsureRequest first = factory.forRecreation(PROJECT_ID, "demo", "demo-demo");
+    EnsureRequest second = factory.forRecreation(PROJECT_ID, "demo", "demo-demo");
+
+    assertEquals(Recreate.ifChanged, first.recreate());
+    assertNotEquals(
+        first.spec().env().get(AgentContainerFactory.INCARNATION),
+        second.spec().env().get(AgentContainerFactory.INCARNATION),
+        "a stamp that repeated would be a spec that did not change");
+    assertNull(
+        spec().env().get(AgentContainerFactory.INCARNATION),
+        "a first provision carries none: there is nothing there to replace");
   }
 }

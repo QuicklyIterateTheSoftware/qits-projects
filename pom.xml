@@ -98,6 +98,16 @@
         <qits.eventstream.version>2026.811.155429</qits.eventstream.version>
         <qits.githost-events.version>2026.812.172928</qits.githost-events.version>
 
+        <!-- qits-containers' client jar: the orchestrator that owns every container this service
+             starts, now that it holds no docker socket. Framework-free — one class, four answers,
+             no arc and no OIDC extension — which is what lets service/ produce it as a bean in
+             three lines.
+
+             PINNED AT A RELEASED CALVER, never a snapshot, for the reason spelled out above the
+             vocabulary jar: a snapshot that resolves only from a warm docker layer and a
+             developer's ~/.m2 is a red release waiting for whoever next edits a file. -->
+        <qits.containers-client.version>2026.812.173301</qits.containers-client.version>
+
         <!-- qits-integrations-quarkus ships two jars this repo consumes, released together, so they
              carry ONE version property rather than drifting apart:
 
@@ -170,6 +180,11 @@
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-githost-events</artifactId>
                 <version>${qits.githost-events.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-containers-client</artifactId>
+                <version>${qits.containers-client.version}</version>
             </dependency>
             <dependency>
                 <!-- Test scope at every declaration site: the rules run in the build and ship in

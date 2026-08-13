@@ -61,6 +61,10 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   git host's lifecycle client — `HttpGitHostRepositories`, a `java.net.http.HttpClient` as an
   instance field like `notify`'s, but named apart from it: `notify` is for fire-and-forget and a
   repository create is waited on and can fail the caller's request).
+- `service/…/containershost/` — the orchestrator client: the `ContainerRuntime` implementation, the
+  producer that gives the jar its bean and its bearer, and the native-image registration. It is an
+  *adapter* like `wiring`, `notify` and `bus` are — the seam is `agenthost/ContainerRuntime`, and
+  what lives here is only what a deployable owes a plain jar. See "The container orchestrator".
 - `epics/` — untouched by the extraction beyond its `<parent>`: its own package, its own error
   types, its own datasource, its own physical database (`qits_epics`) and its own Flyway lineage. It
   depends on neither `domain` nor any auth module, and it should stay that way — it is the module
@@ -166,6 +170,16 @@ Don't. Declare a port in `domain/…/projects/control/`, inject it as `Instance<
 supported configuration with a documented behaviour — see the table in the README. Every port here
 is optional; if you ever add a mandatory one, say why in its javadoc, the way qits-workspaces'
 `RepositoryLookup` does.
+
+**`qits-containers-client` is the exception that shows where the rule's real boundary is.** It is a
+*client*, so it has to be read against this rule rather than waved past it — and the answer is the
+one the eventstream jar already gets: what is forbidden is a dependency on another **bounded
+context**, and this is **platform infrastructure**. The test is whether the jar is the platform's
+single answer to a capability every module needs or one context's model. qits-events is where the
+platform's events live; qits-containers is where its containers live. Three properties travel with
+that, and a jar missing any of them is a client on another context whatever it is called: no domain
+model crosses (images, environment and lifetimes — it cannot name a `Project` and does not want to),
+every call is synchronous, bounded and **cannot throw**, and the jar brings no framework at all.
 
 Never add a JPA relation to another context's entity. `Project ↔ Repository ↔ repository_name` are
 real relations with real foreign keys because those tables are in **this** database. Anything else
@@ -384,13 +398,19 @@ would give project agents their own unauthenticated agent home. The per-project 
 `qits_project_<projectId>`, keyed on the id, while the container is named `qits-proj-<slug>` so
 `docker ps` reads well. `Project.slug` is unique (V6), but only among *live* projects, and deleting
 a project does not remove its agent container — so a later project taking the freed slug finds the
-old container on the name. Every read therefore checks the `qits.project` label and
-`AgentContainers` answers 409 rather than adopting it.
+old container on the name. The name therefore proves nothing, which is why it is not the address:
+a place is `owner/project-agent/<projectId>` and a row found under this project's id *is* this
+project's. What survives of the old label check is one arm down, in
+`ContainersAgentRuntime.run`: before provisioning it asks whether another of this owner's places
+already holds the name, and answers 409 rather than letting the registry refuse it as a unique
+constraint nobody can act on.
 
-**The stop policy is stop, never remove.** `POST …/agent-container/stop` and the
-`qits.projects.agent-idle-timeout` sweep (PT4H) both leave the container and its `/workspace` volume
-in place, so the next ensure is a `docker start` that reattaches the checkout with any uncommitted
-work intact. That is what makes an automatic sweep safe to run at all. Idleness is measured from the
+**The stop policy discards no checkout, and it is no longer a `docker start`.** `POST
+…/agent-container/stop` and the `qits.projects.agent-idle-timeout` sweep (PT4H) both stop the
+container; the checkout survives because it is a named volume the orchestrator will not remove under
+`IDLE_STOP`, and the daemon skips its self-clone on an already-populated `/workspace`. Bringing one
+back is a **re-create**, because qits-containers has no start verb at all — see "The container
+orchestrator" below. Idleness is measured from the
 last thing the daemon said — `Hello`, heartbeat, agent activity — so it means "nobody is using this
 project", not "nothing is happening": a long silent build still heartbeats. A container this process
 has never heard from is stamped on sight and ages out one window later, rather than being immortal
@@ -409,10 +429,71 @@ it again — deliberately not automatic, since the `/workspace` volume a remove 
 uncommitted work lives. The detail is a field and not a sixth `AgentRuntimeStatus`: the SPA switches
 on those five strings and they are a published contract.
 
-**Nothing here shells docker under test.** `DockerAgentRuntime` is `@DefaultBean`, so
-`FakeContainerRuntime` simply wins the injection — and its startup observer is gated on
-`LaunchMode.NORMAL`, because a `@DefaultBean` that loses the contest *keeps* its `@Observes
-StartupEvent` and would otherwise create real platform volumes on every `./mvnw verify`.
+## The container orchestrator
+
+**This service holds no docker socket and spawns no process.** Every container verb the harness has
+— provision, bring back, stop, stamp, list, make a volume — is one HTTP call to **qits-containers**,
+which owns the daemon. `agenthost/ContainerRuntime` is still the seam; its sole implementation is
+`containershost/ContainersAgentRuntime`, and `DockerAgentRuntime` (a `ProcessBuilder` shelling
+`docker`) and the `AgentContainer` argv builder are **deleted**, not retired. If a docker argv ever
+reappears in this repository, that is the regression.
+
+Five things bite.
+
+- **A place is `owner/workload/ref`, and this service's ref is the project id.** So the seam takes a
+  project id where it used to take a container name, and `qits-proj-<slug>` travels as the spec's
+  `explicitName` — a hint for `docker ps`, never an address. `qits.projects.containers.owner`
+  **must equal the machine token's `sub`** once the far side's gate is on (its `OwnerGuard` compares
+  them), which is why it defaults to reading `quarkus.oidc-client.client-id`. Two instances must not
+  share it; two environments sharing one docker daemon are `dev-qits-projects` and
+  `prod-qits-projects` and neither one's rows name the other's containers.
+- **The client never throws, and its four answers are the whole vocabulary.** A refusal and an
+  unreachable service mean opposite things — one is evidence about the request, the other about
+  nothing at all — so `inspect` answers empty for a **404 only** and throws for everything else. The
+  docker CLI it replaces could not tell those apart (a broken binary and an absent container both
+  exited non-zero), and reading "we could not ask" as "there is nothing there" is what would send the
+  ladder to provision a second container. Do not add a fifth outcome by catching something.
+- **A bring-up holds through 401, 403 and nothing answering, and through nothing else.**
+  `ContainersAgentRuntime.holdThrough` is qits-ci's classifier copied verbatim, and the measurement
+  behind it is that repository's: across a qits-platform-idp cutover those three are statements about
+  the moment rather than about the request, and each attempt asks the `TokenSource` again, which is
+  the only way a post-cutover token is ever picked up. Retrying is safe because `ensure` is a PUT per
+  place. `SPEC_CONFLICT`, `IMAGE_MISSING` and a 400 on a value are one attempt each — no window fixes
+  them. **A 2xx whose observed state is `MISSING`/`GONE` is a failed bring-up**, not a started one.
+- **There is no start verb, and the stopped arm is a re-create because of it.** qits-containers'
+  `ensure` of a place whose container is stopped under an *unchanged* spec reaches its `RESTART`
+  step, which issues a second `docker run` under a name docker already holds: docker refuses, the row
+  settles `MISSING`, and the caller is answered **200** with a container sitting there in `exited`.
+  Nothing in that repository's suite covers it, because its fake driver accepts a duplicate name. Its
+  **recreate** step does work — stop, remove, run, same name and same row — and it is reached by an
+  ensure that carries `Recreate.ifChanged` *and* a spec that differs from the stored one. So
+  `forRecreation` stamps `QITS_PROJECTS_AGENT_INCARNATION`, a fresh value per call, and that is what
+  makes the permission bite. It is a real fact about the container rather than a token, and the
+  daemon ignores it. **Collapse the whole arm into a plain ensure the day that service grows a start
+  verb**, or the day its `RESTART` removes before it runs.
+  <br>A delete-then-ensure would be the obvious alternative and it does not work: `ct_container`'s
+  `container_name` is unique across **every** row including the settled ones, and a deleted row keeps
+  the name for `qits.containers.row-prune-horizon` (P7D).
+- **The idle sweep stays here, and it resolves identity itself.** Its tunnel teardown and
+  `registry.forget` are in-memory state of this process that the orchestrator cannot touch. The spec
+  still carries an `IDLE_STOP` policy with the same window as the belt for a qits-projects that died
+  holding a container — and the sweep `touch`es what it keeps, because that clock is only ever
+  stamped when a row is written and would otherwise stop a container somebody is working in. The
+  listing carries no labels and no refs, so a container **name** is matched back against the live
+  projects' own `qits-proj-<slug>`; one that matches none is **skipped**, because every action past
+  the stop is addressed by a project id there is no longer one of.
+
+**Nothing here reaches an orchestrator under test.** `ContainersAgentRuntime` is `@DefaultBean`, so
+`FakeContainerRuntime` simply wins the injection, and the test config points `qits.containers.url` at
+`http://127.0.0.1:1` so a call that escaped the fake fails fast instead of reaching a real
+orchestrator on the developer's own machine. There is no startup observer left to gate: the network
+is the bootstrap's and this service creates none.
+
+**`containershost/ContainersWireReflection` is the native-image registration**, the second member of
+`bus/EventWireReflection`'s family and there for the identical reason — the client jar builds its own
+`ObjectMapper`, so the wire records are invisible to the build step that scans for what needs
+reflecting on, and without it the JVM suite stays green and the binary fails on every call. The list
+is the client's README's list; keep them the same.
 
 ## Schema changes
 

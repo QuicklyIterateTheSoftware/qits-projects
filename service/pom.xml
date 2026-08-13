@@ -80,6 +80,36 @@
             <artifactId>qits-githost-events</artifactId>
         </dependency>
         <dependency>
+            <!-- The orchestrator's client jar: how this service starts, stops and lists project
+                 agent containers now that it holds no docker socket. A client rather than a
+                 vocabulary, so "Adding a dependency on another context" in CLAUDE.md has to be read
+                 against it — and the answer is the one the eventstream jar already gets: this is
+                 PLATFORM INFRASTRUCTURE, not another bounded context's SDK. No domain model
+                 crosses (images, environment and lifetimes, never a Project), every call is
+                 synchronous, bounded and CANNOT THROW, and the jar brings no framework at all.
+
+                 A native consumer owes the wire records a registration:
+                 containershost/ContainersWireReflection, the second member of
+                 bus/EventWireReflection's family and there for the identical reason. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-containers-client</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The credential the client above presents. qits-containers guards every route —
+                 reads included — on the caller's own identity: its OwnerGuard compares the token's
+                 `sub` to the owner in the path, so quarkus.oidc-client.client-id is not a label
+                 here, it IS this service's owner string.
+
+                 Shipped OFF: quarkus.oidc-client.client-enabled is false in
+                 application.properties, so the extension builds a disabled client, this process
+                 boots with no secret and dials nothing, and the calls go out bare — which is what
+                 the orchestrator's own gate (qits.auth.machine.required, also off) expects. This
+                 service authenticates no INBOUND caller either way; that is qits-gateway's, and
+                 nothing here validates a bearer. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc-client</artifactId>
+        </dependency>
+        <dependency>
             <!-- PatientPgDriver. It arrives transitively through `domain` and `epics` too, and is
                  declared here because THIS module's application.properties names it as well — for
                  the eventstream datasource the bus jar brings, whose own defaults do not carry the

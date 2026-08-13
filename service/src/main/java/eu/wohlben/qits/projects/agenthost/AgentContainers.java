@@ -5,7 +5,6 @@ import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.error.DomainException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jboss.logging.Logger;
@@ -17,28 +16,33 @@ import org.jboss.logging.Logger;
  * <h2>The ladder</h2>
  *
  * <ol>
- *   <li><b>Running</b> — no-op. The container is up and its {@code /workspace} is whatever the last
- *       session left there.
- *   <li><b>Present but stopped</b> — {@code docker start}. Lossless: the checkout, its submodules
- *       and any uncommitted work survive, which is the whole reason the stop policy never removes.
- *   <li><b>Absent</b> — provision: create the labelled volume, then {@code docker run}. The daemon
- *       self-clones the wrapper into the volume on boot; the host awaits none of it, because a
- *       browser opening a refinement panel should not block on a clone.
+ *   <li><b>Running</b> — no-op, plus a stamp. The container is up and its {@code /workspace} is
+ *       whatever the last session left there.
+ *   <li><b>Present but not running</b> — {@link ContainerRuntime#restart}. Lossless: the checkout,
+ *       its submodules and any uncommitted work live on a named volume nothing here removes, which
+ *       is the whole reason the stop policy never discards one.
+ *   <li><b>Absent</b> — provision. The daemon self-clones the wrapper into the volume on boot; the
+ *       host awaits none of it, because a browser opening a refinement panel should not block on a
+ *       clone.
  * </ol>
  *
- * <p><b>Synchronous, and serialized per project.</b> Two concurrent ensures would race into two
- * {@code docker run}s, of which the second fails on a name already in use — a failure that reads
- * like a bug in the ladder rather than like two clicks. A per-project lock removes it, and a caller
- * that arrives while the lock is held sees {@link AgentRuntimeStatus#PROVISIONING} rather than
- * queueing behind an image pull.
+ * <p><b>Two arms, not three, once you look at what they send.</b> Both the second and the third are
+ * one {@code ensure} to qits-containers; what differs is that the second asks for the container to
+ * be replaced and the third does not. There is no start verb on that service's wire, and
+ * {@link ContainerRuntime#restart} carries the whole argument.
  *
- * <p><b>A container is only this project's if its label says so.</b> The container name is derived
- * from the project <em>slug</em>, which is unique among <em>live</em> projects (V6) — and that is
- * not the same as unique among containers. Deleting a project does not remove its agent container,
- * so a later project taking the freed slug finds the old one still sitting on the name, holding the
- * deleted project's checkout. So every read checks {@code qits.project} and refuses a foreign
- * container with a 409 rather than adopting it. The refusal names both ids, because removing the
- * stale container is the only way out of it.
+ * <p><b>Synchronous, and serialized per project.</b> Two concurrent ensures would race into two
+ * bring-ups of the same place, and the second would either replace what the first had just started
+ * or be refused on the name — a failure that reads like a bug in the ladder rather than like two
+ * clicks. A per-project lock removes it, and a caller that arrives while the lock is held sees
+ * {@link AgentRuntimeStatus#PROVISIONING} rather than queueing behind an image pull.
+ *
+ * <p><b>Ownership is the registry's now, not a label's.</b> A place is addressed
+ * {@code owner/project-agent/<projectId>}, so a row found under this project's id <em>is</em> this
+ * project's and no read has to prove it. What the label used to catch survives one arm down: a
+ * project deleted without its agent being removed leaves the container <em>name</em> — derived from
+ * a slug, which is unique among live projects only — sitting there for whoever takes the freed slug
+ * next, and the provisioning arm refuses that with a 409 rather than adopting it.
  */
 @ApplicationScoped
 public class AgentContainers {
@@ -62,7 +66,7 @@ public class AgentContainers {
    */
   public AgentContainerState ensure(String projectId) {
     Project project = projectService.get(projectId); // 404s an unknown id
-    String name = containerNameOf(project);
+    requireSlug(project);
     ReentrantLock lock = locks.computeIfAbsent(projectId, id -> new ReentrantLock());
     if (!lock.tryLock()) {
       // Somebody else is already doing exactly this. Answering rather than queueing keeps a second
@@ -70,11 +74,16 @@ public class AgentContainers {
       return AgentContainerState.of(AgentRuntimeStatus.PROVISIONING);
     }
     try {
-      ContainerRuntime.ContainerInfo existing = requireOwnContainer(projectId, name).orElse(null);
+      ContainerRuntime.ContainerInfo existing = runtime.inspect(projectId).orElse(null);
+      String wrapper = ProjectService.wrapperName(project);
       if (existing == null) {
-        runtime.run(projectId, project.slug, ProjectService.wrapperName(project));
+        runtime.run(projectId, project.slug, wrapper);
       } else if (!existing.running()) {
-        runtime.start(name);
+        runtime.restart(projectId, project.slug, wrapper);
+      } else {
+        // Up already: tell the orchestrator its own idle clock that this place is still wanted, so
+        // its belt cannot stop a container somebody is working in.
+        runtime.touch(projectId);
       }
       // A freshly started container has said nothing yet, so it would look idle to the sweep. The
       // stamp is what buys it the full idle window to dial home in.
@@ -99,13 +108,13 @@ public class AgentContainers {
    */
   public AgentContainerState stop(String projectId) {
     Project project = projectService.get(projectId);
-    String name = containerNameOf(project);
-    ContainerRuntime.ContainerInfo existing = requireOwnContainer(projectId, name).orElse(null);
+    requireSlug(project);
+    ContainerRuntime.ContainerInfo existing = runtime.inspect(projectId).orElse(null);
     if (existing == null) {
       return AgentContainerState.absent();
     }
     if (existing.running()) {
-      runtime.stop(name);
+      runtime.stop(projectId);
     }
     // The tunnel's loopback listener and its client belong to a container that is going away; a new
     // one is opened on the next request. The activity stamp goes with it, so a restart starts the
@@ -118,12 +127,12 @@ public class AgentContainers {
   /** What the project's agent container is doing right now, without changing anything. */
   public AgentContainerState status(String projectId) {
     Project project = projectService.get(projectId);
-    String name = containerNameOf(project);
+    requireSlug(project);
     ReentrantLock lock = locks.get(projectId);
     if (lock != null && lock.isLocked()) {
       return AgentContainerState.of(AgentRuntimeStatus.PROVISIONING);
     }
-    ContainerRuntime.ContainerInfo existing = requireOwnContainer(projectId, name).orElse(null);
+    ContainerRuntime.ContainerInfo existing = runtime.inspect(projectId).orElse(null);
     if (existing == null) {
       return AgentContainerState.absent();
     }
@@ -131,29 +140,14 @@ public class AgentContainers {
         projectId, existing.running() ? AgentRuntimeStatus.RUNNING : AgentRuntimeStatus.STOPPED);
   }
 
-  /** The container by this project's name, or empty; refuses one that belongs to another project. */
-  private Optional<ContainerRuntime.ContainerInfo> requireOwnContainer(
-      String projectId, String name) {
-    ContainerRuntime.ContainerInfo info = runtime.inspect(name).orElse(null);
-    if (info == null) {
-      return Optional.empty();
-    }
-    String owner = info.projectId();
-    if (owner != null && !owner.isBlank() && !owner.equals(projectId)) {
-      throw new DomainException(
-          409,
-          "The container name '"
-              + name
-              + "' is already taken by project "
-              + owner
-              + ". Slugs are unique among live projects, so this is a container left behind by a"
-              + " deleted one; remove it and try again.");
-    }
-    return Optional.of(info);
-  }
-
-  /** The container name for a project, refusing a row that has no slug to derive one from. */
-  private String containerNameOf(Project project) {
+  /**
+   * Refuse a project that has no slug to name a container after.
+   *
+   * <p>It is a check rather than a derivation now: the place is addressed by the project id, so the
+   * slug is only the container's human-readable name — but a project with no slug has no wrapper
+   * repository either, so there is nothing for an agent to run over.
+   */
+  private static void requireSlug(Project project) {
     if (project.slug == null || project.slug.isBlank()) {
       throw new DomainException(
           409,
@@ -162,7 +156,6 @@ public class AgentContainers {
               + " has no slug, so it has no wrapper repository and no agent container to run one"
               + " over.");
     }
-    return runtime.containerName(project.slug);
   }
 
   /**

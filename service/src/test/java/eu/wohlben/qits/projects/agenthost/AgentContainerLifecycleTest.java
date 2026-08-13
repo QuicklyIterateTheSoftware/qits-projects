@@ -18,11 +18,11 @@ import org.junit.jupiter.api.Test;
 /**
  * The agent-container lifecycle, over the REST surface an SPA panel drives it from.
  *
- * <p>Two things are under test and they are not the same thing. The <b>ladder</b> is which docker
- * verb runs — nothing for a running container, {@code start} for a stopped one, {@code run} for an
- * absent one — and it is asserted against {@link FakeContainerRuntime#calls()}, because a test that
- * only read the answering status would pass just as happily for a ladder that re-ran a container it
- * should have started, losing nothing visible and every uncommitted file in the checkout.
+ * <p>Two things are under test and they are not the same thing. The <b>ladder</b> is which verb runs
+ * — a stamp for a running container, a restart for one that is not, a provision for an absent one —
+ * and it is asserted against {@link FakeContainerRuntime#calls()}, because a test that only read the
+ * answering status would pass just as happily for a ladder that provisioned a place it should have
+ * brought back.
  *
  * <p>The <b>response shape</b> is a published contract consumed by a client written in another
  * repository, so it is asserted field by field: {@code container.runtimeStatus}, {@code
@@ -38,6 +38,7 @@ class AgentContainerLifecycleTest {
   @Inject AgentDaemonRegistry registry;
 
   private String projectId;
+  private String slug;
   private String containerName;
 
   @BeforeEach
@@ -57,7 +58,8 @@ class AgentContainerLifecycleTest {
             .extract()
             .jsonPath();
     projectId = created.getString("project.id");
-    containerName = "qits-proj-" + created.getString("project.slug");
+    slug = created.getString("project.slug");
+    containerName = "qits-proj-" + slug;
   }
 
   private String base() {
@@ -83,26 +85,30 @@ class AgentContainerLifecycleTest {
         "the labelled checkout volume is created before the container mounts it");
   }
 
+  /**
+   * A running container is not restarted and not re-provisioned. The one call it does make is a
+   * stamp: the orchestrator runs the same idle sweep from its side, and its clock is only ever
+   * written when a row is, so without this it would stop a container somebody is working in.
+   */
   @Test
-  void runningIsANoOp() {
-    runtime.given(containerName, projectId, true);
+  void runningIsStampedAndOtherwiseLeftAlone() {
+    runtime.given(projectId, slug, true);
 
     agentContainers.ensure(projectId);
 
-    assertEquals(
-        java.util.List.of(), runtime.calls(), "a running container is left exactly as it was");
+    assertEquals(java.util.List.of("touch:" + projectId), runtime.calls());
   }
 
   @Test
-  void stoppedIsStartedInPlace() {
-    runtime.given(containerName, projectId, false);
+  void aContainerThatIsNotRunningIsBroughtBackRatherThanProvisioned() {
+    runtime.given(projectId, slug, false);
 
     agentContainers.ensure(projectId);
 
     assertEquals(
-        java.util.List.of("start:" + containerName),
+        java.util.List.of("restart:" + projectId),
         runtime.calls(),
-        "a stopped container is started, never re-run — the checkout has to survive");
+        "the place is brought back onto its own checkout volume, never provisioned afresh");
   }
 
   @Test
@@ -128,7 +134,7 @@ class AgentContainerLifecycleTest {
    */
   @Test
   void aFailedProvisionMakesARunningContainerReadFailed() {
-    runtime.given(containerName, projectId, true);
+    runtime.given(projectId, slug, true);
     registry.onMessage(
         projectId, null, new ProvisionFailed(projectId, "clone refused: no such remote"));
 
@@ -154,7 +160,7 @@ class AgentContainerLifecycleTest {
 
   @Test
   void stopIsGracefulAndIdempotent() {
-    runtime.given(containerName, projectId, true);
+    runtime.given(projectId, slug, true);
 
     given()
         .when()
@@ -164,7 +170,7 @@ class AgentContainerLifecycleTest {
         .body("container.runtimeStatus", org.hamcrest.Matchers.is("STOPPED"));
 
     assertEquals(
-        java.util.List.of("stop:" + containerName),
+        java.util.List.of("stop:" + projectId),
         runtime.calls(),
         "stop, never remove: the container and its /workspace volume survive");
 
@@ -190,7 +196,7 @@ class AgentContainerLifecycleTest {
 
   @Test
   void readAnswersTheSameShapeAsEnsure() {
-    runtime.given(containerName, projectId, false);
+    runtime.given(projectId, slug, false);
 
     given()
         .when()
@@ -211,14 +217,22 @@ class AgentContainerLifecycleTest {
     given().when().post(unknown + "/stop").then().statusCode(404);
   }
 
+  /**
+   * A refusal is an answer, not a failure to report as {@code FAILED}.
+   *
+   * <p>The refusal itself belongs to the runtime now — a container name held by a deleted project's
+   * place is a 409 raised where the orchestrator's rows can be read, and
+   * {@code containershost/ContainersAgentRuntimeTest} is where that is proved. What is this class's
+   * is the other half: the ladder lets it through with its status intact, instead of catching it
+   * with every other runtime failure and answering 200 {@code FAILED}. A panel told "the runtime
+   * broke" would offer a retry; a panel told 409 shows the sentence naming the way out.
+   */
   @Test
-  void aContainerBelongingToAnotherProjectIsRefused() {
-    // Slugs are unique among live projects, but deleting one leaves its container on the name — so
-    // the name alone proves nothing. Adopting a foreign container would hand this project a shell
-    // over somebody else's checkout.
-    runtime.given(containerName, "some-other-project", true);
+  void aRefusedProvisionKeepsItsStatus() {
+    runtime.failNextRun(
+        new eu.wohlben.qits.projects.error.DomainException(
+            409, "The container name '" + containerName + "' is already taken"));
 
     given().when().post(base() + "/ensure").then().statusCode(409);
-    assertEquals(java.util.List.of(), runtime.calls(), "nothing is touched on the refusal");
   }
 }

@@ -4,6 +4,7 @@ import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.StartupEvent;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.control.ActivateRequestContext;
 import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import java.util.LinkedHashSet;
@@ -82,7 +83,13 @@ public class AgentCredentialReconcile {
     reconcileQuietly();
   }
 
-  private void reconcileQuietly() {
+  /**
+   * The body both entry points run, with every failure logged and none rethrown.
+   *
+   * <p>Package-private so the suite can drive it on a thread of its own — which is the only way to
+   * reproduce what the deployment does, since both entry points return early in test launch mode.
+   */
+  void reconcileQuietly() {
     try {
       reconcile();
     } catch (RuntimeException e) {
@@ -96,7 +103,18 @@ public class AgentCredentialReconcile {
    * <p>Package-private and driven directly by the suite, the same shape {@code AgentIdleSweep.sweep}
    * has: the logic is a comparison between two inventories and needs neither a clock nor a schedule
    * to be worth asserting.
+   *
+   * <p>{@link ActivateRequestContext} because the reads below reach Panache and neither entry point
+   * carries a context of its own — the boot pass is a bare virtual thread, and a scheduler thread is
+   * nobody's request. Without it the pass threw {@code ContextNotActiveException} at the first read,
+   * which is the {@code SelfSeedService} and {@code RepositoryService.backupToTwin} case exactly.
+   * It sits here rather than on {@link #reconcileQuietly()} so a direct call cannot get it wrong
+   * either; the writes still open their own transactions in {@link AgentCommissions}.
+   *
+   * <p>It failed closed — the throw came before any revoke — so nothing was ever wrongly handed
+   * back. Nothing was reaped either, and the swallowed error is why it went on for releases.
    */
+  @ActivateRequestContext
   int reconcile() {
     if (!credentials.enabled()) {
       return 0;

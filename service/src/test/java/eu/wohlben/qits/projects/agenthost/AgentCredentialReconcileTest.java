@@ -4,10 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.quarkus.arc.Arc;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -121,6 +123,45 @@ class AgentCredentialReconcileTest {
 
     assertEquals(0, reconcile.reconcile());
     assertEquals(Map.of("client-live", live), credentials.live());
+  }
+
+  /**
+   * The pass runs where the deployment runs it: on a thread with no request context. Every other
+   * test here calls {@code reconcile()} from the test method, which the harness has already given a
+   * context — which is how a green suite shipped a pass that threw {@code ContextNotActiveException}
+   * at its first Panache read, on every boot.
+   *
+   * <p>What this proves: the body both entry points call reaches the database and hands an orphan
+   * back with no context lent to it from outside. The first assertion is what makes the rest mean
+   * anything — a thread that arrived holding a context would prove nothing.
+   *
+   * <p>What it cannot prove: that the schedule and the {@code StartupEvent} reach this body at all.
+   * Both entry points gate on {@code LaunchMode.NORMAL} and return in a suite by design, so what is
+   * driven here is {@code reconcileQuietly}, which is literally the boot pass's own {@code Runnable}
+   * and the whole of what the sweep does past its gate.
+   */
+  @Test
+  void aPassWithNoRequestContextStillHandsAnOrphanBack() throws InterruptedException {
+    commissions.forFreshContainer(orphan); // the idp commission and the row, as a fresh container
+    AtomicBoolean arrivedWithAContext = new AtomicBoolean(true);
+
+    Thread pass =
+        Thread.ofVirtual()
+            .name("qits-agent-credential-reconcile-test")
+            .start(
+                () -> {
+                  arrivedWithAContext.set(Arc.container().requestContext().isActive());
+                  reconcile.reconcileQuietly();
+                });
+    pass.join();
+
+    assertFalse(
+        arrivedWithAContext.get(),
+        "the pass must start with no request context, or this test proves nothing");
+    assertEquals(Map.of(), credentials.live());
+    assertFalse(
+        commissions.projectsHoldingACredential().contains(orphan),
+        "the row goes with the commission on a context-less pass too");
   }
 
   /** With no idp there is nothing to reconcile, and not one call is made. */

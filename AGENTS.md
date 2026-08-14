@@ -65,6 +65,9 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   producer that gives the jar its bean and its bearer, and the native-image registration. It is an
   *adapter* like `wiring`, `notify` and `bus` are — the seam is `agenthost/ContainerRuntime`, and
   what lives here is only what a deployable owes a plain jar. See "The container orchestrator".
+- `service/…/idphost/` — qits-idp's commission API, the same adapter shape one directory over: the
+  seam is `agenthost/AgentCredentials` and the whole of what lives here is one `@DefaultBean` HTTP
+  client. See "The commissioned credential".
 - `epics/` — untouched by the extraction beyond its `<parent>`: its own package, its own error
   types, its own datasource, its own physical database (`qits_epics`) and its own Flyway lineage. It
   depends on neither `domain` nor any auth module, and it should stay that way — it is the module
@@ -370,6 +373,14 @@ one wrong fails silently: no url leaves the daemon idle, no token leaves its API
     QITS_PROJECTS_DAEMON_HOOKS_PORT      13337
     QITS_PROJECTS_DAEMON_CLAUDE_MOUNT    /claude-home
     QITS_REPOSITORY_MCP_URL              the one MCP server a launch attaches — this service
+    QITS_COMMISSIONED_CLIENT_ID          this container's OWN idp client — absent with no idp
+    QITS_COMMISSIONED_CLIENT_SECRET      its secret, answered once and stored here
+
+**The last two are a credential per container, not a shared one.** They are commissioned from
+qits-idp's `POST /idp/api/clients` as `{agent-container, <projectId>}` and handed back when the
+container is gone, so what a container authenticates its pulls, its maven/npm resolution and its git
+reads with has the container's lifetime and no other. Read the section below before touching them —
+in particular, they are the one part of this table whose *absence* is a supported configuration.
 
 **The harness gets exactly one MCP server, and it is this one.** `QITS_REPOSITORY_MCP_URL` names
 this service's `repository` server at `/projects/mcp`, which carries `EpicMcpTools` beside
@@ -391,6 +402,57 @@ loopback bind — it says "qits is calling", never "this user is calling" — so
 replacing whatever the caller sent, and a forwarded one would be a credential leak. It ships with a
 default so a deployment needs no configuration; the other end is still fail-closed, because a daemon
 handed no token does not bind its API at all.
+
+### The commissioned credential
+
+**One idp client per container, and its lifetime is the container's.** `AgentCommissions` gets it
+from qits-idp's commission API — `POST /idp/api/clients` with `{"contextKind":"agent-container",
+"contextId":"<projectId>"}`, HTTP Basic with **this service's own** oidc client id and secret,
+because a caller there already holds an idp credential and that is how the API authenticates one.
+`idphost/IdpAgentCredentials` is the adapter and `agenthost/AgentCredentials` the seam; the adapter
+is `@DefaultBean`, so the suite's `FakeAgentCredentials` wins the injection and no test reaches an
+idp. Everything is read from the keys the oidc-client block already ships
+(`client-enabled`, `client-id`, `credentials.secret`, `auth-server-url`) — there is no second address
+and no second credential to configure.
+
+Four things bite.
+
+- **Absent is the shipped configuration and must stay byte-identical.** With
+  `quarkus.oidc-client.client-enabled=false` this process holds no secret, so it can authenticate to
+  nothing: nothing is commissioned, the two names are simply not in the env map, and the spec a
+  container is started with is the spec it was before any of this existed. Same answer, plus one
+  WARN, when the switch is on and the secret is blank.
+- **The fresh arm commissions and the wake arm must not.** `AgentContainerFactory.forProject` mints
+  a credential; `forRestart` reads back the pair the container already holds and sends it unchanged.
+  That is not a cache: qits-containers hashes a workload's whole spec, **environment included**, so
+  a wake that minted a fresh secret would be a spec change and would replace the container on every
+  wake — the exact defect `ContainerRuntime.restart` records, reintroduced through the one door left
+  open. `AgentCommissioningTest` compares the two arms' whole env maps for that reason.
+- **The pair is a row in this database (`agent_credential`, V3), secret included**, and that follows
+  from the point above rather than from convenience: the wake arm has to reproduce a value idp
+  answers exactly once. The row is keyed on the project id with **no foreign key** to `project`,
+  because an agent container outlives its project and a cascade would drop the row while the
+  container still held the credential.
+- **Decommissioning is a sweep here, and that is a fact about this repository.** Nothing in this
+  service removes an agent container: stop and the idle sweep both stop, deleting a project leaves
+  its container standing, and `ContainerRuntime` has no removal verb at all. So the lifecycle hook
+  the model asks for has no call site. The two real paths are `forFreshContainer`, which hands a
+  project's previous credential back before minting the replacement container's, and
+  `AgentCredentialReconcile`, which at boot and hourly compares idp's own listing of what this
+  service commissioned against what the orchestrator says exists. It asks
+  `ContainerRuntime.inspect` **per commissioned project** rather than reading the listing, because
+  the listing answers an empty list both for "no containers" and for "could not ask" and reaping on
+  the second would revoke every live agent's credential at once; `inspect` is empty for a true 404
+  and throws otherwise, and a pass that cannot ask reaps nothing. If a removal verb is ever added,
+  it decommissions there too and this becomes the belt it should be.
+
+A commission holds through 401, 403 and nothing answering for
+`qits.projects.agent-credentials.commission-patience` (PT30S) — the same classifier and the same
+measured idp-cutover window as `ContainersAgentRuntime.holdThrough`, shorter because it sits in
+front of an image pull somebody is waiting on. Past that it throws an `AgentCredentialException`,
+which is a plain `RuntimeException` **on purpose**: `AgentContainers.ensure` rethrows a
+`DomainException` with its status and turns everything else into `FAILED` with the reason on
+`failureDetail`, and this belongs in the second arm.
 
 **The shared volumes carry qits-workspaces' names on purpose** — `qits_shared_dot_claude`,
 `qits_shared_m2`, `qits_shared_pnpm`. They are platform-wide: a divergent credential volume here
@@ -622,7 +684,8 @@ ordinary rule (keep appending, never edit an applied migration) is back from V1 
 **`V2__causation.sql`, once per lineage, is that rule being followed.** Both add the platform's
 generic `causation_id uuid` column (qits-eventstream's `CausedRow`): nullable, in no constraint,
 never a foreign key — the event it names lives in qits-events' store — and with no backfill, since
-no existing row has an answer to invent. Six of the seven entities take it. The stamp fills it from
+no existing row has an answer to invent. Seven of the eight entities take it (the eighth,
+`AgentCredential`, arrived later with the column already in its own `create table` — V3). The stamp fills it from
 the ambient `CausationScope` at persist, and **nothing here sets it explicitly**, because no insert
 crosses a thread hop: the backup executor and the pull executor only ever UPDATE, and the stamp is
 insert-only. Where the decisions land, and why:
@@ -633,6 +696,7 @@ insert-only. Where the decisions land, and why:
 | `Repository` | `CausedRow` | The one worth tracing. All four mint paths run on the request thread, and `WrapperReconcileService` is the machine-driven one — a reconcile records, per adopted or cloned member, what asked for it. |
 | `RepositoryName` | `@Uncaused` | The only opt-out. An alias is derived, idempotent state; the repository it FKs to is a `CausedRow` one join away and is the row that was actually caused. Decisively, `RepositoryNameResolver` mints the self-name in its own transaction off any request context — the provision worker, or container creation — where no scope stands, so a stamp would record null forever. No event id is ever in reach to set as data. |
 | `Epic`, `Feature`, `Task` | `CausedRow` | `EpicMcpTools` reaches the same services the SPA does, on the same thread: an agent minting a task is exactly the flow worth tracing. |
+| `AgentCredential` | `CausedRow` | V3, and the column ships in its own `create table`. The only insert is `AgentCommissions.forFreshContainer`, on the request thread that asked for the container; the reconcile only ever deletes. |
 | `AuditEntry` | `CausedRow` | Covers what the live rows cannot. The stamp is insert-only, so an epic row records the cause of its own creation and never of an update; and a deleted row is gone while its DELETE entry stays (audit rows are deliberately not FK'd back). |
 
 The decisions are **enforced, not documented**: `ArchRulesTest` (qits-arch-rules) sits in each entity

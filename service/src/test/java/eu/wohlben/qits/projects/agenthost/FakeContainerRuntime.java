@@ -48,6 +48,13 @@ public class FakeContainerRuntime implements ContainerRuntime {
   /** When set, the next {@link #run} throws it — the FAILED arm of the ladder. */
   private volatile RuntimeException runFailure;
 
+  /**
+   * When set, every {@link #inspect} throws it — "we could not ask", which the real runtime tells
+   * apart from "there is nothing there" and which {@link AgentCredentialReconcile} must not read as
+   * a container that is gone.
+   */
+  private volatile RuntimeException inspectFailure;
+
   public void reset() {
     places.clear();
     calls.clear();
@@ -55,6 +62,7 @@ public class FakeContainerRuntime implements ContainerRuntime {
     dockerIds.clear();
     minted = 0;
     runFailure = null;
+    inspectFailure = null;
   }
 
   /** The id of the container at this place, or null — see {@link #dockerIds}. */
@@ -74,6 +82,11 @@ public class FakeContainerRuntime implements ContainerRuntime {
     this.runFailure = failure;
   }
 
+  /** Make every {@link #inspect} throw — an orchestrator that could not be asked. */
+  public void failInspect(RuntimeException failure) {
+    this.inspectFailure = failure;
+  }
+
   /** Put a place in the table without going through the ladder, to set a test's start state. */
   public void given(String projectId, String projectSlug, boolean running) {
     places.put(projectId, new ContainerInfo(containerName(projectSlug), running));
@@ -87,6 +100,9 @@ public class FakeContainerRuntime implements ContainerRuntime {
 
   @Override
   public Optional<ContainerInfo> inspect(String projectId) {
+    if (inspectFailure != null) {
+      throw inspectFailure;
+    }
     return Optional.ofNullable(places.get(projectId));
   }
 

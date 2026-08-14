@@ -88,10 +88,11 @@
 # The builder JDK MUST be 25: native-image cannot read bytecode newer than its own JDK, and this
 # project targets release 25.
 #
-# `localhost:8082/quay/…` is the platform's pull-through mirror of quay.io: the first build fetches
-# the image from upstream and caches it, every later build is served from local disk. The tag is
-# upstream's, unchanged — the mirror revalidates it, so `jdk-25` still moves when quay moves it.
-FROM localhost:8082/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build
+# `mirror.dev.localhost:8080/quay/…` is the platform's pull-through mirror of quay.io: the first
+# build fetches the image from upstream and caches it, every later build is served from local disk.
+# The tag is upstream's, unchanged — the mirror revalidates it, so `jdk-25` still moves when quay
+# moves it.
+FROM mirror.dev.localhost:8080/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build
 USER root
 WORKDIR /src
 
@@ -134,7 +135,7 @@ COPY . .
 #   service/src/main/webui is qits-spa-projects, and it depends on @qits/ui-components. That package
 #   exists ONLY on the platform's own npm registry (qits-artifacts). A RUN step in a docker build
 #   reaches the public internet — Maven Central, npmjs.org, nodejs.org — and reached the platform
-#   registry by no address at all: not the qits-net alias, not localhost:8081, not
+#   registry by no address at all: not the qits-net alias, not registry.dev.localhost:8080, not
 #   host.docker.internal. So the install could not happen here, and an install that "worked" here
 #   would have resolved the @qits scope against npmjs.org, where that name does not exist and never
 #   will. Before the client took that dependency this stage did run the real install; it died on
@@ -171,18 +172,19 @@ COPY . .
 # --- the platform's Maven repository, which this stage has to be TOLD ------------------------------
 # `domain` and `epics` depend on qits-eventstream, `service` on qits-githost-events, and the test
 # tree on qits-arch-rules — three jars published nowhere but the platform's own Maven repository.
-# The pom defaults its address to localhost:8081, right for a developer on the deployment host and
-# dead inside this container, where nothing listens on that port. That is how the first CI image
-# build after the causation work died: `Could not transfer artifact … qits-eventstream … Connection
-# refused`. So the address arrives as a build-arg — defaulted to the developer-host one, so a plain
-# host-side `docker build` still works — and the pipeline passes the network address along with
-# `--network qits-net`, which is what makes the repository reachable at all.
+# The pom defaults its address to registry.dev.localhost:8080, right for a developer on the
+# deployment host and dead inside this container, where that vhost resolves to nothing. That is how
+# the first CI image build after the causation work died: `Could not transfer artifact …
+# qits-eventstream … Connection refused`. So the address arrives as a build-arg — defaulted to the
+# developer-host one, so a plain host-side `docker build` still works — and the pipeline passes the
+# network address along with `--network qits-net`, which is what makes the repository reachable at
+# all.
 #
 # ENV as well as ARG, and a settings file, because Maven refuses plain-HTTP repositories that are
 # not on localhost. `.qits-maven-settings.xml` mirrors the `qits-maven` id by exact match, which
 # beats that blocker, and points it at `${env.QITS_MAVEN_REPOSITORY_URL}` — so it permits this one
 # supplied URL rather than reopening HTTP for every repository.
-ARG QITS_MAVEN_REPOSITORY_URL=http://localhost:8081/artifacts/maven/maven
+ARG QITS_MAVEN_REPOSITORY_URL=http://registry.dev.localhost:8080/artifacts/maven/maven
 ENV QITS_MAVEN_REPOSITORY_URL=$QITS_MAVEN_REPOSITORY_URL
 RUN d=service/src/main/webui/dist/qits-spa-projects/browser; \
     test -f "$d/index.html" || { \
@@ -201,8 +203,8 @@ RUN d=service/src/main/webui/dist/qits-spa-projects/browser; \
       -Dquarkus.quinoa.package-manager-command.build=--version
 
 # --- runtime --------------------------------------------------------------------------------------
-# `localhost:8082/redhat/…` is the same mirror, pointed at registry.access.redhat.com.
-FROM localhost:8082/redhat/ubi9/ubi-minimal:9.6
+# `mirror.dev.localhost:8080/redhat/…` is the same mirror, pointed at registry.access.redhat.com.
+FROM mirror.dev.localhost:8080/redhat/ubi9/ubi-minimal:9.6
 WORKDIR /work
 
 # `git-core` rather than `git`: the porcelain this service actually forks (clone/fetch/push/log/

@@ -123,7 +123,7 @@
              judge — deliberately, since the rules name every type they judge as a string and depend
              on neither. -->
         <qits.integrations-quarkus.version>2026.811.165001</qits.integrations-quarkus.version>
-        <qits.maven.repository.url>http://localhost:8081/artifacts/maven/maven</qits.maven.repository.url>
+        <qits.maven.repository.url>http://registry.dev.localhost:8080/artifacts/maven/maven</qits.maven.repository.url>
 
         <!-- The container ITs need docker and a built qits/workspace image, which a fresh clone has
              not got — and the ones that survived the cut here are the MCP/task-prompt delivery ITs

@@ -27,7 +27,13 @@ import org.jboss.logging.Logger;
  * The whole of what a project-agent container is started with, as the orchestrator's wire spells it.
  * Routing all creation through {@link #forProject} makes it structurally impossible to start an
  * agent without the shared credential volume, the checkout volume, the docker-host alias, the host
- * uid and the daemon's dial-home identity.
+ * uid, the daemon's dial-home identity and — where a deployment has an idp — the container's own
+ * commissioned platform credential.
+ *
+ * <p><b>The two arms differ about that credential and about nothing else new.</b>
+ * {@link #forProject} commissions one, {@link #forRestart} reads back the one the container already
+ * holds; {@link AgentCommissions} carries why those are two different questions and why a wake that
+ * asked for a fresh pair would stop being a start in place.
  *
  * <p><b>It builds an {@link EnsureRequest} and no argv.</b> The {@code docker run} argv builder this
  * class used to render into was deleted with the docker runtime: this service spawns no process, so
@@ -201,6 +207,13 @@ public class AgentContainerFactory {
 
   @Inject GitIdentity gitIdentity;
 
+  /**
+   * Where the container's own platform credential comes from — commissioned for a fresh container,
+   * read back for one being woken. See {@link AgentCommissions}, which carries why those are two
+   * different questions.
+   */
+  @Inject AgentCommissions commissions;
+
   static final String MAVEN_MOUNT = "/caches/m2";
   static final String PNPM_MOUNT = "/caches/pnpm";
 
@@ -275,9 +288,15 @@ public class AgentContainerFactory {
    * <p><b>{@code Recreate.never}</b>, so a spec change never replaces a container somebody is
    * working in. An agent image bump is picked up the next time the agent is woken from a stop —
    * see {@link #forRestart}, which is the one ask that permits a replacement.
+   *
+   * <p><b>This is the arm that commissions</b> — a fresh container is a fresh context and gets a
+   * credential of its own, handed back when the container ends. It is also the arm that can
+   * <em>fail</em>: an idp that cannot answer inside the window throws, and the ladder reports
+   * {@code FAILED} rather than starting a container whose every read will be refused later.
    */
   public EnsureRequest forProject(String projectId, String projectSlug, String repoName) {
-    return request(projectId, projectSlug, repoName, Recreate.never);
+    return request(
+        projectId, projectSlug, repoName, Recreate.never, commissions.forFreshContainer(projectId));
   }
 
   /**
@@ -297,13 +316,27 @@ public class AgentContainerFactory {
    * replacement by stamping a per-call value into the environment. That is gone with the defect —
    * qits-containers 354fd7f — and nothing is left in its place, because a request that differs on
    * every call is a request that can never be started in place.
+   *
+   * <p><b>It commissions nothing.</b> The container being woken already holds the credential it was
+   * created with, so this arm reads that same pair back out of {@link AgentCommissions} and sends it
+   * unchanged. A fresh one would differ from the stored spec on every call and would take the
+   * start-in-place away again, which is the whole of the paragraph above.
    */
   public EnsureRequest forRestart(String projectId, String projectSlug, String repoName) {
-    return request(projectId, projectSlug, repoName, Recreate.ifChanged);
+    return request(
+        projectId,
+        projectSlug,
+        repoName,
+        Recreate.ifChanged,
+        commissions.forExistingContainer(projectId));
   }
 
   private EnsureRequest request(
-      String projectId, String projectSlug, String repoName, Recreate recreate) {
+      String projectId,
+      String projectSlug,
+      String repoName,
+      Recreate recreate,
+      Optional<AgentCredentials.Commissioned> credential) {
     Map<String, String> env = new LinkedHashMap<>();
     env.put("TZ", timezone());
     // The dial-home url, composed here because the daemon runs in-container and cannot resolve this
@@ -327,6 +360,20 @@ public class AgentContainerFactory {
     env.put("QITS_PROJECTS_DAEMON_GIT_BASE", gitBase);
     // The bearer the daemon's loopback API requires. Unset means the API does not bind at all.
     env.put("QITS_PROJECTS_DAEMON_API_TOKEN", daemonApiToken);
+    // The container's OWN platform credential, commissioned from qits-idp for this container and
+    // handed back when it ends — what its pulls, its maven and npm resolution and its git reads
+    // authenticate with once anonymous reads are refused at the edge. It is a different KIND of
+    // value from the token above: that one is peer authentication behind a loopback bind and is
+    // shared by every agent, this one names one container and nothing else.
+    //
+    // Absent whenever this deployment commissions nothing (no idp), and then these two names are
+    // simply not in the map — the spec is byte for byte the spec it was before commissioning
+    // existed, which is what keeps "no idp" a supported configuration rather than a degraded one.
+    credential.ifPresent(
+        pair -> {
+          env.put("QITS_COMMISSIONED_CLIENT_ID", pair.clientId());
+          env.put("QITS_COMMISSIONED_CLIENT_SECRET", pair.secret());
+        });
     env.put("QITS_PROJECTS_DAEMON_API_PORT", Integer.toString(daemonApiPort));
     env.put("QITS_PROJECTS_DAEMON_HOOKS_PORT", Integer.toString(daemonHooksPort));
     env.put("QITS_PROJECTS_DAEMON_CLAUDE_MOUNT", claudeMount);

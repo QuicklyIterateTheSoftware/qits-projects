@@ -219,13 +219,19 @@ drift a failed backup leaves is what `syncStatus` already reports on the reposit
 
 Its own named datasource `projects`, its own persistence unit, its own Flyway lineage at
 `classpath:db/projects/migration` — a **PostgreSQL** database of its own. `V1__init.sql` is the whole
-schema: the H2 lineage's V1–V6 arrived at and translated, not replayed, because the move onto
-postgres was an unwrap and a re-bootstrap rather than a data migration.
+schema as it stood: the H2 lineage's V1–V6 arrived at and translated, not replayed, because the move
+onto postgres was an unwrap and a re-bootstrap rather than a data migration. V2 adds the platform's
+causation column, V3 the agent-container credential table.
 
 Those three tables live in **one** database and keep **real foreign keys** between them; that is
 where the split was cut, and it is why `Repository.project` is still a JPA relation. Everything
 outside them is another context's database and is referenced by string id through a port — never a
 join, because a foreign key cannot span two databases.
+
+`agent_credential` (V3) is the one table in this database with **no** relation to the other three,
+deliberately: one row per project holding the idp client commissioned for that project's agent
+container. A container outlives its project, so a foreign key would drop the row while the container
+still held the credential. See AGENTS.md, "The commissioned credential".
 
 `epics/` keeps its own separate `epics` datasource, its own `db/epics/migration` lineage and its own
 physical database — which is what makes it liftable without moving anybody else's tables.

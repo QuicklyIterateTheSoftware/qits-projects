@@ -246,7 +246,7 @@ public final class RepoMirror {
     String[] argv =
         credentials.wrap("clone", "--mirror", "--quiet", "--end-of-options", upstreamUrl, gitDir.toString());
     GitCli.Result result =
-        wire("Could not clone " + upstreamUrl + " into the mirror of " + repoId, null, argv);
+        wireExternal("Could not clone " + upstreamUrl + " into the mirror of " + repoId, null, null, argv);
     if (result.exitCode() != 0) {
       deleteQuietly(gitDir);
       throw new GitMirrorException(
@@ -278,7 +278,7 @@ public final class RepoMirror {
     }
     String[] argv = credentials.wrap("fetch", "--end-of-options", upstreamUrl, ref);
     GitCli.Result result =
-        wire("Could not fetch " + ref + " from " + upstreamUrl, gitDir, onLine, argv);
+        wireExternal("Could not fetch " + ref + " from " + upstreamUrl, gitDir, onLine, argv);
     if (result.exitCode() != 0) {
       throw new GitMirrorException(
           "Could not fetch " + ref + " from " + upstreamUrl + ": " + result.output());
@@ -809,10 +809,39 @@ public final class RepoMirror {
   private GitCli.Result wire(String what, Path cwd, Consumer<String> onLine, String... argv) {
     File dir = cwd == null ? null : cwd.toFile();
     try {
+      return cli.run(dir, guardEnv(dir, Map.of()), onLine, networkTimeout, platformArgv(argv));
+    } catch (Exception e) {
+      throw new GitMirrorException(what + ": " + e.getMessage(), e);
+    }
+  }
+
+  /** Remote traffic to an external backup never receives this service's platform bearer. */
+  private GitCli.Result wireExternal(String what, Path cwd, Consumer<String> onLine, String... argv) {
+    File dir = cwd == null ? null : cwd.toFile();
+    try {
       return cli.run(dir, guardEnv(dir, Map.of()), onLine, networkTimeout, argv);
     } catch (Exception e) {
       throw new GitMirrorException(what + ": " + e.getMessage(), e);
     }
+  }
+
+  private String[] platformArgv(String... argv) {
+    boolean http = java.util.Arrays.stream(argv).anyMatch(arg -> arg.startsWith("http://") || arg.startsWith("https://"));
+    if (!http) {
+      // Offline suites point GitRemotes at a local bare. There is no HTTP boundary there and no
+      // bearer to attach; deployed qits-githost URLs are always HTTP(S).
+      return argv;
+    }
+    String header = remotes.httpExtraHeader().orElse(null);
+    if (header == null || header.isBlank()) {
+      throw new GitMirrorException("No machine bearer is available for qits-githost");
+    }
+    if (argv.length == 0 || !"git".equals(argv[0])) {
+      throw new GitMirrorException("A qits-githost command must start with git");
+    }
+    List<String> secured = new ArrayList<>(List.of("git", "-c", "http.extraHeader=" + header));
+    secured.addAll(List.of(argv).subList(1, argv.length));
+    return secured.toArray(String[]::new);
   }
 
   private static void deleteQuietly(Path root) {

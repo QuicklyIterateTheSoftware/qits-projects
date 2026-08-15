@@ -2,6 +2,7 @@ package eu.wohlben.qits.projects.wiring;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.projects.control.GitHostAddress;
+import eu.wohlben.qits.projects.control.GitHostBearer;
 import eu.wohlben.qits.projects.control.GitHostException;
 import eu.wohlben.qits.projects.control.GitHostRepositories;
 import io.quarkus.arc.DefaultBean;
@@ -57,6 +58,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
   private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
   @Inject GitHostAddress gitHost;
+  @Inject GitHostBearer gitHostBearer;
   @Inject ObjectMapper objectMapper;
 
   /** The bound on the whole exchange — every wire call this service makes carries it (§3.2). */
@@ -74,8 +76,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
     }
     HttpResponse<String> response =
         send(
-            HttpRequest.newBuilder(URI.create(url))
-                .timeout(requestTimeout())
+            request(url)
                 .header("Content-Type", "application/json")
                 .PUT(HttpRequest.BodyPublishers.ofString(body))
                 .build(),
@@ -100,8 +101,7 @@ public class HttpGitHostRepositories implements GitHostRepositories {
   @Override
   public Optional<HostRepository> find(String repoId) {
     String url = gitHost.fetchUrl(repoId);
-    HttpResponse<String> response =
-        send(HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout()).GET().build(), "reading");
+    HttpResponse<String> response = send(request(url).GET().build(), "reading");
     if (response.statusCode() == 404) {
       return Optional.empty();
     }
@@ -141,5 +141,18 @@ public class HttpGitHostRepositories implements GitHostRepositories {
 
   private Duration requestTimeout() {
     return Duration.ofMillis(networkTimeoutMs);
+  }
+
+  /** Lifecycle calls are machine-only too; never retry them anonymously. */
+  private HttpRequest.Builder request(String url) {
+    String token =
+        gitHostBearer
+            .token()
+            .filter(value -> !value.isBlank())
+            .orElseThrow(
+                () -> new GitHostException("No machine bearer is available for qits-githost"));
+    return HttpRequest.newBuilder(URI.create(url))
+        .timeout(requestTimeout())
+        .header("Authorization", "Bearer " + token);
   }
 }

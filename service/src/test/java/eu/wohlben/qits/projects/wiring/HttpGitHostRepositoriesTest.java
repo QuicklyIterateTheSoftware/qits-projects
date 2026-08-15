@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  */
 class HttpGitHostRepositoriesTest {
 
-  private record Received(String method, String path, String body) {}
+  private record Received(String method, String path, String body, String authorization) {}
 
   private HttpServer server;
   private final List<Received> received = new CopyOnWriteArrayList<>();
@@ -56,7 +56,8 @@ class HttpGitHostRepositoriesTest {
               new Received(
                   exchange.getRequestMethod(),
                   exchange.getRequestURI().getPath(),
-                  new String(requestBytes, StandardCharsets.UTF_8)));
+                  new String(requestBytes, StandardCharsets.UTF_8),
+                  exchange.getRequestHeaders().getFirst("Authorization")));
           byte[] responseBytes = responseBody.get().getBytes(StandardCharsets.UTF_8);
           exchange.getResponseHeaders().add("Content-Type", "application/json");
           exchange.sendResponseHeaders(status.get(), responseBytes.length == 0 ? -1 : responseBytes.length);
@@ -86,6 +87,7 @@ class HttpGitHostRepositoriesTest {
   private HttpGitHostRepositories repositoriesAgainst(String base) {
     HttpGitHostRepositories repositories = new HttpGitHostRepositories();
     repositories.gitHost = addressOf(base);
+    repositories.gitHostBearer = () -> Optional.of("machine-token");
     repositories.objectMapper = new ObjectMapper();
     repositories.networkTimeoutMs = 5_000;
     return repositories;
@@ -106,6 +108,7 @@ class HttpGitHostRepositoriesTest {
     assertEquals("PUT", request.method());
     assertEquals("/git/repo-1", request.path());
     assertEquals(Map.of("defaultBranch", "main"), new ObjectMapper().readValue(request.body(), Map.class));
+    assertEquals("Bearer machine-token", request.authorization());
   }
 
   @Test

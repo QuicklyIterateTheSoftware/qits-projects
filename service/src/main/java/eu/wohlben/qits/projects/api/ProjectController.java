@@ -41,6 +41,7 @@ import org.jboss.resteasy.reactive.ResponseStatus;
 @Path("/projects")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@jakarta.annotation.security.RolesAllowed("qits:admin")
 public class ProjectController {
 
   @Inject ProjectService projectService;
@@ -293,10 +294,9 @@ public class ProjectController {
    * name-addressed git scheme {@code /git/<projectId>/<repoName>}, which it reaches
    * through its optional {@code githost.RepositoryNameResolver} port.
    *
-   * <p><b>Unguarded, and documented rather than hidden.</b> This service has no machine auth:
-   * reaching it at all means being inside the trusted network, so a guard here would look like a
-   * control and be worth nothing. The git host generates its client from {@code docs/openapi.yml},
-   * so the one route it calls belongs in that document — and this is now the ONLY such route, since
+   * <p>This machine-facing lookup requires {@code qits:system}; network reachability alone does not
+   * authorize it. The git host generates its client from {@code docs/openapi.yml}, so the one route
+   * it calls belongs in that document — and this is now the ONLY such route, since
    * the post-receive intake that set the precedent is gone: the git host announces a push as a
    * durable domain event instead, consumed by {@code bus/ScmBackupTriggerListener}.
    *
@@ -306,6 +306,7 @@ public class ProjectController {
    */
   @GET
   @Path("/{projectId}/repositories/by-name/{repoName}")
+  @jakarta.annotation.security.RolesAllowed("qits:system")
   @Operation(
       summary = "Resolve a project-scoped repository name to its id",
       description =

@@ -2,6 +2,9 @@ package eu.wohlben.qits.projects.control;
 
 import io.quarkus.arc.DefaultBean;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
@@ -29,6 +32,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @DefaultBean
 public class ConfiguredGitHostAddress implements GitHostAddress {
 
+  @Inject Instance<GitHostBearer> bearer;
+
   /**
    * Scheme, host and port with <b>no path</b> — the shape {@code qits.observability.url} already
    * uses, so one value works whether the call goes direct on qits-net or through the gateway.
@@ -54,5 +59,19 @@ public class ConfiguredGitHostAddress implements GitHostAddress {
   @Override
   public String pushUrl(String repoId) {
     return fetchUrl(repoId);
+  }
+
+  /** The mirror turns this into git's one-request {@code Authorization} extra header. */
+  @Override
+  public Optional<String> httpExtraHeader() {
+    if (!bearer.isResolvable()) {
+      return Optional.empty();
+    }
+    return bearer
+        .get()
+        .token()
+        .filter(token -> !token.isBlank())
+        .filter(token -> token.indexOf('\r') < 0 && token.indexOf('\n') < 0)
+        .map(token -> "Authorization: Bearer " + token);
   }
 }

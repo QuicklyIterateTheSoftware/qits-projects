@@ -122,7 +122,7 @@
              The version moves with that repository rather than with the eventstream jar the rules
              judge — deliberately, since the rules name every type they judge as a string and depend
              on neither. -->
-        <qits.integrations-quarkus.version>2026.811.165001</qits.integrations-quarkus.version>
+        <qits.integrations-quarkus.version>2026.815.140812</qits.integrations-quarkus.version>
         <qits.maven.repository.url>http://registry.dev.localhost:8080/artifacts/maven/maven</qits.maven.repository.url>
 
         <!-- The container ITs need docker and a built qits/workspace image, which a fresh clone has
@@ -185,6 +185,11 @@
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-containers-client</artifactId>
                 <version>${qits.containers-client.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-auth-core</artifactId>
+                <version>${qits.integrations-quarkus.version}</version>
             </dependency>
             <dependency>
                 <!-- Test scope at every declaration site: the rules run in the build and ship in

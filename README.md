@@ -72,7 +72,7 @@ Everything it serves sits under its gateway segment, `/projects`:
 |---|---|
 | `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links — except under the prefixes below |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
-| `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/git/<projectId>/<repoName>` through. Unguarded and in the document — the only route the git host calls, now that the post-receive intake has become a domain event |
+| `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/git/<projectId>/<repoName>` through. Requires `qits:system` — the only route the git host calls, now that the post-receive intake has become a domain event |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
 | `/projects/q/openapi`, `/projects/q/swagger-ui` | the API document and its UI (`quarkus.http.non-application-root-path`) |

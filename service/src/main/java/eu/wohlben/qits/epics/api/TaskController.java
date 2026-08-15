@@ -21,6 +21,7 @@ import java.time.Instant;
 @Path("/tasks")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@jakarta.annotation.security.RolesAllowed("qits:admin")
 public class TaskController {
 
   @Inject TaskService taskService;

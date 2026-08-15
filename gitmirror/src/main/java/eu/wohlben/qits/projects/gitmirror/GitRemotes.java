@@ -1,5 +1,7 @@
 package eu.wohlben.qits.projects.gitmirror;
 
+import java.util.Optional;
+
 /**
  * Where a repository answers as a git remote — the platform's own git host, and the only remote
  * this interface ever names. An external backup remote (a repository's own {@code url}) is never
@@ -20,4 +22,12 @@ public interface GitRemotes {
 
   /** The remote to push to, asked once per push. */
   String pushUrl(String repoId);
+
+  /**
+   * The verified machine bearer to send only to this platform remote. Empty preserves the offline
+   * library/test shape; production wiring supplies it and fails before network I/O when it cannot.
+   */
+  default Optional<String> httpExtraHeader() {
+    return Optional.empty();
+  }
 }

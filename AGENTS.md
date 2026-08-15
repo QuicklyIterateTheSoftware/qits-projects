@@ -198,18 +198,13 @@ call is a genuine ordering precondition — `createMainWorkspace` before a clone
 
 ## Authentication
 
-Authentication happens at `qits-gateway`. This service resolves a principal from a trusted header
-(`X-Qits-User`, read by `projects/security/ForwardAuthMechanism`) and authenticates nothing.
+User authentication happens at `qits-gateway`. This service resolves the trusted forwarded user
+and roles through the shared `qits-auth-core`; machine callers present validated OIDC credentials.
 
-**`identity.isAnonymous()` is not a security state** — it means "no name for the audit row". A check
-of the form `if (identity.isAnonymous()) deny` would look like a security control and be worth
-nothing, because reaching this service at all already implies you are inside the trusted network.
-
-There is no auth variant to select and no authorization policy here, and roles are deliberately not
-resolved — the single role check the system has (`qits.auth.required-role`) is the gateway's. The
-gateway is the only place a login happens, and it fixes its variant at **build** time
-(`-Dqits.variant`), so no env var and no properties file can put an open mechanism back under a
-gateway built as `oauth`. `X-Qits-*` is that gateway's reserved namespace: the whole prefix is
+There is no auth variant to select in this service. The shared `qits-auth-core` resolves both
+`X-Qits-User` and `X-Qits-Roles`; human-facing REST boundaries use Jakarta
+`@RolesAllowed("qits:admin")`. Machine-facing boundaries require `qits:system` and retain their
+narrower `MachineAuth` audience/scope checks where applicable.
 stripped from every inbound request unconditionally, which is the entire reason a header can be
 trusted as an identity here.
 

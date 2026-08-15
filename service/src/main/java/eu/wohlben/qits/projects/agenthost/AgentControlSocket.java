@@ -31,14 +31,12 @@ import org.jboss.logging.Logger;
  * <p>Unlike qits-workspaces' equivalent the path parameter needs no parsing: a project id is
  * already a String, which is the only type websockets-next accepts for a {@code @PathParam}.
  *
- * <p><b>The socket is token-free</b>, and that is inherited rather than decided here: its callers
- * are daemons inside containers holding no user token, and it names its caller with a path
- * parameter, so anything on {@code qits-net} can claim to be any project's daemon. That gap closes
- * together with qits-workspaces' when qits-idp machine auth lands; no interim token stands in for
- * it. The reverse tunnel's nonce is what keeps the dial-back from reproducing the same weakness in
- * a second place.
+ * <p>The socket requires {@code qits:system} during the upgrade. Its daemon callers present their
+ * commissioned machine tokens; the project path parameter selects a target and is not accepted as
+ * authentication by itself. The reverse tunnel's nonce remains a second, connection-local guard.
  */
 @WebSocket(path = DaemonProtocol.CONTROL_SOCKET_PATH_PREFIX + "{projectId}")
+@jakarta.annotation.security.RolesAllowed("qits:system")
 public class AgentControlSocket {
 
   private static final Logger LOG = Logger.getLogger(AgentControlSocket.class);

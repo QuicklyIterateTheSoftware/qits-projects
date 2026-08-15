@@ -37,6 +37,7 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 // make a POST with no Content-Type a 415 rather than the action it plainly is.
 @Path("/projects/{projectId}/agent-container")
 @Produces(MediaType.APPLICATION_JSON)
+@jakarta.annotation.security.RolesAllowed("qits:admin")
 public class AgentContainerController {
 
   @Inject AgentContainers agentContainers;

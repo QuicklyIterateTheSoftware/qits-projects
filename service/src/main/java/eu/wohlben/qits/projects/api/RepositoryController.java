@@ -35,6 +35,7 @@ import org.jboss.resteasy.reactive.ResponseStatus;
 @Path("/repositories")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@jakarta.annotation.security.RolesAllowed("qits:admin")
 public class RepositoryController {
 
   @Inject RepositoryService repositoryService;
@@ -55,6 +56,7 @@ public class RepositoryController {
 
   @GET
   @Path("/{repoId}")
+  @jakarta.annotation.security.RolesAllowed("qits:system")
   public GetRepositoryRequest.Response get(@PathParam("repoId") String repoId) {
     var repo = repositoryService.get(repoId);
     return new GetRepositoryRequest.Response(repositoryMapper.toDto(repo));

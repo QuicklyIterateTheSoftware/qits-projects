@@ -31,6 +31,7 @@ import java.util.List;
 @Path("/features")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@jakarta.annotation.security.RolesAllowed("qits:admin")
 public class FeatureController {
 
   @Inject FeatureService featureService;

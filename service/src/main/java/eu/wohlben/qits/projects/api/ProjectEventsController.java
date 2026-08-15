@@ -20,6 +20,7 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
  * replay/{@code Last-Event-ID} protocol.
  */
 @Path("/projects/{projectId}/events")
+@jakarta.annotation.security.RolesAllowed("qits:admin")
 public class ProjectEventsController {
 
   @Inject ProjectEventBroadcaster broadcaster;

@@ -42,6 +42,7 @@ import org.jboss.logging.Logger;
  * not the resource.
  */
 @WebSocket(path = "/projects/api/repositories/{repoId}/remote-login")
+@jakarta.annotation.security.RolesAllowed("qits:admin")
 public class RemoteLoginTerminalSocket {
 
   private static final Logger LOG = Logger.getLogger(RemoteLoginTerminalSocket.class);

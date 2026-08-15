@@ -11,6 +11,9 @@
 # whichever tier listens to the built branch.
 deployment_target: environment
 
+routes: /projects
+navigation: Projects:4
+
 # THREE DATABASES, because this application opens three datasources with three Flyway lineages:
 # `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and
 # durable-claim tables). qits-platform-deployments creates a login role and a database for each on

@@ -25,7 +25,7 @@ Concretely:
 | `Repository` | a git remote as an entity — a private mirror under `qits.projects.data-dir`, cloned/pulled/pushed/synced host-side against the git host and the row's own backup remote |
 | `repository_name` | addressable `(project, name) → repository` aliases, which is what makes a committed relative submodule url (`../<name>.git`) resolve natively |
 | the wrapper | every project owns exactly one `PROJECT`-archetype repository named `<slug>-<slug>`, seeded from `project-template/` |
-| the project's domain | a `{domain, type, value}` dns record embedded on `Project` — required when a project is created, handed to qits-dns through a port, and a **declared placeholder**: when a service owns domain configuration the embeddable and its three columns go (`ProjectDnsRecord`, `main-environment-plan.md` §1) |
+| the project's domain | a `{domain, type, value}` dns record embedded on `Project` — required when a project is created, offered to a nameserver through a port nothing implements today, and a **declared placeholder**: when a service owns domain configuration the embeddable and its three columns go (`ProjectDnsRecord`, `main-environment-plan.md` §1) |
 | `.qits-config.yml` | ingestion of the repository's own committed configuration, degrading loudly and never blocking |
 | remote-login | an interactive PTY sign-in against a repository's backup remote, so a push can prompt for credentials — a `java.lang.foreign` pseudo-terminal (`ForeignPty`) with git launched onto it by `setsid --ctty`, which is the one thing this service needs from the host besides git itself |
 | `epics/` | the planning module — epics → features → tasks + an audit log, on its own datasource, depending on nothing else here |
@@ -114,20 +114,24 @@ container is a real one.
 | `WorkspaceLookup` | qits-workspaces | no branch is workspace-backed: commit logs compare against the repository's main branch, the branch list reports nothing cleanupable, the "branch has child workspaces" delete guard stands down |
 | `WorkspaceLifecycle` | qits-workspaces | a cloned repository gets no default workspace; deleting one removes its origin, rows and aliases but reaps no containers or volumes — there are none |
 | `TechnicalProcessRegistry` (+ `TechnicalProcess`, `RepoProcessLease`, `RepoReservation`, `TechnicalProcessFrame`) | qits-workspace-daemon | pull/push/sync still run, on the same worker thread, against the same origins — unnarrated, returning a null process id, with no single-flight guard |
-| `ProjectDomainRegistrar` | this repo's `service/…/notify/DnsDomainRegistrar` → qits-dns | a created project's domain is stored and registered nowhere, which is what a project whose dns lives at a registrar's control panel wants |
+| `ProjectDomainRegistrar` | **nothing, today** — qits-platform-dns implemented it and was removed from the platform | a created project's domain is stored and registered nowhere, which is what a project whose dns lives at a registrar's control panel wants — and is the state every deployment is in |
 | `CommandOutputSink` | the service module's websocket | — (an SPI this context calls, not one it looks up) |
 
-`ProjectDomainRegistrar` is the one port this repo implements *itself*, in `service/`, and it differs
-from the rest in one way worth stating: it is **fire-and-forget**. `ProjectService.create` calls it
-after its transaction commits and swallows every failure, because a project must never fail to exist
-because a sibling service was down. So a wrong `qits.dns.url` produces no error anywhere — dns
-records simply stop appearing. The key carries that hazard in its comment in
-`service/src/main/resources/application.properties`. The remedy is a manual step whose result you can
-see: `POST /projects/api/projects/{projectId}/reconcile` re-asserts the record **synchronously**
-through the same port and answers with the outcome
-(`REGISTERED`/`NO_MATCHING_ZONE`/`NOT_CONFIGURED`/`FAILED`) — also the retro-fire for every project
-created before the hook existed, the seeded `qits` project included (`ProjectReconcileService`,
-`main-environment-plan.md` §5).
+`ProjectDomainRegistrar` is the hook where a project's domain would be registered in DNS, and
+**nothing implements it right now**: qits-platform-dns was the implementation and the platform no
+longer runs it, so dns records are configured by hand at the external provider. The port stays as the
+documented place a replacement plugs into, and the two behaviours to expect until one does:
+
+- **Creation registers nothing, silently.** The hook is **fire-and-forget** — `ProjectService.create`
+  calls it after its transaction commits and swallows every failure, because a project must never
+  fail to exist because a sibling service was down — so with no implementation the loop simply runs
+  zero times. The record is stored on the project either way.
+- **`POST /projects/api/projects/{projectId}/reconcile` answers `FAILED`**, saying no registrar is
+  wired, rather than a cheerful `REGISTERED`. The endpoint stays: it re-asserts the record
+  **synchronously** through the same port and reports the outcome
+  (`REGISTERED`/`NO_MATCHING_ZONE`/`NOT_CONFIGURED`/`FAILED`), which is what makes it the remedy the
+  moment an implementation exists (`ProjectReconcileService`, `main-environment-plan.md` §5). A
+  project storing no record at all still answers `NOT_CONFIGURED`.
 
 **A project no longer announces a deployment environment.** It used to `POST /cd/api/environments`
 per project, through a `ProjectEnvironmentNotifier` port. qits-cd owns environments now: they are

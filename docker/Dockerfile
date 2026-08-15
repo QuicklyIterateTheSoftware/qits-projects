@@ -71,12 +71,9 @@
 # unconfigured; the mirror root has nowhere safe to default to under this user either, so it refuses
 # the same way; only the credentials file is genuinely settled, and it is the one that simply works.
 #
-# Also NOT supplied: `qits.dns.url`, which ships as `http://qits-dns:8080` — the service name on
-# qits-net, correct for this image out of the box. It is worth knowing about anyway, because a
-# project creation announces itself to qits-dns and does so FIRE-AND-FORGET: on a network where that
-# name does not resolve, creation still succeeds and the dns record simply never appears, with one
-# WARN per attempt as the only sign. `qits.dns.token` ships blank, matching qits-dns' own open mode;
-# set both ends together or neither.
+# There is no dns key to supply any more. A project's domain goes to the `ProjectDomainRegistrar`
+# port, nothing implements it since qits-platform-dns left the platform, and dns records are
+# configured by hand at the external provider. Creating a project registers nothing and says nothing.
 #
 # With those seven set — both resource triples and the mirror root — the binary starts in ~65ms,
 # migrates both schemas, self-seeds the `qits` project — which forks `git init --bare`, writes a

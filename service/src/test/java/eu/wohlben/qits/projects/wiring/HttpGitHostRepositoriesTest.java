@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link HttpGitHostRepositories} against a local server standing in for qits-githost — plain
- * JUnit over a directly-constructed bean, {@code DnsDomainRegistrarTest}'s idiom. What is under
+ * JUnit over a directly-constructed bean. What is under
  * test is the wire shape: the exact absolute url, method and body {@code ensure}/{@code find} send
  * (§2.3's {@code PUT}/{@code GET /git/<repoId>}), and which status codes become which
  * outcome.

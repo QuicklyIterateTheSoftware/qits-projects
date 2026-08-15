@@ -6,8 +6,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The exact absolute urls {@link ConfiguredGitHostAddress} builds — the contract every wire call in
- * {@code gitmirror} and {@code HttpGitHostRepositories} is pointed at. {@code DnsDomainRegistrarTest}'s
- * discipline: assert the address itself, not the constant, because a path that stops matching
+ * {@code gitmirror} and {@code HttpGitHostRepositories} is pointed at. The discipline is to assert
+ * the address itself, not the constant, because a path that stops matching
  * qits-githost's {@code /git/<repoId>} raises nothing anywhere — every mirror
  * clone, fetch and lifecycle call would simply 404.
  */

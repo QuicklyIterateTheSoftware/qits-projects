@@ -21,8 +21,9 @@ import org.junit.jupiter.api.Test;
  * project with no stored record.
  *
  * <p>No {@code @QuarkusTest} on purpose — none of this needs a database, a bean or an HTTP server.
- * The wiring is proven where it is visible, in {@code ProjectReconcileControllerTest}; the wire
- * shape in {@code DnsDomainRegistrarTest}.
+ * The wiring is proven where it is visible, in {@code ProjectReconcileControllerTest}. There is no
+ * wire-shape test any more, because nothing implements the port: the "no implementation wired" case
+ * below is the deployed behaviour today, not a corner.
  */
 class ProjectReconcileServiceTest {
 

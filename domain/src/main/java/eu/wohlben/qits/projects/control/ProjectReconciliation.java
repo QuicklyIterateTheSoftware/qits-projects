@@ -41,7 +41,7 @@ public record ProjectReconciliation(DomainAssertion domain) {
    */
   static final int MAX_DETAIL = 200;
 
-  /** What re-asserting the project's dns record against qits-dns came to. */
+  /** What re-asserting the project's dns record through the registrar port came to. */
   public enum DomainOutcome {
     /** The record set for this name and type is now the stored one. */
     REGISTERED,

@@ -88,7 +88,7 @@ public class ProjectController {
       String url,
       @NotNull @Valid DnsSpec dns) {
     /**
-     * The record handed to qits-dns verbatim.
+     * The record handed to the domain registrar port verbatim.
      *
      * <p>Its own type rather than {@code ProjectDnsRecordDto}: the response DTO is nullable in all
      * three fields (a legacy row has none) while every field here is required, and one shared type
@@ -177,7 +177,11 @@ public class ProjectController {
 
   /**
    * The manual drift remedy (main-environment-plan.md §5): re-assert this project's stored dns
-   * record against qits-dns, synchronously, and answer with what it came to.
+   * record through the domain registrar port, synchronously, and answer with what it came to.
+   *
+   * <p>Nothing implements that port today — qits-platform-dns did and is gone from the platform — so
+   * the answer is currently {@code FAILED} saying no registrar is wired. The route stays because it
+   * is the remedy the moment one ships.
    *
    * <p><b>A failure is still a 200.</b> The outcome <em>is</em> the result, so the only error is the
    * one thing that makes the request itself wrong: an unknown project, a 404 like every other
@@ -205,13 +209,15 @@ public class ProjectController {
   @POST
   @Path("/{projectId}/reconcile")
   @Operation(
-      summary = "Re-assert a project's domain against qits-dns",
+      summary = "Re-assert a project's domain through the dns registrar",
       description =
           "Project creation registers the dns record fire-and-forget, so a receiver that was down"
               + " when a project was created leaves the record missing with nothing to carry it"
               + " forward. This re-asserts it synchronously and reports the outcome; the receiver is"
               + " idempotent, so it is safe to repeat, and it is also how a project created before"
-              + " the hook existed gets its record.")
+              + " the hook existed gets its record. No registrar is wired at present, so the outcome"
+              + " is FAILED saying so and dns records are configured by hand at the external"
+              + " provider.")
   @APIResponse(
       responseCode = "200",
       description =

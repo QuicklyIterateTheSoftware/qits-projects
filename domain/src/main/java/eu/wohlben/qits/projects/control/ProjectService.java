@@ -53,6 +53,9 @@ public class ProjectService {
 
   // Fired by #announce after a creation commits. Optional, like every port here — see the
   // interface's javadoc for what absent means and why it is a supported configuration.
+  // NOTE: this is the hook that would register a dns record. Nothing implements the port since
+  // qits-platform-dns was removed, so the loop in #announce runs zero times and dns is configured
+  // by hand at the external provider.
   @Inject Instance<ProjectDomainRegistrar> domainRegistrars;
 
   /**

@@ -23,8 +23,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Both assertions the wire cannot make live here — that the hook hangs off the <em>service</em>
  * and so fires for every creation path including the ones no HTTP request reaches, and that a
- * project with no record asks the registrar nothing. What actually leaves the process is {@code
- * DnsDomainRegistrarTest}'s business.
+ * project with no record asks the registrar nothing. Nothing leaves the process today: the port has
+ * no implementation outside this suite (see {@code ProjectDomainRegistrar}).
  */
 @QuarkusTest
 public class ProjectCreationHooksTest {

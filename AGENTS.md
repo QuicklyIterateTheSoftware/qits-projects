@@ -56,14 +56,16 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   Framework-free in the sense that matters: no JAX-RS, no websockets. Entities are Panache
   active-record with public fields; mappers are MapStruct `@Mapper(componentModel = "jakarta")`.
 - `service/` — `api` (JAX-RS + the remote-login websocket), `mcp` (the `repository` MCP server),
-  `startup`, `notify` (the outbound fire-and-forget notifiers — the sole implementations of the
-  creation ports; the same package name and the same idiom as qits-ci's `ci.notify`), `wiring` (the
-  git host's lifecycle client — `HttpGitHostRepositories`, a `java.net.http.HttpClient` as an
-  instance field like `notify`'s, but named apart from it: `notify` is for fire-and-forget and a
-  repository create is waited on and can fail the caller's request).
+  `startup`, `wiring` (the git host's lifecycle client — `HttpGitHostRepositories`, a
+  `java.net.http.HttpClient` as an instance field). There is **no `notify` package any more**: its
+  one class implemented `ProjectDomainRegistrar` against qits-platform-dns, that service is gone from
+  the platform, and the port is an unimplemented hook now — so this repo implements no creation port
+  at all. Bring the package name back (qits-ci's `ci.notify` idiom) if a fire-and-forget notifier
+  ever returns; `wiring` is deliberately not it, because a repository create is waited on and can
+  fail the caller's request.
 - `service/…/containershost/` — the orchestrator client: the `ContainerRuntime` implementation, the
   producer that gives the jar its bean and its bearer, and the native-image registration. It is an
-  *adapter* like `wiring`, `notify` and `bus` are — the seam is `agenthost/ContainerRuntime`, and
+  *adapter* like `wiring` and `bus` are — the seam is `agenthost/ContainerRuntime`, and
   what lives here is only what a deployable owes a plain jar. See "The container orchestrator".
 - `service/…/idphost/` — qits-idp's commission API, the same adapter shape one directory over: the
   seam is `agenthost/AgentCredentials` and the whole of what lives here is one `@DefaultBean` HTTP
@@ -815,10 +817,12 @@ reintroduce it: a rule that matches nothing anywhere else is still a typo worth 
   `RecordingWorkspaceLifecycle`. They are **test scope only**; nothing under `src/main` references
   them, and the published jars ship no implementation of any port. `service`'s suite reuses them
   through domain's test-jar rather than carrying a second copy. A fake for a port whose method
-  **returns a result** must be `@Alternative @Priority` (`RecordingProjectDomainRegistrar`): in
-  `service`'s suite the real registrar in `notify/` is a bean too, so without it the port has two
-  implementations and the caller reports whichever the container hands it first. A recording fake for a `void` port does not need this, which is why the older two
-  do not have it.
+  **returns a result** must be `@Alternative @Priority` (`RecordingProjectDomainRegistrar`): a
+  second implementation of the port would leave the caller reporting whichever the container hands
+  it first. `ProjectDomainRegistrar` has no implementation under `src/main` today — the registrar in
+  `notify/` went with qits-platform-dns — so the fake stands alone and the annotations are kept as
+  the rule rather than repaired away. A recording fake for a `void` port does not need this, which is
+  why the older two do not have it.
 - Where a monorepo assertion queried another context's table, it is re-expressed against the seam —
   "did this context ask?" rather than "did the other context's row appear". `RecordingWorkspaceLifecycle`
   exists for exactly that.

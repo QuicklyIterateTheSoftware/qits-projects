@@ -15,18 +15,18 @@ import java.util.Optional;
  * registration instead of writing to a nameserver, and answers the synchronous half with whatever
  * the test scripted.
  *
- * <p><b>{@code @Alternative @Priority}, and that is load-bearing in {@code service}'s suite.</b>
- * There the real {@code DnsDomainRegistrar} is a bean too, so the port would have two
- * implementations and {@code ProjectReconcileService} — which has one answer to give and so takes
- * the first candidate — would report whichever the container happened to hand it. A global
- * alternative makes this the only implementation, which is what lets a controller test script an
- * outcome and then assert it. In {@code domain}'s own suite there is nothing else to displace.
+ * <p><b>{@code @Alternative @Priority} is kept as the rule for this shape of fake.</b> It was
+ * load-bearing while {@code service}'s suite also had the shipped registrar as a bean: two
+ * implementations, and {@code ProjectReconcileService} — which has one answer to give and so takes
+ * the first candidate — would report whichever the container happened to hand it. Nothing under
+ * {@code src/main} implements the port now, so there is nothing left to displace; the annotations
+ * stay because a fake for a port whose method returns a result must carry them, and the next
+ * implementation must not silently start competing with this one.
  *
- * <p>The seam, not the wire. Zone resolution, the
- * apex-versus-label spelling, the token header and how a status code becomes an outcome are
- * qits-dns' contract and are pinned by {@code DnsDomainRegistrarTest}; what this proves is that a
- * created project asks at all, with the record it was created with, that one without a record asks
- * nothing, and that a reconcile asks again. Nothing in {@code src/main} references this class.
+ * <p>The seam, not the wire. How a name resolves to a zone and how a receiver's status code becomes
+ * an outcome belong to whatever implements the port; what this proves is that a created project asks
+ * at all, with the record it was created with, that one without a record asks nothing, and that a
+ * reconcile asks again. Nothing in {@code src/main} references this class.
  */
 @Alternative
 @Priority(1)

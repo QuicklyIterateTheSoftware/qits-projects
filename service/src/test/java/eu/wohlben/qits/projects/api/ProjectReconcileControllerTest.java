@@ -22,9 +22,9 @@ import org.junit.jupiter.api.Test;
  * and that whatever it answers reaches the caller unflattened — including a failure, which is a 200
  * because the outcome is the result.
  *
- * <p>A scripted port fake rather than a server: what a status code becomes is {@code
- * DnsDomainRegistrarTest}'s business against a real socket. Here the question is only whether an
- * outcome survives the trip out.
+ * <p>A scripted port fake rather than a server, and nothing implements the port outside the suite
+ * anyway (see {@code ProjectDomainRegistrar}). What a status code becomes belongs to whatever
+ * implementation ships next; here the question is only whether an outcome survives the trip out.
  */
 @QuarkusTest
 public class ProjectReconcileControllerTest {

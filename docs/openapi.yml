@@ -1207,12 +1207,14 @@ paths:
       - Project Events Controller
   /projects/api/projects/{projectId}/reconcile:
     post:
-      summary: Re-assert a project's domain against qits-dns
+      summary: Re-assert a project's domain through the dns registrar
       description: "Project creation registers the dns record fire-and-forget, so\
         \ a receiver that was down when a project was created leaves the record missing\
         \ with nothing to carry it forward. This re-asserts it synchronously and reports\
         \ the outcome; the receiver is idempotent, so it is safe to repeat, and it\
-        \ is also how a project created before the hook existed gets its record."
+        \ is also how a project created before the hook existed gets its record. No\
+        \ registrar is wired at present, so the outcome is FAILED saying so and dns\
+        \ records are configured by hand at the external provider."
       parameters:
       - name: projectId
         in: path
@@ -1718,4 +1720,4 @@ paths:
       - Task Controller
 info:
   title: qits-projects API
-  version: 2026.814.123357
+  version: 2026.814.194433

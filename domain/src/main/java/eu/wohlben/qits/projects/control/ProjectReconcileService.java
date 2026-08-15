@@ -10,9 +10,12 @@ import java.util.Optional;
 import org.jboss.logging.Logger;
 
 /**
- * The manual drift remedy: re-assert a project's stored dns record against qits-dns
- * <b>synchronously</b>, and report what actually happened (main-environment-plan.md §5, "Automatic
- * drift healing").
+ * The manual drift remedy: re-assert a project's stored dns record through {@link
+ * ProjectDomainRegistrar} <b>synchronously</b>, and report what actually happened
+ * (main-environment-plan.md §5, "Automatic drift healing").
+ *
+ * <p>NOTE: nothing implements that port today, so every reconcile answers {@link #NO_REGISTRAR}
+ * below. That is the honest answer, not a defect — see the port's javadoc.
  *
  * <p>It exists because {@link ProjectService}'s creation hook is fire-and-forget. A creation, unlike
  * an event stream, has no next event to carry a missed registration forward, so a project whose
@@ -115,9 +118,9 @@ public class ProjectReconcileService {
    * The first candidate, or empty when there is none.
    *
    * <p>Not {@code Instance#get()}, which throws when more than one implementation is present. A
-   * deployment has exactly one registrar — the one in {@code service/…/notify} — and a reconcile has
-   * one answer to give, so "the first" is the rule rather than a fold over however many happen to be
-   * on the classpath.
+   * deployment has at most one registrar — none at all today — and a reconcile has one answer to
+   * give, so "the first" is the rule rather than a fold over however many happen to be on the
+   * classpath.
    */
   private static <T> Optional<T> first(Iterable<T> candidates) {
     Iterator<T> iterator = candidates.iterator();

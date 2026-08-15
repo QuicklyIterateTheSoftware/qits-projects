@@ -4,12 +4,18 @@ import eu.wohlben.qits.projects.entity.ProjectDnsRecordType;
 
 /**
  * "This project's hostname should resolve here" — handed to whoever is authoritative for the name.
- * In this platform that is qits-dns, which owns the zones and is the only thing that knows which of
- * them a given name falls in (main-environment-plan.md §1).
+ * Whoever that is owns the zones and is the only thing that knows which of them a given name falls
+ * in (main-environment-plan.md §1).
+ *
+ * <p><b>NOTE: this port is the hook to register a project's domain in DNS, and nothing implements it
+ * right now.</b> qits-platform-dns was that implementation and has been removed from the platform,
+ * so a project's records must be configured by hand at the external DNS provider. The port stays as
+ * the documented place a replacement plugs into.
  *
  * <p><strong>A port, not an implementation</strong>, and optional like every port here: a
  * deployment with no nameserver of its own stores the record and registers nothing, which is
- * exactly what a project whose domain is managed at a registrar's control panel wants.
+ * exactly what a project whose domain is managed at a registrar's control panel wants — and is what
+ * every deployment does today.
  *
  * <p><b>Fire-and-forget, and that is a contract on both sides.</b> Called by {@code
  * ProjectService.create} <em>after</em> the creating transaction commits, so an implementation that

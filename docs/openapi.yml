@@ -739,6 +739,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Entry4"
+  securitySchemes:
+    SecurityScheme:
+      type: openIdConnect
+      openIdConnectUrl: http://qits-platform-idp:8080/idp/.well-known/openid-configuration
+      description: Authentication
 paths:
   /projects/api/epics/{epicId}/features:
     get:
@@ -755,9 +760,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response2"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: List Features
       tags:
       - Epic Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     post:
       parameters:
       - name: epicId
@@ -778,11 +790,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response5"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Create Feature
       tags:
       - Epic Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/epics/{id}:
     put:
       parameters:
@@ -804,11 +823,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Update
       tags:
       - Epic Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     get:
       parameters:
       - name: id
@@ -823,9 +849,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response3"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Get
       tags:
       - Epic Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     delete:
       parameters:
       - name: id
@@ -840,9 +873,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response4"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Delete
       tags:
       - Epic Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/epics/{id}/audit:
     get:
       parameters:
@@ -858,9 +898,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response6"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Audit
       tags:
       - Epic Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/epics/{id}/transition:
     post:
       parameters:
@@ -882,11 +929,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response1"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Transition
       tags:
       - Epic Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/features/{featureId}/tasks:
     get:
       parameters:
@@ -902,9 +956,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response8"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: List Tasks
       tags:
       - Feature Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     post:
       parameters:
       - name: featureId
@@ -925,11 +986,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response11"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Create Task
       tags:
       - Feature Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/features/{id}:
     put:
       parameters:
@@ -951,11 +1019,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response7"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Update
       tags:
       - Feature Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     get:
       parameters:
       - name: id
@@ -970,9 +1045,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response9"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Get
       tags:
       - Feature Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     delete:
       parameters:
       - name: id
@@ -987,9 +1069,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response10"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Delete
       tags:
       - Feature Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects:
     get:
       responses:
@@ -999,9 +1088,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response22"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: List
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     post:
       requestBody:
         content:
@@ -1019,11 +1115,18 @@ paths:
         "409":
           description: The supplied slug already names another project — slugs are
             unique
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Create
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{id}:
     put:
       parameters:
@@ -1045,11 +1148,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response17"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Update
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     get:
       parameters:
       - name: id
@@ -1064,9 +1174,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response23"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Get
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     delete:
       parameters:
       - name: id
@@ -1081,9 +1198,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response24"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Delete
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/agent-container:
     get:
       parameters:
@@ -1099,9 +1223,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentContainerResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Get
       tags:
       - Agent Container Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/agent-container/ensure:
     post:
       parameters:
@@ -1117,9 +1248,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentContainerResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Ensure
       tags:
       - Agent Container Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/agent-container/stop:
     post:
       parameters:
@@ -1135,9 +1273,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentContainerResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Stop
       tags:
       - Agent Container Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/epics:
     get:
       parameters:
@@ -1157,9 +1302,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response12"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: List
       tags:
       - Project Epics Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     post:
       parameters:
       - name: projectId
@@ -1180,11 +1332,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response13"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Create
       tags:
       - Project Epics Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/events:
     get:
       parameters:
@@ -1202,9 +1361,16 @@ paths:
                 type: array
                 items:
                   type: string
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Events
       tags:
       - Project Events Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/reconcile:
     post:
       summary: Re-assert a project's domain through the dns registrar
@@ -1231,8 +1397,15 @@ paths:
                 $ref: "#/components/schemas/Response20"
         "404":
           description: No such project
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/repositories:
     get:
       parameters:
@@ -1248,9 +1421,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response21"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: List Repositories
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     post:
       parameters:
       - name: projectId
@@ -1274,9 +1454,16 @@ paths:
         "400":
           description: "Neither or both of url/name, an unplaceable archetype, a name\
             \ already taken in the project, or a wrapper commit the git host refused"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Create Repository
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/repositories/backup-sync:
     post:
       summary: Back up every repository of this project to its forge twin
@@ -1298,8 +1485,15 @@ paths:
                 $ref: "#/components/schemas/Response27"
         "404":
           description: No such project
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/repositories/by-name/{repoName}:
     get:
       summary: Resolve a project-scoped repository name to its id
@@ -1328,8 +1522,15 @@ paths:
                 $ref: "#/components/schemas/Response18"
         "404":
           description: "No such project, or no repository by that name"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:system
   /projects/api/projects/{projectId}/repositories/reconcile:
     post:
       summary: Bring a project's repositories in line with its wrapper's .gitmodules
@@ -1357,8 +1558,15 @@ paths:
           description: The project has no wrapper repository
         "404":
           description: No such project
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}:
     get:
       parameters:
@@ -1374,9 +1582,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response32"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Get
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:system
     delete:
       parameters:
       - name: repoId
@@ -1391,9 +1606,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response34"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Delete
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/active-process:
     get:
       parameters:
@@ -1409,9 +1631,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response37"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Active Process
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/backup-sync:
     post:
       summary: Back this repository up to its forge twin now
@@ -1433,8 +1662,15 @@ paths:
                 $ref: "#/components/schemas/Response36"
         "404":
           description: No such repository
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/branches:
     delete:
       parameters:
@@ -1456,9 +1692,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response33"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Delete Branch
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     get:
       parameters:
       - name: repoId
@@ -1473,9 +1716,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response35"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Branches
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/commits:
     get:
       parameters:
@@ -1497,9 +1747,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CommitLogDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Commits
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/commits/{commitHash}/changes:
     get:
       parameters:
@@ -1524,9 +1781,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CommitChangesDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Commit Changes
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/commits/{commitHash}/diff:
     get:
       parameters:
@@ -1557,9 +1821,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CommitFileDiffDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Commit File Diff
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/main-branch:
     put:
       parameters:
@@ -1581,11 +1852,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response29"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Set Main Branch
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/pull:
     post:
       parameters:
@@ -1601,9 +1879,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response31"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Pull
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/push:
     post:
       parameters:
@@ -1619,9 +1904,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response30"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Push
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/sync:
     post:
       parameters:
@@ -1637,9 +1929,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response28"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Sync
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/repositories/{repoId}/sync-status:
     get:
       parameters:
@@ -1655,9 +1954,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SyncStatusDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Sync Status
       tags:
       - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/tasks/{id}:
     put:
       parameters:
@@ -1679,11 +1985,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response14"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
         "400":
           description: Bad Request
       summary: Update
       tags:
       - Task Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     get:
       parameters:
       - name: id
@@ -1698,9 +2011,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response15"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Get
       tags:
       - Task Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     delete:
       parameters:
       - name: id
@@ -1715,9 +2035,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response16"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       summary: Delete
       tags:
       - Task Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
 info:
   title: qits-projects API
   version: 2026.814.194433

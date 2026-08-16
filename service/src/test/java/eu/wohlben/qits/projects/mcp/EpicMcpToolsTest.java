@@ -13,6 +13,8 @@ import io.quarkiverse.mcp.server.ToolResponse;
 import io.quarkiverse.mcp.server.test.McpAssured;
 import io.quarkiverse.mcp.server.test.McpAssured.McpStreamableTestClient;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
+import io.restassured.specification.RequestSpecification;
 import io.restassured.http.ContentType;
 import io.vertx.core.MultiMap;
 import jakarta.ws.rs.core.Response;
@@ -27,7 +29,14 @@ import org.junit.jupiter.api.Test;
  * actually experiences.
  */
 @QuarkusTest
+@TestProfile(McpStatelessTestProfile.class)
 public class EpicMcpToolsTest {
+
+  private static RequestSpecification authenticated() {
+    return given()
+        .header("X-Qits-User", "mcp-test")
+        .header("X-Qits-Roles", "qits:admin,qits-platform:admin,qits:system,qits-platform:system");
+  }
 
   private final String fixtureUrl;
 
@@ -38,7 +47,7 @@ public class EpicMcpToolsTest {
   // --- Fixtures over REST ---------------------------------------------------
 
   private String createProject(String name) {
-    return given()
+    return authenticated()
         .contentType(ContentType.JSON)
         .body(
             new ProjectController.CreateProjectRequest(
@@ -52,7 +61,7 @@ public class EpicMcpToolsTest {
   }
 
   private String createRepository(String projectId) {
-    return given()
+    return authenticated()
         .contentType(ContentType.JSON)
         .body(
             new ProjectController.CreateProjectRepositoryRequest(
@@ -67,7 +76,7 @@ public class EpicMcpToolsTest {
 
   /** Freeze an epic's scope the way the UI does — the only thing the agent cannot do itself. */
   private void freeze(String epicId) {
-    given()
+    authenticated()
         .contentType(ContentType.JSON)
         .body(new EpicController.TransitionEpicRequest("IMPLEMENTATION"))
         .when()
@@ -88,6 +97,7 @@ public class EpicMcpToolsTest {
   /** A streamable client on the repository server, scoped to {@code projectId} (or none). */
   private McpStreamableTestClient client(String projectId) {
     return McpAssured.newStreamableClient()
+        .setStateless()
         .setMcpPath("/projects/mcp")
         .setAdditionalHeaders(
             msg -> {

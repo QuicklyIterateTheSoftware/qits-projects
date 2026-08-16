@@ -180,15 +180,16 @@
         </dependency>
         <dependency>
             <!-- The repository/submodule MCP tool surface. Not in the Quarkus BOM, so the version
-                 is pinned as in the monorepo; 1.13.0 is built against Quarkus 3.33.x (~ 3.34.6). -->
+                 is pinned explicitly. 2.0 speaks the stateless MCP 2026-07-28 protocol and CR2 is
+                 built against Quarkus 3.33.x (~ 3.34.6). -->
             <groupId>io.quarkiverse.mcp</groupId>
             <artifactId>quarkus-mcp-server-http</artifactId>
-            <version>1.13.0</version>
+            <version>2.0.0.CR2</version>
         </dependency>
         <dependency>
             <groupId>io.quarkiverse.mcp</groupId>
             <artifactId>quarkus-mcp-server-test</artifactId>
-            <version>1.13.0</version>
+            <version>2.0.0.CR2</version>
             <scope>test</scope>
         </dependency>
         <dependency>

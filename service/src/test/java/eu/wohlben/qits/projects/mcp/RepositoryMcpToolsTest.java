@@ -13,6 +13,8 @@ import io.quarkiverse.mcp.server.test.McpAssured;
 import io.quarkiverse.mcp.server.test.McpAssured.McpStreamableTestClient;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
+import io.restassured.specification.RequestSpecification;
 import io.restassured.http.ContentType;
 import io.vertx.core.MultiMap;
 import jakarta.ws.rs.core.Response;
@@ -26,7 +28,14 @@ import org.junit.jupiter.api.Test;
  * repository outside that project — so a session can't reach across project boundaries.
  */
 @QuarkusTest
+@TestProfile(McpStatelessTestProfile.class)
 public class RepositoryMcpToolsTest {
+
+  private static RequestSpecification authenticated() {
+    return given()
+        .header("X-Qits-User", "mcp-test")
+        .header("X-Qits-Roles", "qits:admin,qits-platform:admin,qits:system,qits-platform:system");
+  }
 
   /** Isolate cloned repos in a temp dir, like the controller tests. */
   private final String fixtureUrl;
@@ -36,7 +45,7 @@ public class RepositoryMcpToolsTest {
   }
 
   private String createProject(String name) {
-    return given()
+    return authenticated()
         .contentType(ContentType.JSON)
         .body(
             new ProjectController.CreateProjectRequest(
@@ -50,7 +59,7 @@ public class RepositoryMcpToolsTest {
   }
 
   private String createRepository(String projectId) {
-    return given()
+    return authenticated()
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRepositoryRequest(
                 fixtureUrl, null, RepositoryArchetype.SERVICE))
@@ -68,7 +77,7 @@ public class RepositoryMcpToolsTest {
    * a distinctly named sibling.
    */
   private String createBlankRepository(String projectId, String name) {
-    return given()
+    return authenticated()
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRepositoryRequest(
                 null, name, RepositoryArchetype.SERVICE))
@@ -98,6 +107,7 @@ public class RepositoryMcpToolsTest {
    */
   private McpStreamableTestClient client(String projectId, String repositoryId) {
     return McpAssured.newStreamableClient()
+        .setStateless()
         .setMcpPath("/projects/mcp")
         .setAdditionalHeaders(
             msg -> {
@@ -215,6 +225,7 @@ public class RepositoryMcpToolsTest {
    */
   private McpStreamableTestClient readOnlyClient(String projectId) {
     return McpAssured.newStreamableClient()
+        .setStateless()
         .setMcpPath("/projects/mcp?" + ReadOnlyRepositoryToolFilter.READ_ONLY_PARAM + "=true")
         .setAdditionalHeaders(
             msg -> {

@@ -139,22 +139,25 @@ public class PackagedSurfaceIT {
   }
 
   @Test
-  public void theMcpServerIsMountedUnderTheSegmentAndAnswersItsHandshake() {
+  public void theMcpServerIsMountedUnderTheSegmentAndAnswersStatelessDiscovery() {
     // Reaching the SERVER, not the router's 404 page: quarkus-mcp-server-http refuses to start at
     // all without its root-path, so a wrong root-path would show up here as a 404 with an HTML body
     // rather than a JSON-RPC result.
     given()
         .contentType("application/json")
         .accept("application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "server/discover")
         .body(
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
-                + "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
-                + "\"clientInfo\":{\"name\":\"packaged-surface-it\",\"version\":\"1\"}}}")
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{"
+                + "\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\","
+                + "\"io.modelcontextprotocol/clientInfo\":{\"name\":\"packaged-surface-it\","
+                + "\"version\":\"1\"},\"io.modelcontextprotocol/clientCapabilities\":{}}}}")
         .when()
         .post("/projects/mcp")
         .then()
         .statusCode(200)
-        .body("result.serverInfo.name", org.hamcrest.Matchers.notNullValue());
+        .body("result.supportedVersions", org.hamcrest.Matchers.hasItem("2026-07-28"));
   }
 
   @Test

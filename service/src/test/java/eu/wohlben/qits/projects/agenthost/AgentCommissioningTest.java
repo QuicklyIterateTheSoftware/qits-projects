@@ -85,6 +85,9 @@ class AgentCommissioningTest {
     assertEquals(projectId, live.get(clientId), "commissioned for THIS project's context");
     assertEquals(clientId, env.get("QITS_COMMISSIONED_CLIENT_ID"));
     assertEquals("secret-of-" + clientId, env.get("QITS_COMMISSIONED_CLIENT_SECRET"));
+    assertEquals(
+        "http://qits-idp:8080/idp/token", env.get("QITS_PROJECTS_DAEMON_AUTH_TOKEN_URL"));
+    assertEquals("qits-projects", env.get("QITS_PROJECTS_DAEMON_AUTH_AUDIENCE"));
   }
 
   /**
@@ -148,6 +151,8 @@ class AgentCommissioningTest {
     assertEquals(List.of(), credentials.calls(), "not one call is made");
     assertNull(created.get("QITS_COMMISSIONED_CLIENT_ID"));
     assertNull(created.get("QITS_COMMISSIONED_CLIENT_SECRET"));
+    assertNull(created.get("QITS_PROJECTS_DAEMON_AUTH_TOKEN_URL"));
+    assertNull(created.get("QITS_PROJECTS_DAEMON_AUTH_AUDIENCE"));
     assertTrue(
         created.keySet().stream().noneMatch(name -> name.startsWith("QITS_COMMISSIONED")),
         "no commissioning name is in the map at all: " + created.keySet());

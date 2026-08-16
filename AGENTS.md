@@ -372,6 +372,8 @@ one wrong fails silently: no url leaves the daemon idle, no token leaves its API
     QITS_REPOSITORY_MCP_URL              the one MCP server a launch attaches — this service
     QITS_COMMISSIONED_CLIENT_ID          this container's OWN idp client — absent with no idp
     QITS_COMMISSIONED_CLIENT_SECRET      its secret, answered once and stored here
+    QITS_PROJECTS_DAEMON_AUTH_TOKEN_URL  the idp token endpoint used before dial-home
+    QITS_PROJECTS_DAEMON_AUTH_AUDIENCE   this qits-projects service's environment client id
 
 **The last two are a credential per container, not a shared one.** They are commissioned from
 qits-idp's `POST /idp/api/clients` as `{agent-container, <projectId>}` and handed back when the

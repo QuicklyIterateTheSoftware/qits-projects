@@ -163,6 +163,14 @@ public class AgentContainerFactory {
   @ConfigProperty(name = "qits.projects.own-port", defaultValue = "8080")
   String ownPort;
 
+  /** IdP base used by this service and handed to commissioned daemons for token exchange. */
+  @ConfigProperty(name = "quarkus.oidc-client.auth-server-url")
+  String idpAuthServerUrl;
+
+  /** This service is also the audience protecting its daemon control socket. */
+  @ConfigProperty(name = "quarkus.oidc-client.client-id")
+  String platformClientId;
+
   /**
    * The git host the daemon's boot self-clone reads from, including qits-githost's own {@code /git}
    * prefix. Stated outright rather than left to the daemon's derivation, which would guess a
@@ -373,6 +381,10 @@ public class AgentContainerFactory {
         pair -> {
           env.put("QITS_COMMISSIONED_CLIENT_ID", pair.clientId());
           env.put("QITS_COMMISSIONED_CLIENT_SECRET", pair.secret());
+          env.put(
+              "QITS_PROJECTS_DAEMON_AUTH_TOKEN_URL",
+              idpAuthServerUrl.replaceAll("/+$", "") + "/token");
+          env.put("QITS_PROJECTS_DAEMON_AUTH_AUDIENCE", platformClientId);
         });
     env.put("QITS_PROJECTS_DAEMON_API_PORT", Integer.toString(daemonApiPort));
     env.put("QITS_PROJECTS_DAEMON_HOOKS_PORT", Integer.toString(daemonHooksPort));

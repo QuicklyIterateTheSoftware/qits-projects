@@ -104,10 +104,17 @@
                  application.properties, so the extension builds a disabled client, this process
                  boots with no secret and dials nothing, and the calls go out bare — which is what
                  the orchestrator's own gate (qits.auth.machine.required, also off) expects. This
-                 service authenticates no INBOUND caller either way; that is qits-gateway's, and
-                 nothing here validates a bearer. -->
+                 The sibling quarkus-oidc dependency validates the commissioned agent's inbound
+                 control socket; these are independent client and resource-server directions. -->
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-oidc-client</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The project agent dials this service directly on qits-net. Its control WebSocket is
+                 protected by qits:system, so the commissioned Bearer must become a validated
+                 SecurityIdentity here rather than relying on browser forward-auth at the edge. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc</artifactId>
         </dependency>
         <dependency>
             <!-- PatientPgDriver. It arrives transitively through `domain` and `epics` too, and is

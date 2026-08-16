@@ -88,6 +88,7 @@ class AgentCommissioningTest {
     assertEquals(
         "http://qits-idp:8080/idp/token", env.get("QITS_PROJECTS_DAEMON_AUTH_TOKEN_URL"));
     assertEquals("qits-projects", env.get("QITS_PROJECTS_DAEMON_AUTH_AUDIENCE"));
+    assertEquals("qits-githost", env.get("QITS_PROJECTS_DAEMON_GIT_AUTH_AUDIENCE"));
   }
 
   /**

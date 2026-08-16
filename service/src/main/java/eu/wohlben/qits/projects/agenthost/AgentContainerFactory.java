@@ -171,6 +171,12 @@ public class AgentContainerFactory {
   @ConfigProperty(name = "quarkus.oidc-client.client-id")
   String platformClientId;
 
+  /** Audience the commissioned container requests for its direct qits-githost reads. */
+  @ConfigProperty(
+      name = "quarkus.oidc-client.githost.grant-options.client.audience",
+      defaultValue = "qits-githost")
+  String gitHostAudience;
+
   /**
    * The git host the daemon's boot self-clone reads from, including qits-githost's own {@code /git}
    * prefix. Stated outright rather than left to the daemon's derivation, which would guess a
@@ -385,6 +391,7 @@ public class AgentContainerFactory {
               "QITS_PROJECTS_DAEMON_AUTH_TOKEN_URL",
               idpAuthServerUrl.replaceAll("/+$", "") + "/token");
           env.put("QITS_PROJECTS_DAEMON_AUTH_AUDIENCE", platformClientId);
+          env.put("QITS_PROJECTS_DAEMON_GIT_AUTH_AUDIENCE", gitHostAudience);
         });
     env.put("QITS_PROJECTS_DAEMON_API_PORT", Integer.toString(daemonApiPort));
     env.put("QITS_PROJECTS_DAEMON_HOOKS_PORT", Integer.toString(daemonHooksPort));

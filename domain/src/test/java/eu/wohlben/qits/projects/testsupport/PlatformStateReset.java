@@ -50,20 +50,45 @@ public class PlatformStateReset implements QuarkusTestBeforeEachCallback {
     if (!dataSource.isAvailable()) {
       return;
     }
-    try (Connection connection = dataSource.get().getConnection();
-        Statement sql = connection.createStatement()) {
-      // agent_credential is in the list even though it has no relation to the other three: a row
-      // one test commissioned would otherwise still be there for the next, and the credential
-      // reconcile reads the whole table.
-      sql.execute("truncate table repository_name, repository, project, agent_credential");
-    } catch (SQLException e) {
-      throw new IllegalStateException("Could not reset the projects tables", e);
-    }
+    truncate(dataSource.get());
     wipe(
         Path.of(
             ConfigProvider.getConfig().getValue("qits.projects.data-dir", String.class)));
     wipe(RepoDataDirReset.FAKE_HOST_ROOT);
   }
+
+  /**
+   * Empty the four projects tables, and try again when a previous test's worker is still reading
+   * one of them.
+   *
+   * <p><b>The retry is the same race the wipe below has, one layer down.</b> The truncate takes an
+   * {@code AccessExclusiveLock} on all four tables at once, while a debounced backup or a pull
+   * started by the <em>previous</em> test may still hold an {@code AccessShareLock} on one and be
+   * waiting for another — a cycle postgres reports as {@code deadlock detected} (SQLState 40P01) and
+   * breaks by killing one side. That is a statement about the moment, not about the schema: the
+   * worker is finishing, not stuck. Anything else fails on the first attempt, as it should.
+   *
+   * <p>agent_credential is in the list even though it has no relation to the other three: a row one
+   * test commissioned would otherwise still be there for the next, and the credential reconcile
+   * reads the whole table.
+   */
+  private static void truncate(AgroalDataSource dataSource) {
+    for (int attempt = 1; ; attempt++) {
+      try (Connection connection = dataSource.getConnection();
+          Statement sql = connection.createStatement()) {
+        sql.execute("truncate table repository_name, repository, project, agent_credential");
+        return;
+      } catch (SQLException e) {
+        if (attempt == 5 || !DEADLOCK.equals(e.getSQLState())) {
+          throw new IllegalStateException("Could not reset the projects tables", e);
+        }
+        pause();
+      }
+    }
+  }
+
+  /** postgres' {@code deadlock_detected} — the only SQLState worth a second attempt here. */
+  private static final String DEADLOCK = "40P01";
 
   /**
    * Empty {@code dir}, and try again when something wrote into it while we walked.

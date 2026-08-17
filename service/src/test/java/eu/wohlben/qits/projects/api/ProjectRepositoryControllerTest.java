@@ -500,4 +500,23 @@ public class ProjectRepositoryControllerTest {
           .id;
     }
   }
+
+  /**
+   * The repositories listing serves a machine holding only {@code qits:system} — qits-workspaces
+   * reads the wrapper's submodule closure with that identity for aggregate branch creation. The
+   * method-level roles REPLACE the controller's class-level {@code qits:admin}, so this pins that
+   * the system role stayed spelled; losing it answered the first live aggregate create with 403.
+   */
+  @Test
+  public void aMachineWithTheSystemRoleAloneReadsTheRepositoriesListing() {
+    String projectId = createProject("Closure Reader");
+    given()
+        .header("X-Qits-User", "dev-qits-workspaces")
+        .header("X-Qits-Roles", "qits:system")
+        .when()
+        .get("/projects/api/projects/" + projectId + "/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("entries", notNullValue());
+  }
 }

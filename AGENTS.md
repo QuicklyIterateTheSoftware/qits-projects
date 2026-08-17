@@ -202,11 +202,38 @@ User authentication happens at `qits-gateway`. This service resolves the trusted
 and roles through the shared `qits-auth-core`; machine callers present validated OIDC credentials.
 
 There is no auth variant to select in this service. The shared `qits-auth-core` resolves both
-`X-Qits-User` and `X-Qits-Roles`; human-facing REST boundaries use Jakarta
-`@RolesAllowed("qits:admin")`. Machine-facing boundaries require `qits:system` and retain their
-narrower `MachineAuth` audience/scope checks where applicable.
-stripped from every inbound request unconditionally, which is the entire reason a header can be
-trusted as an identity here.
+`X-Qits-User` and `X-Qits-Roles`, and the edge strips every client-supplied `X-Qits-*` header from
+every inbound request unconditionally, which is the entire reason a header can be trusted as an
+identity here.
+
+**Nothing on this surface is open, and the role names a kind of caller rather than a level.**
+
+| role | how a caller holds it | what it opens |
+| --- | --- | --- |
+| `qits:admin` | the forwarded `X-Qits-Roles` header alone — the edge asserts it for an authenticated admin session | every REST controller here (class-level), the events stream and the remote-login socket |
+| `qits:system` | a machine bearer alone — qits-idp copies a client's `roles` into the token's `groups` claim, and quarkus-oidc reads that claim as roles with no configuration at all | `GET /projects/{projectId}/repositories/by-name/{repoName}` (qits-githost) and the agent control socket `/projects/daemon/{projectId}` |
+
+**Two routes take both roles**, because a sibling service and a browser read each of them:
+`GET /projects/{projectId}/repositories` (qits-workspaces creating an aggregate branch, and the
+projects overview) and `GET /repositories/{repoId}` (qits-workspaces' `RepositoryLookup`, and the
+workspaces detail screen, which has only the repository id to go on).
+
+**A method-level `@RolesAllowed` REPLACES the class-level one; it does not add to it.** That is the
+defect class to watch for here, and both of the routes above were live 403s found that way: the
+controllers are class-level `qits:admin`, so annotating one method `qits:system` to let a machine in
+locks every browser out of exactly that route and nothing else. A route with two kinds of caller
+spells both roles.
+
+**Two doors, and which one shuts says what is missing.** No user header at all is anonymous and
+answers **401** at the mechanism's challenge; a named caller without the role authenticates and
+answers **403**. `EpicsAuditIdentityTest` pins both.
+
+**The suite goes through the mechanism, never around it.** `qits-auth-core` ships a `%test` dev user
+granted all four platform roles, so a plain `given()` already is an admin session and the ordinary
+test needs no fixture. A test about a *particular* caller sends what the edge sends — `X-Qits-User`
+plus `X-Qits-Roles`, as the MCP suites and the two role-pinning tests do — and a test under
+`NoDevUserProfile`, which blanks the dev user to reach the deployed posture, has no identity until it
+sends them.
 
 The identity exists to name `changed_by`; `EpicsAuditIdentityTest` is what pins that, and it uses
 the real header rather than `@TestSecurity` on purpose. The header **is** the contract under test —
@@ -736,6 +763,15 @@ reintroduce it: a rule that matches nothing anywhere else is still a typo worth 
   whole suite dies with `Port already bound: 8081` — which reads like a code failure and is not one.
   `quarkus.http.test-port=0` in the service test properties is the answer; the flake below is the
   same rock from the other side.
+- **A deleted class stays in `target/classes` and can still win a bean lookup, so the gate is
+  `./mvnw clean verify`.** Measured here on 2026-08-17: half the REST suite answered 403 and no
+  forwarded role ever reached an identity, while the same tree had passed minutes earlier. The cause
+  was `eu/wohlben/qits/projects/security/ForwardAuth{Mechanism,IdentityProvider}.class` — this
+  repo's own pre-`qits-auth-core` mechanism, whose **source is gone** while an incremental build left
+  the compiled classes behind. Two `HttpAuthenticationMechanism` beans then compete, and the stale
+  one reads `X-Qits-User` and no roles at all; which of them wins varies between builds, so the same
+  working tree is green in one run and red in the next. A `clean` is not a ritual here — it is the
+  difference between testing this repository and testing what it used to be.
 - `OpenApiSchemaExportTest` writes `docs/openapi.yml`. Regenerate and commit whenever the REST
   surface changes:
 

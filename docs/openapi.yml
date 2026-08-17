@@ -1431,6 +1431,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:system
     post:
       parameters:
       - name: projectId
@@ -1591,6 +1592,7 @@ paths:
       - Repository Controller
       security:
       - SecurityScheme:
+        - qits:admin
         - qits:system
     delete:
       parameters:

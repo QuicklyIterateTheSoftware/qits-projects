@@ -54,9 +54,20 @@ public class RepositoryController {
     public record Response(RepositoryDto repository) {}
   }
 
+  /**
+   * One repository by id — <b>two callers, two roles</b>, the same pair {@code
+   * ProjectController#listRepositories} serves. qits-workspaces reads it with its machine identity
+   * ({@code RepositoryLookup}, which is what tells a release which repository it is releasing), and
+   * the workspaces detail screen reads it through a browser session for the repository's main
+   * branch — the deep link carries no project id, so this by-id read is the only way in.
+   *
+   * <p>A method-level {@code @RolesAllowed} <b>replaces</b> the class-level {@code qits:admin}
+   * rather than adding to it. {@code qits:system} alone was therefore a refusal of every browser
+   * that reached this route.
+   */
   @GET
   @Path("/{repoId}")
-  @jakarta.annotation.security.RolesAllowed("qits:system")
+  @jakarta.annotation.security.RolesAllowed({"qits:admin", "qits:system"})
   public GetRepositoryRequest.Response get(@PathParam("repoId") String repoId) {
     var repo = repositoryService.get(repoId);
     return new GetRepositoryRequest.Response(repositoryMapper.toDto(repo));

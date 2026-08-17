@@ -337,6 +337,39 @@ public class RepositoryControllerTest {
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
   }
 
+  /**
+   * The by-id read answers both callers its two roles name: a machine holding {@code qits:system}
+   * alone — qits-workspaces' {@code RepositoryLookup}, which is how a release learns which
+   * repository it is releasing — and a browser session holding {@code qits:admin} alone, which is
+   * the workspaces detail screen reading the repository's main branch on a deep link.
+   *
+   * <p>The method-level roles REPLACE the controller's class-level {@code qits:admin}, so naming
+   * only the system role refused every browser that reached this route: the same defect the
+   * project's repositories listing had, one route over.
+   */
+  @Test
+  public void bothAMachineAndABrowserSessionReadOneRepositoryById() {
+    String repoId = createProjectAndRepository();
+
+    given()
+        .header("X-Qits-User", "dev-qits-workspaces")
+        .header("X-Qits-Roles", "qits:system")
+        .when()
+        .get("/projects/api/repositories/" + repoId)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.id", equalTo(repoId));
+
+    given()
+        .header("X-Qits-User", "alice")
+        .header("X-Qits-Roles", "qits:admin")
+        .when()
+        .get("/projects/api/repositories/" + repoId)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.id", equalTo(repoId));
+  }
+
   // SEAM (migration-plan.md §6, repository <-> workspace). Fourteen tests stood here, all over
   // POST /repositories/{id}/branches/merge and .../branches/cleanup — the two routes that forwarded
   // to WorkspaceService and are cut from RepositoryController (see the seam note there):

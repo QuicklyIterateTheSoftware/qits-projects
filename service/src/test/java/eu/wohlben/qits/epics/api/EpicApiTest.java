@@ -31,6 +31,10 @@ import org.junit.jupiter.api.Test;
  * authentication mechanism entirely, and did so silently for the whole period this repo shipped no
  * mechanism at all. {@link EpicsAuditIdentityTest} is the test that exercises the real header path;
  * do not fold the two together.
+ *
+ * <p>The annotation names the <b>role</b> as well as the user, because it replaces the mechanism's
+ * identity wholesale rather than adding to it: a caller named with no role authenticates and is then
+ * refused 403 by the {@code @RolesAllowed("qits:admin")} this boundary carries.
  */
 @QuarkusTest
 class EpicApiTest {
@@ -69,7 +73,7 @@ class EpicApiTest {
   }
 
   @Test
-  @TestSecurity(user = "dev")
+  @TestSecurity(user = "dev", roles = "qits:admin")
   void fullEpicFeatureTaskLifecycle() {
     String projectId = createProject();
     String repoId = createRepository(projectId);

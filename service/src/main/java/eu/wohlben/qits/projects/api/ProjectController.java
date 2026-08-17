@@ -255,8 +255,16 @@ public class ProjectController {
     }
   }
 
+  /**
+   * The project's components — <b>two callers, two roles</b>. qits-workspaces reads the wrapper's
+   * submodule closure with its machine identity to create an aggregate branch, and the projects
+   * overview reads the same list through a browser session. A method-level {@code @RolesAllowed}
+   * <b>replaces</b> the class-level {@code qits:admin} rather than adding to it, so both roles are
+   * spelled here; dropping either one refuses a caller that exists today.
+   */
   @GET
   @Path("/{projectId}/repositories")
+  @jakarta.annotation.security.RolesAllowed({"qits:admin", "qits:system"})
   public ListProjectRepositoriesRequest.Response listRepositories(
       @PathParam("projectId") String projectId) {
     var repos = projectService.getRepositories(projectId);

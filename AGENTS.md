@@ -211,12 +211,20 @@ identity here.
 | role | how a caller holds it | what it opens |
 | --- | --- | --- |
 | `qits:admin` | the forwarded `X-Qits-Roles` header alone — the edge asserts it for an authenticated admin session | every REST controller here (class-level), the events stream and the remote-login socket |
-| `qits:system` | a machine bearer alone — qits-idp copies a client's `roles` into the token's `groups` claim, and quarkus-oidc reads that claim as roles with no configuration at all | `GET /projects/{projectId}/repositories/by-name/{repoName}` (qits-githost) and the agent control socket `/projects/daemon/{projectId}` |
+| `qits:system` | a machine bearer alone — qits-idp copies a client's `roles` into the token's `groups` claim, and quarkus-oidc reads that claim as roles with no configuration at all | `GET /projects/{projectId}/repositories/by-name/{repoName}` (qits-githost), `POST /projects/{projectId}/repositories/adopt` (the bootstrap) and the agent control socket `/projects/daemon/{projectId}` |
 
-**Two routes take both roles**, because a sibling service and a browser read each of them:
+**Four routes take both roles**, because a sibling service and a browser read each of them:
+`GET /projects` (the bootstrap turning the project's name into its id, and the projects overview),
 `GET /projects/{projectId}/repositories` (qits-workspaces creating an aggregate branch, and the
-projects overview) and `GET /repositories/{repoId}` (qits-workspaces' `RepositoryLookup`, and the
-workspaces detail screen, which has only the repository id to go on).
+projects overview), `GET /repositories` (qits-ci's trigger catalogue) and `GET /repositories/{repoId}`
+(qits-workspaces' `RepositoryLookup`, and the workspaces detail screen, which has only the
+repository id to go on).
+
+**`POST /projects/{projectId}/repositories/adopt` is `qits:system` alone**, like the by-name
+resolution and for the same reason: its caller supplies a git-host STORAGE id, which only the
+machine that created the bare holds. That caller is qits-cli-bootstrap, which creates every platform
+repository on the git host before this service exists to be asked. A person has no storage id to
+supply and `POST /projects/{projectId}/repositories` is their route.
 
 **A method-level `@RolesAllowed` REPLACES the class-level one; it does not add to it.** That is the
 defect class to watch for here, and both of the routes above were live 403s found that way: the

@@ -154,7 +154,14 @@ public class ProjectController {
     }
   }
 
+  /**
+   * <b>Two kinds of caller, so two roles.</b> The projects overview is a browser's, and the machine
+   * that seeds this platform has to find the project the platform's own repositories belong to
+   * before it can register any of them — it holds a name, and this is where a name becomes an id.
+   * Spelled in full because a method-level {@code @RolesAllowed} REPLACES the class-level one.
+   */
   @GET
+  @jakarta.annotation.security.RolesAllowed({"qits:admin", "qits:system"})
   public ListProjectsRequest.Response list() {
     var projects = projectService.list();
     var entries =
@@ -368,6 +375,58 @@ public class ProjectController {
             projectId, request.url(), request.name(), request.archetype());
     return new CreateProjectRepositoryRequest.Response(
         repositoryMapper.toDto(created.repository()), projectId, created.wrapperPath());
+  }
+
+  /**
+   * @param repositoryId the git host's storage id — what {@code /git/<repoId>} addresses, and what
+   *     the caller that created the bare already holds
+   * @param name the public coordinate, the {@code <repoName>} half of {@code
+   *     /git/<projectId>/<repoName>}
+   * @param url the forge this repository is backed up to, or null for none
+   */
+  public static record AdoptProjectRepositoryRequest(
+      @NotBlank String repositoryId,
+      @NotBlank String name,
+      String url,
+      @NotNull eu.wohlben.qits.projects.entity.RepositoryArchetype archetype) {
+    public record Response(RepositoryDto repository, String projectId) {}
+  }
+
+  /**
+   * Registers a repository the git host already serves as a component of this project — the
+   * bootstrap's seam, and the only one that supplies both coordinates outright.
+   *
+   * <p><b>{@code qits:system} and not {@code qits:admin}</b>, like the by-name resolution above and
+   * for the same reason: the caller is the machine that minted the storage id. A method-level
+   * {@code @RolesAllowed} REPLACES the class-level one, so a browser session is 403 here — which is
+   * right, because a person has no storage id to supply and {@code POST …/repositories} is their
+   * route.
+   *
+   * <p>Idempotent: an id the database already holds answers 200 with the row it found. There is
+   * deliberately no wrapper write — an adopted repository is already a submodule of the project's
+   * wrapper.
+   */
+  @POST
+  @Path("/{projectId}/repositories/adopt")
+  @jakarta.annotation.security.RolesAllowed("qits:system")
+  @APIResponse(
+      responseCode = "200",
+      description = "The repository is registered under this project, with that name as its alias")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "An id or name outside the adoptable shape, archetype PROJECT (the wrapper's, which this"
+              + " route does not own), or an unusable url")
+  @APIResponse(
+      responseCode = "404",
+      description = "No such project, or the git host holds no repository under that storage id")
+  public AdoptProjectRepositoryRequest.Response adoptRepository(
+      @PathParam("projectId") String projectId, @Valid AdoptProjectRepositoryRequest request) {
+    var adopted =
+        projectService.adoptRepository(
+            projectId, request.repositoryId(), request.name(), request.url(), request.archetype());
+    return new AdoptProjectRepositoryRequest.Response(
+        repositoryMapper.toDto(adopted), projectId);
   }
 
   public static record BackupSyncProjectRequest() {

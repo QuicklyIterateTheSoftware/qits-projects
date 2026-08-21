@@ -4,6 +4,23 @@
 openapi: 3.1.0
 components:
   schemas:
+    AdoptProjectRepositoryRequest:
+      type: object
+      required:
+      - repositoryId
+      - name
+      - archetype
+      properties:
+        repositoryId:
+          type: string
+          pattern: \S
+        name:
+          type: string
+          pattern: \S
+        url:
+          type: string
+        archetype:
+          $ref: "#/components/schemas/RepositoryArchetype"
     AgentContainerResponse:
       type: object
       properties:
@@ -551,13 +568,15 @@ components:
     Response28:
       type: object
       properties:
-        technicalProcessId:
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
+        projectId:
           type: string
     Response29:
       type: object
       properties:
-        repository:
-          $ref: "#/components/schemas/RepositoryDto"
+        technicalProcessId:
+          type: string
     Response3:
       type: object
       properties:
@@ -566,8 +585,8 @@ components:
     Response30:
       type: object
       properties:
-        technicalProcessId:
-          type: string
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
     Response31:
       type: object
       properties:
@@ -576,20 +595,20 @@ components:
     Response32:
       type: object
       properties:
+        technicalProcessId:
+          type: string
+    Response33:
+      type: object
+      properties:
         repositories:
           type: array
           items:
             $ref: "#/components/schemas/RepositoryCoordinatesDto"
-    Response33:
+    Response34:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response34:
-      type: object
-      properties:
-        success:
-          type: boolean
     Response35:
       type: object
       properties:
@@ -598,18 +617,23 @@ components:
     Response36:
       type: object
       properties:
+        success:
+          type: boolean
+    Response37:
+      type: object
+      properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response37:
+    Response38:
       type: object
       properties:
         repositoryId:
           type: string
         scheduled:
           type: boolean
-    Response38:
+    Response39:
       type: object
       properties:
         technicalProcessId:
@@ -1116,6 +1140,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:system
     post:
       requestBody:
         content:
@@ -1483,6 +1508,44 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+  /projects/api/projects/{projectId}/repositories/adopt:
+    post:
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdoptProjectRepositoryRequest"
+        required: true
+      responses:
+        "200":
+          description: "The repository is registered under this project, with that\
+            \ name as its alias"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response28"
+        "400":
+          description: "An id or name outside the adoptable shape, archetype PROJECT\
+            \ (the wrapper's, which this route does not own), or an unusable url"
+        "404":
+          description: "No such project, or the git host holds no repository under\
+            \ that storage id"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Adopt Repository
+      tags:
+      - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:system
   /projects/api/projects/{projectId}/repositories/backup-sync:
     post:
       summary: Back up every repository of this project to its forge twin
@@ -1598,7 +1661,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response32"
+                $ref: "#/components/schemas/Response33"
         "401":
           description: Not Authorized
         "403":
@@ -1623,7 +1686,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response33"
+                $ref: "#/components/schemas/Response34"
         "401":
           description: Not Authorized
         "403":
@@ -1648,7 +1711,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response35"
+                $ref: "#/components/schemas/Response36"
         "401":
           description: Not Authorized
         "403":
@@ -1673,7 +1736,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response38"
+                $ref: "#/components/schemas/Response39"
         "401":
           description: Not Authorized
         "403":
@@ -1702,7 +1765,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response37"
+                $ref: "#/components/schemas/Response38"
         "404":
           description: No such repository
         "401":
@@ -1734,7 +1797,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response34"
+                $ref: "#/components/schemas/Response35"
         "401":
           description: Not Authorized
         "403":
@@ -1758,7 +1821,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response36"
+                $ref: "#/components/schemas/Response37"
         "401":
           description: Not Authorized
         "403":
@@ -1894,7 +1957,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response29"
+                $ref: "#/components/schemas/Response30"
         "401":
           description: Not Authorized
         "403":
@@ -1921,7 +1984,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response31"
+                $ref: "#/components/schemas/Response32"
         "401":
           description: Not Authorized
         "403":
@@ -1946,7 +2009,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response30"
+                $ref: "#/components/schemas/Response31"
         "401":
           description: Not Authorized
         "403":
@@ -1971,7 +2034,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response28"
+                $ref: "#/components/schemas/Response29"
         "401":
           description: Not Authorized
         "403":

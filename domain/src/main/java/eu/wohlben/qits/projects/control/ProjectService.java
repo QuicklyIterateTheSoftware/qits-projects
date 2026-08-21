@@ -513,6 +513,33 @@ public class ProjectService {
     return new CreatedRepository(repo, wrapperPath);
   }
 
+  /**
+   * Registers a repository the git host <b>already serves</b> as a component of {@code projectId}:
+   * the row takes the host's storage id and {@code name} becomes its addressable name. The seam
+   * behind {@code POST /projects/api/projects/{projectId}/repositories/adopt}.
+   *
+   * <p><b>It is the third caller of {@link RepositoryService#adoptExistingOrigin}, beside the
+   * wrapper reconcile, and the one that does not have to guess.</b> The reconcile finds a bare by
+   * asking the host for the entry name used as a storage id, which only answers while the two
+   * coordinates coincide. A caller that <em>minted</em> the id — the bootstrap, which creates every
+   * platform bare before qits-projects exists to be asked — knows both, and this route is how it
+   * says so instead of leaving the reconcile to rediscover it.
+   *
+   * <p>Nothing is cloned, no mirror is made, and <b>the wrapper is not written</b>: an adopted
+   * repository is already a submodule of the project's wrapper, or it is not a component at all.
+   * That is the whole difference from {@link #createRepository}, which mints a repository and adds
+   * the {@code .gitmodules} entry for it.
+   *
+   * <p>Idempotent, matched on the storage id: a second call with an id the database already holds
+   * answers the row it found, untouched. See {@link RepositoryService#adoptExistingOrigin} for the
+   * validation, the alias registration and the 404 when the host holds no such id.
+   */
+  public Repository adoptRepository(
+      String projectId, String repositoryId, String name, String url, RepositoryArchetype archetype) {
+    Project project = get(projectId);
+    return repositoryService.adoptExistingOrigin(project, repositoryId, name, url, archetype);
+  }
+
   /** Creates the project's wrapper as the last step of project creation. */
   private void createWrapperRepository(Project project, String wrapperUrl) {
     String name = wrapperName(project);

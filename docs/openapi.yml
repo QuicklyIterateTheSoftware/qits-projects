@@ -1500,9 +1500,9 @@ paths:
       summary: Resolve a project-scoped repository name to its id
       description: "The name is the segment a committed relative submodule url (../<name>.git)\
         \ resolves to, with any .git suffix stripped. Resolution is exactly what wrapper\
-        \ membership honours: the (project, name) alias, then the name read as the\
-        \ repository's own id — an adopted platform repository is keyed by its directory\
-        \ name and owns no alias row."
+        \ membership honours: the (project, name) alias, and nothing else. The id\
+        \ answered is the opaque storage key this service and qits-githost share,\
+        \ not a name."
       parameters:
       - name: projectId
         in: path
@@ -2049,4 +2049,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.817.194248
+  version: 2026.820.134744

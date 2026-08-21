@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.control;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -105,11 +106,10 @@ public class ProjectWrapperTest {
     assertEquals(RepositoryArchetype.PROJECT, wrapper.archetype);
     assertNull(wrapper.url, "a greenfield wrapper has no backup remote until one is attached");
     assertEquals("main", wrapper.mainBranch);
-    assertEquals(
+    assertNotEquals(
         "wrapper-naming-wrapper-naming",
         wrapper.id,
-        "the wrapper's id is <slug>-<slug> — the addressable name IS the id, so the git host, CI"
-            + " and the deployer all key on the name rather than a UUID");
+        "the wrapper's row id is an opaque minted key, like every other creation path's");
     assertEquals(
         "wrapper-naming-wrapper-naming",
         repositoryNameRepository.nameFor(wrapper).orElseThrow(),
@@ -117,13 +117,15 @@ public class ProjectWrapperTest {
             + " submodule url resolve the same locally and at the forge");
   }
 
-  /** The clone half of wrapper creation keys the row the same way as the greenfield half. */
+  /** The clone half of wrapper creation names the row the same way as the greenfield half. */
   @Test
-  public void aClonedWrapperCarriesSlugSlugAsItsIdToo() throws Exception {
+  public void aClonedWrapperIsAddressableAsSlugSlugToo() throws Exception {
     releaseSlug("demo");
     var project = projectService.create("Cloned Wrapper Id", "demo", null, fixture("demo-demo.git"));
 
-    assertEquals("demo-demo", wrapperOf(project).id);
+    var wrapper = wrapperOf(project);
+    assertNotEquals("demo-demo", wrapper.id, "the row id is opaque here too");
+    assertEquals("demo-demo", repositoryNameRepository.nameFor(wrapper).orElseThrow());
   }
 
   /** An unborn main branch would break a workspace container's clone — the skeleton prevents it. */

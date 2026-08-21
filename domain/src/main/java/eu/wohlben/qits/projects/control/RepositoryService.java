@@ -32,6 +32,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -133,9 +134,10 @@ public class RepositoryService {
    * {@link #cloneRepository(String, RepositoryArchetype, Project)} with the addressable name the
    * caller already holds — the wrapper reconcile's clone branch, where the {@code .gitmodules}
    * entry name is what the git host will serve the repository as and what every sibling {@code
-   * ../<name>.git} resolves to. The row's id is that name (see {@link #requireCreatableId}), never
-   * the url basename, so a retry after a partial failure lands on the reconcile's adopt branch
-   * instead of orphaning a second repository.
+   * ../<name>.git} resolves to. The row's id is a minted UUID either way (see {@link
+   * #requireCreatableName}); what the caller's name decides is the <em>alias</em>, so a retry after
+   * a partial failure resolves the name to the existing row instead of orphaning a second
+   * repository.
    */
   @Transactional
   public Repository cloneRepository(
@@ -165,8 +167,8 @@ public class RepositoryService {
    * forge repository is a supported starting state. An upstream that <em>does</em> have history is
    * left completely untouched.
    *
-   * @param name the wrapper's project-scoped addressable name, {@code <slug>-<slug>} — also the
-   *     row's id, like every other creation path
+   * @param name the wrapper's project-scoped addressable name, {@code <slug>-<slug>} — registered
+   *     in the alias table, like every other creation path; the row's id is a minted UUID
    */
   @Transactional
   public Repository cloneWrapperOrigin(Project project, String url, String name) {
@@ -174,8 +176,7 @@ public class RepositoryService {
   }
 
   /**
-   * @param selfName the addressable name to register, which is also the row's <b>id</b>; {@code
-   *     null} derives both from the url basename
+   * @param selfName the addressable name to register; {@code null} derives it from the url basename
    * @param seedSkeletonIfEmpty whether an upstream that came back with no refs at all should be
    *     given the project template skeleton on {@link #WRAPPER_DEFAULT_BRANCH}
    */
@@ -208,27 +209,32 @@ public class RepositoryService {
               + "); a repository must point at its real backend, not qits' own cache.");
     }
 
-    Repository repo = new Repository();
-    // The id IS the addressable name — the caller's, or the url basename. See requireCreatableId
-    // for why a taken or invalid name is a hard failure rather than a fallback id.
-    repo.id =
-        requireCreatableId(
+    // The addressable name — the caller's, or the url basename. See requireCreatableName for why a
+    // taken or invalid name is a hard failure rather than something to route around.
+    String name =
+        requireCreatableName(
             project,
             selfName != null ? selfName : RepositoryNameRepository.basename(trimmedUrl));
+
+    Repository repo = new Repository();
+    // An opaque minted key, shared with qits-githost as the storage id. The public coordinate is
+    // (project, name) and lives in the alias table below.
+    repo.id = UUID.randomUUID().toString();
     repo.url = trimmedUrl;
     repo.archetype = archetype != null ? archetype : RepositoryArchetype.SERVICE;
     repo.project = project;
     repositoryRepository.persist(repo);
 
-    // Give the repository a project-scoped addressable name (its url basename) so the git host can
-    // serve it as a sibling under /git/<projectId>/<name> — this is what lets committed relative
-    // submodule urls resolve natively, and what its own workspace container clones itself under.
-    // requireCreatableId above already proved the name free, so neither branch can fall back to a
+    // Give the repository its project-scoped addressable name so the git host can serve it as a
+    // sibling under /git/<projectId>/<name> — this is what lets committed relative submodule urls
+    // resolve natively, and what its own workspace container clones itself under. The alias is the
+    // only resolution path there is, so it is registered in this same transaction as the row.
+    // requireCreatableName above already proved the name free, so neither branch can fall back to a
     // disambiguated alias here.
     if (selfName != null) {
       registerWrapperName(repo, selfName);
     } else {
-      repositoryNameRepository.registerSelfName(repo);
+      repositoryNameRepository.registerSelfName(repo, name);
     }
 
     RepoMirror mirror = gitMirrors.of(repo.id);
@@ -322,38 +328,29 @@ public class RepositoryService {
   }
 
   /**
-   * Asserts {@code name} can become a new repository row's <b>id</b> and returns it.
+   * Asserts {@code name} can become a new repository's <b>addressable name</b> within {@code
+   * project}, and returns it.
    *
-   * <p>A repository's id is its addressable name — always. The git host serves the repository under
-   * that path segment, the mirror directory carries it, qits-ci's runs repeat it as {@code repoId}
-   * and qits-cd derives the image name {@code qits/<repoId>:<sha>} from it. So the id must fit
-   * {@link #ADOPTABLE_ID} (it is that host route's segment), and a name that is invalid or already
-   * taken is a hard failure: silently minting a fallback id would create a repository nothing
-   * downstream can refer to, which is exactly the bug this rule removed. There are no plausible
-   * name conflicts within a project — a submodule that occurs twice is the same repository twice —
-   * so a collision is a real error worth stopping on, never something to route around.
+   * <p>Two questions, and only two. <b>Shape:</b> the name is the git host's name-addressed route
+   * segment ({@code /git/<projectId>/<name>}), the segment a relative submodule url resolves to and
+   * the image name a pipeline pushes, so it must fit {@link #ADOPTABLE_ID}. <b>Availability:</b> it
+   * must be free <em>in this project</em> — the alias table's {@code (projectId, name)} key is the
+   * constraint, and names are deliberately not unique across projects. There are no plausible name
+   * conflicts within a project — a submodule that occurs twice is the same repository twice — so a
+   * collision here is a real error worth stopping on, never something to route around.
+   *
+   * <p>The row's id is <b>not</b> derived from this. It is a minted UUID, opaque and internal, so
+   * there is no id/name collision left to check for: that global collision was the defect the
+   * project-scoped alias removed.
    */
-  private String requireCreatableId(Project project, String name) {
+  private String requireCreatableName(Project project, String name) {
     if (name == null || !ADOPTABLE_ID.matcher(name).matches()) {
       throw new BadRequestException(
           "Invalid repository name '"
               + name
-              + "': the name becomes the repository's id — the git host's path segment, the CI"
-              + " run's repoId and the deployed image's name — so it must be 1-64 characters of"
-              + " letters, digits and inner dashes.");
+              + "': the name is the git host's name-addressed path segment and the deployed image's"
+              + " name, so it must be 1-64 characters of letters, digits and inner dashes.");
     }
-    repositoryRepository
-        .findByIdOptional(name)
-        .ifPresent(
-            owner -> {
-              throw new BadRequestException(
-                  "The name '"
-                      + name
-                      + "' is already taken: a repository with that id exists"
-                      + (owner.project != null ? " in project " + owner.project.id : "")
-                      + ". A repository's id is its addressable name and there is no fallback id,"
-                      + " so the name must be free.");
-            });
     repositoryNameRepository
         .findRepositoryByProjectAndName(project.id, name)
         .ifPresent(
@@ -363,8 +360,8 @@ public class RepositoryService {
                       + name
                       + "' already addresses repository "
                       + owner.id
-                      + " in this project. A repository's id is its addressable name and there is"
-                      + " no fallback id, so the name must be free.");
+                      + " in this project. A name addresses exactly one repository per project, so"
+                      + " it must be free.");
             });
     return name;
   }
@@ -377,10 +374,10 @@ public class RepositoryService {
    * <p>{@code url} stays null: this repository <em>is</em> hosted here, and the row's url names a
    * backup remote at some external forge, which a blank one does not have yet.
    *
-   * <p>The id and the alias are {@code name} <b>exactly</b>, never a fallback: the wrapper records
-   * {@code url = ../<name>.git}, and a repository served under a different name is a submodule that
-   * resolves nowhere. A taken or invalid name is a hard failure instead — see {@link
-   * #requireCreatableId}.
+   * <p>The alias is {@code name} <b>exactly</b>, never a fallback: the wrapper records {@code url =
+   * ../<name>.git}, and a repository served under a different name is a submodule that resolves
+   * nowhere. A taken or invalid name is a hard failure instead — see {@link #requireCreatableName}.
+   * The row's id is a minted UUID, which is also the id the git host stores it under.
    *
    * <p>Adding it to the wrapper is the caller's next step and deliberately not part of this
    * transaction — see {@code ProjectService.createRepository}.
@@ -395,8 +392,10 @@ public class RepositoryService {
               + " has no directory in the wrapper.");
     }
 
+    requireCreatableName(project, name);
+
     Repository repo = new Repository();
-    repo.id = requireCreatableId(project, name);
+    repo.id = UUID.randomUUID().toString();
     // The backup twin, derived the same way the reconcile derives every other row's: the wrapper's
     // own forge url folded with ../<name>.git. The forge repository very likely does not exist yet,
     // and that is accepted — the backup push fails loudly in a log line and harmlessly everywhere
@@ -686,13 +685,15 @@ public class RepositoryService {
    * <p>{@code url} stays null: a wrapper has no backup remote until one is attached ({@link
    * #attachBackupRemote}). Runs within the caller's transaction.
    *
-   * @param name the wrapper's project-scoped addressable name, {@code <slug>-<slug>} — also the
-   *     row's id, like every other creation path
+   * @param name the wrapper's project-scoped addressable name, {@code <slug>-<slug>} — registered
+   *     in the alias table, like every other creation path; the row's id is a minted UUID
    */
   @Transactional
   public Repository initWrapperOrigin(Project project, String name) {
+    requireCreatableName(project, name);
+
     Repository repo = new Repository();
-    repo.id = requireCreatableId(project, name);
+    repo.id = UUID.randomUUID().toString();
     repo.url = null;
     repo.archetype = RepositoryArchetype.PROJECT;
     repo.project = project;
@@ -736,7 +737,7 @@ public class RepositoryService {
    * accepting {@code qits-qits-a1b2c3d4} would destroy that invariant without any error, so a taken
    * name is a hard failure instead.
    *
-   * <p>On the creation paths {@link #requireCreatableId} has already proved the name free, so this
+   * <p>On the creation paths {@link #requireCreatableName} has already proved the name free, so this
    * check only bites on the promotion path ({@link #registerWrapperAlias}), where an existing row
    * gains the wrapper name without a new id being minted.
    */
@@ -759,15 +760,16 @@ public class RepositoryService {
   }
 
   /**
-   * The id shape every repository row carries — created or adopted, the id is the repository's
-   * addressable name. Identical to qits-githost's git-host route pattern, because the id
-   * <em>is</em> the segment that host serves and the directory name under the data dir — so a
-   * traversal-shaped id ({@code ..}, a slash, a leading dash) must not be registrable here either.
+   * The shape of a storage id and of an addressable name alike — identical to qits-githost's route
+   * pattern, because both are path segments that host serves: the id on the internal {@code
+   * /git/<id>} scheme, the name on the public {@code /git/<projectId>/<name>} one. A
+   * traversal-shaped value ({@code ..}, a slash, a leading dash) must not be registrable as either.
+   * A minted UUID matches it, which is what lets one pattern do both jobs.
    */
   private static final Pattern ADOPTABLE_ID =
       Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,63}");
 
-  /** Whether the git host already holds a repository for {@code repoId} — see {@link #adoptExistingOrigin}. */
+  /** Whether the git host already holds a repository under the storage id {@code repoId} — see {@link #adoptExistingOrigin}. */
   public boolean hasExistingOrigin(String repoId) {
     return repoId != null
         && ADOPTABLE_ID.matcher(repoId).matches()
@@ -776,7 +778,7 @@ public class RepositoryService {
 
   /**
    * Registers a repository that the git host <b>already serves</b> as a repository of {@code
-   * project}, keyed by the id the host holds it under.
+   * project}: the row takes the host's storage id, and {@code name} becomes its addressable name.
    *
    * <p>The third creation path, beside {@link #cloneOne} (mirror an upstream into a fresh local
    * mirror) and {@link #initWrapperOrigin} (initialize one locally): here the host already has the
@@ -784,42 +786,47 @@ public class RepositoryService {
    * bootstrap creates a bare for every deployable directly on it, so those repositories are real,
    * pushed to and building with no row here at all until adoption gives them one.
    *
-   * <p><b>{@code repoId} is the id the host serves it under, and that is the whole point.</b>
-   * Everything downstream keys on it: the git host hands it to qits-ci's intake, so {@code
-   * CiRun.repoId} carries it, and qits-cd's applications are seeded with it. A row keyed any other
-   * way would name a repository nothing in the platform's history refers to. Every creation path
-   * keys its row by addressable name for the same reason (see {@code requireCreatableId}); what
-   * sets adoption apart is that the name is dictated by what the host already serves rather than
-   * chosen by the caller. Hence {@link #ADOPTABLE_ID}.
+   * <p><b>The two arguments are two different coordinates, and conflating them was the defect this
+   * signature removes.</b> {@code repoId} is the <em>opaque storage key</em> — whatever the host
+   * already holds the bare under, and the only thing {@code /git/<id>} answers to; nothing above
+   * the projects↔githost seam ever displays it. {@code name} is the <em>public coordinate</em>:
+   * together with the project it is what CI runs, image names, clone urls and relative submodule
+   * urls speak, and it lives in {@code repository_name}. Both are path segments, so both must fit
+   * {@link #ADOPTABLE_ID}; a minted UUID does.
+   *
+   * <p><b>The alias is registered here, in this transaction.</b> The alias table is the only
+   * resolution path there is — a row without one is addressable by nothing — so adoption states the
+   * name rather than leaving {@link RepositoryNameResolver} to invent one later.
    *
    * <p>Nothing is cloned and no mirror is created. {@code url} declares which forge repository
    * backs this one (what a reader wants and what {@code RepositoryDto} carries) — it is a row
    * field, nothing more. Fetching from that forge into the platform's own already-built history
    * would risk rewinding refs the ci host has already built from, so an adopted repository gets no
-   * mirror, no pull, no push and no workspace: it exists here only so the row can be found by id.
+   * mirror, no pull, no push and no workspace: it exists here only so the row can be found.
    *
-   * <p>No name alias either. An alias is what makes {@code /git/<projectId>/<name>} resolve, and
-   * every existing caller reaches these repositories id-addressed at {@code /git/<id>}.
-   * Registering one eagerly would also have to disambiguate against a basename already taken in the
-   * same project, which would produce a name nobody asked for; {@link RepositoryNameResolver}
-   * registers one lazily and by the same rules if a workspace ever needs it.
-   *
-   * <p>Idempotent, and matched on the id rather than the url: a row already carrying {@code repoId}
-   * is returned untouched whatever its url, archetype or project. Re-running is the normal case —
-   * this is reconciled on every boot.
+   * <p>Idempotent, and matched on the storage id rather than the url: a row already carrying {@code
+   * repoId} is returned untouched whatever its url, archetype or project. Re-running is the normal
+   * case — this is reconciled on every boot.
    *
    * @throws NotFoundException if the git host does not hold {@code repoId}; adoption registers what
    *     is there and never conjures a repository the git host cannot serve
    */
   @Transactional
   public Repository adoptExistingOrigin(
-      Project project, String repoId, String url, RepositoryArchetype archetype) {
+      Project project, String repoId, String name, String url, RepositoryArchetype archetype) {
     if (repoId == null || !ADOPTABLE_ID.matcher(repoId).matches()) {
       throw new BadRequestException(
           "Invalid repository id '"
               + repoId
-              + "': an adopted repository is keyed by the id the git host serves it under, so the"
+              + "': an adopted repository takes the opaque id the git host stores it under, so the"
               + " id must be 1-64 characters of letters, digits and inner dashes.");
+    }
+    if (name == null || !ADOPTABLE_ID.matcher(name).matches()) {
+      throw new BadRequestException(
+          "Invalid repository name '"
+              + name
+              + "': the name is the git host's name-addressed path segment, so it must be 1-64"
+              + " characters of letters, digits and inner dashes.");
     }
     if (archetype == RepositoryArchetype.PROJECT) {
       throw new BadRequestException(
@@ -857,6 +864,9 @@ public class RepositoryService {
     // and a repository whose host-side default branch says otherwise should say so too.
     repo.mainBranch = hostRepo.defaultBranch();
     repositoryRepository.persist(repo);
+    // The alias is load-bearing, not a convenience: it is the only thing that makes
+    // /git/<projectId>/<name> resolve, and it commits with the row.
+    repositoryNameRepository.ensureAlias(project, name, repo);
     return repo;
   }
 
@@ -1980,14 +1990,11 @@ public class RepositoryService {
    * The repository a project addresses by {@code name} — the one resolution wrapper membership
    * honours, in one place so nothing can drift from it.
    *
-   * <p>Two steps, and the second is not a fallback for tidiness:
-   *
-   * <ol>
-   *   <li>the {@code (project, name)} alias row, which is what an ordinary repository owns;
-   *   <li>the name read as the repository's own <b>id</b>, within this project. Adopted platform
-   *       repositories are keyed by their directory name — the bootstrap created the origin before
-   *       any row existed — so the name <em>is</em> the id and there is no alias row to find.
-   * </ol>
+   * <p>One step, and deliberately only one: the {@code (project, name)} alias row. A repository's id
+   * is an opaque storage key now, so reading a name as an id would resolve nothing but a
+   * coincidence — and every creation path, adoption included, registers the alias in the same
+   * transaction as the row, so a repository without one is addressable by nothing and correctly
+   * answers empty here.
    *
    * <p>Both callers are name resolutions a person can compare: the wrapper block the UI reads
    * ({@link WrapperReconcileService#view}) and the git host's name-addressed scheme behind {@code
@@ -2009,15 +2016,7 @@ public class RepositoryService {
   public Optional<Repository> findByProjectAndName(String projectId, String name) {
     return DbRetry.call(
         "repository name resolution",
-        () ->
-            repositoryNameRepository
-                .findRepositoryByProjectAndName(projectId, name)
-                .or(
-                    () ->
-                        repositoryRepository
-                            .findByIdOptional(name)
-                            .filter(
-                                repo -> repo.project != null && repo.project.id.equals(projectId))));
+        () -> repositoryNameRepository.findRepositoryByProjectAndName(projectId, name));
   }
 
   // -----------------------------------------------------------------------------------------
@@ -2069,8 +2068,9 @@ public class RepositoryService {
     if (declared.isEmpty()) {
       return;
     }
+    // Names only. The row's id is an opaque storage key, so a wrapper entry can never be spelling
+    // it — every name this repository answers to is in the alias table.
     Set<String> mine = new HashSet<>(repositoryNameRepository.namesFor(repo));
-    mine.add(repo.id);
     for (WrapperGitmodules.Entry entry : declared) {
       if (mine.contains(entry.name()) || mine.contains(basenameOfPath(entry.path()))) {
         return;
@@ -2242,13 +2242,7 @@ public class RepositoryService {
     }
     List<String> names =
         QuarkusTransaction.requiringNew()
-            .call(
-                () -> {
-                  List<String> all =
-                      new ArrayList<>(repositoryNameRepository.namesFor(get(repo.id)));
-                  all.add(repo.id);
-                  return all;
-                });
+            .call(() -> repositoryNameRepository.namesFor(get(repo.id)));
     for (String name : names) {
       if (wrapperWriter.removeFromWrapper(wrapper, name).isPresent()) {
         return;

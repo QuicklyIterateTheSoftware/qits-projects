@@ -102,12 +102,11 @@ public class WrapperReconcileServiceTest {
         WrapperReconcileService.Outcome.CREATED, outcomes.get("submodule-shared").outcome());
     assertEquals(
         WrapperReconcileService.Outcome.CREATED, outcomes.get("submodule-grandchild").outcome());
-    assertEquals(
-        "submodule-shared",
-        byName(project.id, "submodule-shared").id,
-        "a created row's id is the .gitmodules entry name — the same id the adopt branch would"
-            + " have used, so the two branches converge and the deployer's image name stays sane");
-    assertEquals("submodule-grandchild", byName(project.id, "submodule-grandchild").id);
+    assertNotNull(
+        byName(project.id, "submodule-shared"),
+        "a created row is addressable by the .gitmodules entry name — the alias is what the two"
+            + " branches converge on, and the row's own id is an opaque minted key");
+    assertNotNull(byName(project.id, "submodule-grandchild"));
     assertEquals(
         RepositoryArchetype.LIBRARY,
         byName(project.id, "submodule-shared").archetype,

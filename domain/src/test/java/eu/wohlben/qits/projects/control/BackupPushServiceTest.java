@@ -171,7 +171,11 @@ public class BackupPushServiceTest {
         "+refs/heads/*:refs/heads/*");
     var adopted =
         repositoryService.adoptExistingOrigin(
-            project, "adopted-backup-target", twin.toString(), RepositoryArchetype.SERVICE);
+            project,
+            "adopted-backup-target",
+            "adopted-backup-target",
+            twin.toString(),
+            RepositoryArchetype.SERVICE);
     assertTrue(
         !Files.isDirectory(gitMirrors.of(adopted.id).gitDir()),
         "an adopted repository starts with no mirror at all");

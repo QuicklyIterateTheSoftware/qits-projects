@@ -232,9 +232,12 @@ public class WrapperReconcileService {
       return adjustExisting(project, existing, path, name, archetype, syncTarget);
     }
 
-    // The host already serves it — the platform's own repositories reach the host without ever
-    // passing through this service, and adoption is what gives one a row without disturbing the id
-    // every ci run and deployment already carries.
+    // The host already serves it under the entry name as its storage id — a host seeded before this
+    // service existed, where the two coordinates happen to coincide (a name is a valid opaque id).
+    // Adoption is what gives such a repository a row without disturbing the storage key its bare
+    // already lives under; it registers the entry name as the addressable alias in the same
+    // transaction. A host that stores UUIDs is reached the other way round: the bootstrap registers
+    // the rows itself, so the reconcile finds them by alias in match() and never gets here.
     if (repositoryService.hasExistingOrigin(name)) {
       Repository adopted =
           QuarkusTransaction.requiringNew()
@@ -245,7 +248,7 @@ public class WrapperReconcileService {
                     // is the same one every other row's target comes from.
                     Repository repo =
                         repositoryService.adoptExistingOrigin(
-                            project, name, syncTarget.url(), archetype);
+                            project, name, name, syncTarget.url(), archetype);
                     repositoryNameRepository.ensureAlias(project, name, repo);
                     return repo;
                   });
@@ -275,9 +278,9 @@ public class WrapperReconcileService {
         QuarkusTransaction.requiringNew()
             .call(
                 () -> {
-                  // The entry name is the row's id: it is what the git host serves the repository
-                  // as, what CiRun.repoId will carry and what the deployer's image name repeats —
-                  // never the url basename, which an entry is free to differ from.
+                  // The entry name is the row's addressable name: it is what the git host serves
+                  // the repository as and what the deployer's image name repeats — never the url
+                  // basename, which an entry is free to differ from. The row's id is minted.
                   Repository repo =
                       repositoryService.cloneRepository(backend.get(), archetype, project, name);
                   repositoryNameRepository.ensureAlias(project, name, repo);
@@ -288,19 +291,19 @@ public class WrapperReconcileService {
   }
 
   /**
-   * The row this entry is about: by the name it is addressable under first, then by that name as an
-   * id (an adopted platform repository is keyed by its directory name), then by the url the entry
-   * resolves to.
+   * The row this entry is about: by the name it is addressable under first, then by the url the
+   * entry resolves to.
+   *
+   * <p>There is no third arm reading the name as a repository id. An id is an opaque storage key
+   * now, so a name matching one would be a coincidence rather than a resolution — and the alias
+   * table is written by every creation path, adoption included, so an entry with a row always has
+   * an alias to be found by.
    */
   private Repository match(Project project, WrapperGitmodules.Entry entry, String name) {
     Repository byName =
         repositoryNameRepository.findRepositoryByProjectAndName(project.id, name).orElse(null);
     if (byName != null) {
       return byName;
-    }
-    Repository byId = repositoryRepository.findByIdOptional(name).orElse(null);
-    if (byId != null && byId.project != null && project.id.equals(byId.project.id)) {
-      return byId;
     }
     return resolveBackendUrl(project, entry)
         .flatMap(url -> repositoryRepository.findByUrlInProject(url, project.id))

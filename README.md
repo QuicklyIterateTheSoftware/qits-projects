@@ -163,12 +163,13 @@ with its archetype spelled out beside it. That list is gone. The superproject's 
 that list, it is committed where the repositories live, and a repository joins qits by being added
 to the wrapper rather than to a Java file that has to be deployed to take effect.
 
-Adoption is still how the platform's own repositories get their rows, and still keyed by the
-directory name: they reach the git host without passing through this service — the bootstrap runs
-`git init --bare -b main /repos/qits-<name>/origin` directly — and then accumulate pushes, ci runs
-and deployments while no `Repository` row names them. Every one of those facts is keyed on that
-directory name (`CiRun.repoId` carries it; so do qits-cd's applications), so adoption takes the id
-rather than minting one: a UUID row would be attached to nothing.
+Adoption is still how the platform's own repositories get their rows, and it takes **two
+coordinates**: the storage id the git host already holds the bare under, and the addressable name.
+Those repositories reach the git host without passing through this service — the bootstrap creates
+the bare and records its id — and then accumulate pushes, ci runs and deployments while no
+`Repository` row names them. The row therefore keeps the host's id rather than minting a new one (a
+fresh id would be attached to nothing), and registers the name in `repository_name`, which is the
+only thing that resolves `/git/<projectId>/<name>`.
 `RepositoryService.adoptExistingOrigin` is the seam, and its javadoc carries what it deliberately
 does not do — no clone, no `origin` remote (so pull and push are not wired for an adopted
 repository), no workspace. A wrapper entry with no origin on this host and no reachable backend is

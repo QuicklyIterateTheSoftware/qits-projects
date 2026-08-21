@@ -489,8 +489,8 @@ public class ProjectService {
 
     // The name the wrapper records has to be the name the git host serves this repository under —
     // that is the whole contract of a relative submodule url. A taken name fails the create
-    // outright (the id is the name now, with no fallback), so the read-back cannot differ from the
-    // request; it stays because the alias table is the single source of that name.
+    // outright (there is no fallback name), so the read-back cannot differ from the request; it
+    // stays because the alias table is the single source of that name.
     String memberName =
         repositoryNameRepository
             .nameFor(repo)

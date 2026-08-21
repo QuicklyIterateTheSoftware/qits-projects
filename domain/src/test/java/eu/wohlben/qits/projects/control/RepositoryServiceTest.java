@@ -2,6 +2,7 @@ package eu.wohlben.qits.projects.control;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,6 +11,7 @@ import eu.wohlben.qits.projects.error.InternalServerErrorException;
 import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.control.ProjectService;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
+import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
 import eu.wohlben.qits.projects.testsupport.RecordingWorkspaceLifecycle;
 import io.quarkus.test.junit.QuarkusTest;
@@ -22,6 +24,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Comparator;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 @QuarkusTest
@@ -45,29 +48,42 @@ public class RepositoryServiceTest {
 
   @Inject GitExecutor git;
 
+  @Inject RepositoryNameRepository repositoryNameRepository;
+
+  /**
+   * The two coordinates a creation path writes: an opaque minted id on the row (which is also the
+   * storage id qits-githost holds the bare under) and the url basename as the addressable name,
+   * resolvable through the alias table and nowhere else.
+   */
   @Test
   public void testClone() throws Exception {
     String fixtureUrl = GitFixtures.path("testing-repo.git");
     var project = projectService.create("Clone Project", null);
     var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
 
+    assertNotEquals("testing-repo", repo.id, "the id is opaque, never the addressable name");
+    assertEquals(
+        repo.id, UUID.fromString(repo.id).toString(), "the id is a minted UUID");
     assertEquals(
         "testing-repo",
+        repositoryNameRepository.nameFor(repo).orElseThrow(),
+        "the url basename is registered as the addressable name, in the same transaction");
+    assertEquals(
         repo.id,
-        "the id is the url basename — the addressable name IS the id, on every creation path");
+        repositoryService.findByProjectAndName(project.id, "testing-repo").orElseThrow().id,
+        "and the alias table is what resolves it");
   }
 
   /**
-   * The id is the addressable name, always, so a name that is already a row's id cannot be created
-   * again — not even in another project, since the git host serves repositories id-addressed with
-   * no project segment. No silent fallback: a fallback id is the exact shape of the UUID bug this
-   * rule removed.
+   * A name addresses exactly one repository <b>per project</b>. Twice in the same project is a real
+   * collision and fails; the same name in another project is not a collision at all — the global
+   * one was the defect the project-scoped alias removed.
    */
   @Test
-  public void aTakenNameFailsTheCreateInsteadOfMintingAFallbackId() throws Exception {
+  public void aTakenNameFailsTheCreateButOnlyWithinItsProject() throws Exception {
     String fixtureUrl = GitFixtures.path("testing-repo.git");
     var project = projectService.create("Collision Project", null);
-    repositoryService.cloneRepository(fixtureUrl, null, project);
+    var first = repositoryService.cloneRepository(fixtureUrl, null, project);
 
     var sameProject =
         assertThrows(
@@ -76,11 +92,19 @@ public class RepositoryServiceTest {
     assertTrue(sameProject.getMessage().contains("testing-repo"), sameProject.getMessage());
 
     var otherProject = projectService.create("Other Collision Project", null);
-    var acrossProjects =
-        assertThrows(
-            BadRequestException.class,
-            () -> repositoryService.cloneRepository(fixtureUrl, null, otherProject));
-    assertTrue(acrossProjects.getMessage().contains("testing-repo"), acrossProjects.getMessage());
+    var second = repositoryService.cloneRepository(fixtureUrl, null, otherProject);
+
+    assertNotEquals(first.id, second.id, "two rows, two minted ids");
+    assertEquals(
+        "testing-repo",
+        repositoryNameRepository.nameFor(second).orElseThrow(),
+        "and both answer to the same name, each within its own project");
+    assertEquals(
+        second.id,
+        repositoryService.findByProjectAndName(otherProject.id, "testing-repo").orElseThrow().id);
+    assertEquals(
+        first.id,
+        repositoryService.findByProjectAndName(project.id, "testing-repo").orElseThrow().id);
   }
 
   @Test
@@ -147,28 +171,39 @@ public class RepositoryServiceTest {
 
   /**
    * Stands in for the platform's own git host already holding a repository this service did not
-   * create, keyed by an id chosen by hand rather than a fresh UUID — exactly what the bootstrap's
-   * {@code git init --bare -b main} leaves for the platform's own repositories.
+   * create, under whatever storage id the bootstrap's {@code git init --bare -b main} put it at.
    */
   private void seedGitHostOrigin(String repoId) {
     gitHostRepositories.ensure(repoId, "main");
   }
 
+  /**
+   * Adoption takes the two coordinates separately: the row keeps the <b>storage id</b> the host
+   * already serves the bare under (so nothing that already refers to that bare is disturbed), and
+   * the <b>name</b> becomes its alias — which is the only thing that resolves it.
+   */
   @Test
-  public void adoptingAnExistingOriginKeysTheRowOnTheDirectoryName() throws Exception {
-    // The whole point: CiRun.repoId, cd's applications and the git host route all carry the
-    // directory name, so a row that attributes any of them must carry it as its id.
-    seedGitHostOrigin("qits-adopt-me");
+  public void adoptingAnExistingOriginKeepsTheStorageIdAndRegistersTheName() throws Exception {
+    String storageId = UUID.randomUUID().toString();
+    seedGitHostOrigin(storageId);
     var project = projectService.create("Adoption Project", null);
 
     var repo =
         repositoryService.adoptExistingOrigin(
             project,
+            storageId,
             "qits-adopt-me",
             "https://github.com/QuicklyIterateTheSoftware/qits-adopt-me.git",
             RepositoryArchetype.SERVICE);
 
-    assertEquals("qits-adopt-me", repo.id, "the id is the directory name, not a fresh UUID");
+    assertEquals(storageId, repo.id, "the row takes the id the host stores it under");
+    assertEquals(
+        "qits-adopt-me",
+        repositoryNameRepository.nameFor(repo).orElseThrow(),
+        "the addressable name is registered in the same transaction as the row");
+    assertEquals(
+        repo.id,
+        repositoryService.findByProjectAndName(project.id, "qits-adopt-me").orElseThrow().id);
     assertEquals(
         "https://github.com/QuicklyIterateTheSoftware/qits-adopt-me.git",
         repo.url,
@@ -178,13 +213,39 @@ public class RepositoryServiceTest {
     assertEquals(project.id, repo.project.id);
   }
 
+  /**
+   * A host seeded before this service existed stores a bare under its name. That is still a valid
+   * opaque id, so adoption takes it as one — the two arguments simply coincide.
+   */
+  @Test
+  public void aNameKeyedHostIsAdoptedWithTheNameAsItsStorageId() throws Exception {
+    seedGitHostOrigin("qits-legacy-keyed");
+    var project = projectService.create("Legacy Keyed Project", null);
+
+    var repo =
+        repositoryService.adoptExistingOrigin(
+            project,
+            "qits-legacy-keyed",
+            "qits-legacy-keyed",
+            "https://example.com/qits-legacy-keyed.git",
+            RepositoryArchetype.SERVICE);
+
+    assertEquals("qits-legacy-keyed", repo.id);
+    assertEquals(
+        repo.id,
+        repositoryService.findByProjectAndName(project.id, "qits-legacy-keyed").orElseThrow().id,
+        "and it resolves through the alias table like every other row, not by reading the id");
+  }
+
   @Test
   public void adoptingIsIdempotentAndNeverModifiesTheRowItFinds() throws Exception {
-    seedGitHostOrigin("qits-adopt-twice");
+    String storageId = UUID.randomUUID().toString();
+    seedGitHostOrigin(storageId);
     var project = projectService.create("Adoption Idempotence Project", null);
     var first =
         repositoryService.adoptExistingOrigin(
             project,
+            storageId,
             "qits-adopt-twice",
             "https://example.com/first.git",
             RepositoryArchetype.LIBRARY);
@@ -192,14 +253,18 @@ public class RepositoryServiceTest {
     var second =
         repositoryService.adoptExistingOrigin(
             project,
-            "qits-adopt-twice",
+            storageId,
+            "qits-adopt-twice-again",
             "https://example.com/second.git",
             RepositoryArchetype.FRONTEND);
 
-    assertEquals(first.id, second.id, "the same row, matched by id");
+    assertEquals(first.id, second.id, "the same row, matched by the storage id");
     assertEquals(
         "https://example.com/first.git", second.url, "a re-run rewrites nothing it did not create");
     assertEquals(RepositoryArchetype.LIBRARY, second.archetype);
+    assertTrue(
+        repositoryService.findByProjectAndName(project.id, "qits-adopt-twice-again").isEmpty(),
+        "and it registers no second alias either");
   }
 
   @Test
@@ -212,19 +277,30 @@ public class RepositoryServiceTest {
         NotFoundException.class,
         () ->
             repositoryService.adoptExistingOrigin(
-                project, "qits-never-seeded", "https://example.com/x.git", null));
+                project,
+                "qits-never-seeded",
+                "qits-never-seeded",
+                "https://example.com/x.git",
+                null));
 
-    // The id becomes a git-host route segment.
+    // Both coordinates are git-host route segments.
     assertThrows(
         BadRequestException.class,
         () ->
             repositoryService.adoptExistingOrigin(
-                project, "../escape", "https://example.com/x.git", null));
+                project, "../escape", "escape", "https://example.com/x.git", null));
     assertThrows(
         BadRequestException.class,
         () ->
             repositoryService.adoptExistingOrigin(
-                project, "-flag", "https://example.com/x.git", null));
+                project, "-flag", "flag", "https://example.com/x.git", null));
+    String served = UUID.randomUUID().toString();
+    seedGitHostOrigin(served);
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            repositoryService.adoptExistingOrigin(
+                project, served, "../escape", "https://example.com/x.git", null));
 
     // The wrapper archetype has exactly one seam, and this is not it.
     seedGitHostOrigin("qits-adopt-wrapper");
@@ -233,6 +309,7 @@ public class RepositoryServiceTest {
         () ->
             repositoryService.adoptExistingOrigin(
                 project,
+                "qits-adopt-wrapper",
                 "qits-adopt-wrapper",
                 "https://example.com/x.git",
                 RepositoryArchetype.PROJECT));

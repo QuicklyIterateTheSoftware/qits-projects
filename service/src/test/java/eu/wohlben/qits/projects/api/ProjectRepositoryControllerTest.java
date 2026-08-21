@@ -95,7 +95,7 @@ public class ProjectRepositoryControllerTest {
     postRepository(projectId, null, "taken", RepositoryArchetype.LIBRARY)
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode())
-        .body("message", containsString("already taken"));
+        .body("message", containsString("already addresses"));
     postRepository(projectId, null, "has/slash", RepositoryArchetype.LIBRARY)
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
@@ -394,8 +394,8 @@ public class ProjectRepositoryControllerTest {
             .statusCode(Response.Status.OK.getStatusCode())
             .extract()
             .path("repository.id");
-    org.junit.jupiter.api.Assertions.assertEquals(
-        "checkout", repoId, "a blank repository's id is its name");
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        "checkout", repoId, "the id answered is the opaque storage key, never the name");
 
     resolveByName(projectId, "checkout")
         .then()
@@ -410,9 +410,8 @@ public class ProjectRepositoryControllerTest {
 
   /**
    * The wrapper is a {@code repository_name} row like any other, and the route has to answer for
-   * it: a container clones the project name-addressed as {@code <slug>-<slug>}. Its id IS that
-   * name — the addressable name is the id on every creation path — and the route answers ids, so
-   * the two coincide here by design.
+   * it: a container clones the project name-addressed as {@code <slug>-<slug>}. The id it answers
+   * with is the opaque storage key, which is exactly what the caller needs to reach the bare.
    */
   @Test
   public void theWrapperResolvesByItsConventionalName() {
@@ -436,17 +435,17 @@ public class ProjectRepositoryControllerTest {
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repositoryId", equalTo(wrapperId));
-    org.junit.jupiter.api.Assertions.assertEquals(
-        slug + "-" + slug, wrapperId, "the wrapper's id is its addressable name, <slug>-<slug>");
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        slug + "-" + slug, wrapperId, "the wrapper's id is opaque too — the name is the alias");
   }
 
   /**
-   * The second step of the resolution: an adopted platform repository is keyed by its directory
-   * name, so the name <em>is</em> the id and no alias row was ever written. Wrapper membership
-   * honours that, and so must this.
+   * The alias table is the <b>only</b> resolution. A row's own id is an opaque storage key, so
+   * asking for it as a name resolves nothing — the arm that read a name as an id is gone, and with
+   * it the global collision it created.
    */
   @Test
-  public void aNameThatIsTheRepositoryIdResolvesToo() {
+  public void anIdIsNotAName() {
     String projectId = createProject("Name Resolution By Id");
     String repoId =
         postRepository(projectId, null, "byid", RepositoryArchetype.LIBRARY)
@@ -455,10 +454,7 @@ public class ProjectRepositoryControllerTest {
             .extract()
             .path("repository.id");
 
-    resolveByName(projectId, repoId)
-        .then()
-        .statusCode(Response.Status.OK.getStatusCode())
-        .body("repositoryId", equalTo(repoId));
+    resolveByName(projectId, repoId).then().statusCode(Response.Status.NOT_FOUND.getStatusCode());
   }
 
   /** An unknown name and an unknown project answer the same 404 — the caller cannot tell them apart. */

@@ -72,9 +72,9 @@ public class RepositoryMcpToolsTest {
   }
 
   /**
-   * A second repository needs its own name: an id is the addressable name now, so cloning the one
-   * fixture twice would collide. A blank repository on the platform's own host is the cheap way to
-   * a distinctly named sibling.
+   * A second repository needs its own name: a name addresses one repository per project, so cloning
+   * the one fixture twice into a project would collide. A blank repository on the platform's own
+   * host is the cheap way to a distinctly named sibling.
    */
   private String createBlankRepository(String projectId, String name) {
     return authenticated()

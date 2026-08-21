@@ -290,9 +290,9 @@ public class ProjectController {
    */
   public static record ResolveRepositoryNameRequest() {
     /**
-     * @param repositoryId the repository the name addresses. The id is the repository's own
-     *     addressable name, which for an alias can differ from the name asked about — that is why
-     *     this answers an id rather than echoing the name back.
+     * @param repositoryId the repository the name addresses — the opaque storage key this service
+     *     and qits-githost share, which is what the caller needs to reach the bare and is never a
+     *     name.
      */
     public record Response(String repositoryId) {}
   }
@@ -320,9 +320,8 @@ public class ProjectController {
       description =
           "The name is the segment a committed relative submodule url (../<name>.git) resolves to,"
               + " with any .git suffix stripped. Resolution is exactly what wrapper membership"
-              + " honours: the (project, name) alias, then the name read as the repository's own id"
-              + " — an adopted platform repository is keyed by its directory name and owns no alias"
-              + " row.")
+              + " honours: the (project, name) alias, and nothing else. The id answered is the"
+              + " opaque storage key this service and qits-githost share, not a name.")
   @APIResponse(
       responseCode = "200",
       description = "The name resolves",

@@ -100,16 +100,15 @@ public class RepositoryNameRepository implements PanacheRepositoryBase<Repositor
    * resolution from this repo-as-superproject stays natural); if that basename is already owned by
    * a <em>different</em> repository in the project, falls back to a deterministic {@code
    * <basename>-<id-prefix>} that is effectively unique. The creation paths assert the name free
-   * before persisting (the id is the name, with no fallback), so from them the disambiguation can
-   * never fire; it remains only for the lazy registration of an adopted repository ({@code
-   * RepositoryNameResolver}), whose id predates this service.
+   * before persisting and register it themselves, so from them the disambiguation can never fire;
+   * this one-argument form remains only as {@code RepositoryNameResolver}'s last resort for a row
+   * that somehow reached the table without an alias.
    */
   public String registerSelfName(Repository repository) {
     String base = basename(repository.url);
-    // A url-less repository (a greenfield wrapper) basenames to "", which is not addressable. Such
-    // a
-    // repository should come through registerSelfName(repository, name); this only keeps a blank
-    // alias from ever reaching the unique (project, name) index.
+    // A url-less repository basenames to "", which is not addressable. Such a repository should
+    // come through registerSelfName(repository, name); falling back to the (opaque) id only keeps a
+    // blank alias from ever reaching the unique (project, name) index.
     return registerSelfName(repository, base.isBlank() ? repository.id : base);
   }
 

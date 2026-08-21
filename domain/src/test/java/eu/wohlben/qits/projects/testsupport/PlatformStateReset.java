@@ -23,12 +23,11 @@ import org.eclipse.microprofile.config.ConfigProvider;
  * A clean platform state before <b>every test method</b>: empty projects tables, an empty mirror
  * root and an empty fake git host.
  *
- * <p>A repository's id is its addressable name now — deterministic, never a fresh UUID — so two
- * tests that clone the same fixture ({@code testing-repo.git}, {@code qits-qits.git}, …) mint the
- * same id, and the second one fails the name-collision check that guards the invariant. The rows
- * and bares a test leaves behind are exactly such collisions waiting for the next method, which is
- * why {@link RepoDataDirReset}'s per-class wipe is no longer enough. Tests stay as they are; the
- * slate is what resets.
+ * <p>Row ids are minted UUIDs again, so two tests cloning the same fixture no longer collide on the
+ * id — but everything else a test leaves behind still carries into the next method: a project slug
+ * (unique service-wide), a bare on the fake git host under a hand-chosen storage id, a mirror
+ * directory. {@link RepoDataDirReset}'s per-class wipe is not enough for any of those, which is why
+ * this is per-method. Tests stay as they are; the slate is what resets.
  *
  * <p>A Quarkus callback rather than a JUnit extension because the reset needs the running
  * application: the datasource bean for the truncate, and the live config for the mirror root (a

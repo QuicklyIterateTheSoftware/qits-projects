@@ -384,6 +384,17 @@ components:
       - IMAGE
       - SERVICE_TEMPLATE
       - FORK
+    RepositoryCoordinatesDto:
+      type: object
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        name:
+          type: string
+        mainBranch:
+          type: string
     RepositoryDto:
       type: object
       properties:
@@ -565,13 +576,15 @@ components:
     Response32:
       type: object
       properties:
-        repository:
-          $ref: "#/components/schemas/RepositoryDto"
+        repositories:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepositoryCoordinatesDto"
     Response33:
       type: object
       properties:
-        success:
-          type: boolean
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
     Response34:
       type: object
       properties:
@@ -580,18 +593,23 @@ components:
     Response35:
       type: object
       properties:
+        success:
+          type: boolean
+    Response36:
+      type: object
+      properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response36:
+    Response37:
       type: object
       properties:
         repositoryId:
           type: string
         scheduled:
           type: boolean
-    Response37:
+    Response38:
       type: object
       properties:
         technicalProcessId:
@@ -1568,6 +1586,29 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+  /projects/api/repositories:
+    get:
+      summary: Every repository with its public coordinates
+      description: "The machine-readable catalogue: row id, project, addressable name\
+        \ and main branch, sorted by project then name. A repository that owns no\
+        \ name is listed with a null name."
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response32"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
   /projects/api/repositories/{repoId}:
     get:
       parameters:
@@ -1582,7 +1623,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response32"
+                $ref: "#/components/schemas/Response33"
         "401":
           description: Not Authorized
         "403":
@@ -1607,7 +1648,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response34"
+                $ref: "#/components/schemas/Response35"
         "401":
           description: Not Authorized
         "403":
@@ -1632,7 +1673,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response37"
+                $ref: "#/components/schemas/Response38"
         "401":
           description: Not Authorized
         "403":
@@ -1661,7 +1702,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response36"
+                $ref: "#/components/schemas/Response37"
         "404":
           description: No such repository
         "401":
@@ -1693,7 +1734,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response33"
+                $ref: "#/components/schemas/Response34"
         "401":
           description: Not Authorized
         "403":
@@ -1717,7 +1758,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response35"
+                $ref: "#/components/schemas/Response36"
         "401":
           description: Not Authorized
         "403":

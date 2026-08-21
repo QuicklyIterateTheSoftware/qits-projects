@@ -7,6 +7,7 @@ import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.entity.BackupOutcome;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.dto.BranchDto;
+import eu.wohlben.qits.projects.dto.RepositoryCoordinatesDto;
 import eu.wohlben.qits.projects.dto.SyncStatusDto;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.entity.RepositoryArchetype;
@@ -1984,6 +1985,48 @@ public class RepositoryService {
     return repositoryRepository
         .findByIdOptional(repoId)
         .orElseThrow(() -> new NotFoundException("Repository not found: " + repoId));
+  }
+
+  /**
+   * Every repository this service holds, with the coordinates a machine addresses one by — the flat
+   * catalogue behind {@code GET /projects/api/repositories}.
+   *
+   * <p><b>Who asks.</b> qits-ci's trigger engine, deciding which repositories a pipeline could run
+   * for. It used to enumerate the git host's own {@code GET /git}, which answers storage ids and
+   * nothing else; a listing that carries the public identity is what lets that route be locked to
+   * this service alone.
+   *
+   * <p><b>A row with no alias is listed with a null name, never dropped.</b> An unnamed repository
+   * is a fact about this service's state and the caller is the one that decides to skip it; omitting
+   * it here would make the catalogue disagree with the database and say nothing about why.
+   *
+   * <p><b>Held through a postgres cutover, not failed</b>, for the same reason {@link
+   * #findByProjectAndName} is: an empty or short list reads as an answer — "there is nothing to
+   * build" — rather than as an outage, and nothing downstream asks again. {@link DbRetry} retries
+   * connection-class failures only; anything else is rethrown at once and becomes a 5xx, which is
+   * the honest answer. The wrap sits outside any transaction (this method opens none).
+   *
+   * <p>Sorted by project then name so two reads of an unchanged database are byte-identical; a null
+   * name sorts last within its project.
+   */
+  public List<RepositoryCoordinatesDto> listCoordinates() {
+    return DbRetry.call(
+        "repository catalogue",
+        () ->
+            repositoryRepository.listAll().stream()
+                .map(
+                    repo ->
+                        new RepositoryCoordinatesDto(
+                            repo.id,
+                            repo.project.id,
+                            repositoryNameRepository.nameFor(repo).orElse(null),
+                            repo.mainBranch))
+                .sorted(
+                    Comparator.comparing(RepositoryCoordinatesDto::projectId)
+                        .thenComparing(
+                            RepositoryCoordinatesDto::name,
+                            Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList());
   }
 
   /**

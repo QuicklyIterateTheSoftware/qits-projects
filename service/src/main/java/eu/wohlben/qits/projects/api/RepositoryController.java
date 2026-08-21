@@ -8,6 +8,7 @@ import eu.wohlben.qits.projects.dto.BranchDto;
 import eu.wohlben.qits.projects.dto.CommitChangesDto;
 import eu.wohlben.qits.projects.dto.CommitFileDiffDto;
 import eu.wohlben.qits.projects.dto.CommitLogDto;
+import eu.wohlben.qits.projects.dto.RepositoryCoordinatesDto;
 import eu.wohlben.qits.projects.dto.RepositoryDto;
 import eu.wohlben.qits.projects.dto.SyncStatusDto;
 import eu.wohlben.qits.projects.mapper.RepositoryMapper;
@@ -49,6 +50,42 @@ public class RepositoryController {
 
   /** SEAM: the technical-process framework is an optional port here (see the interface). */
   @Inject Instance<TechnicalProcessRegistry> technicalProcesses;
+
+  public static record ListRepositoriesRequest() {
+    /**
+     * @param repositories every repository this service holds, sorted by project then name. A row
+     *     with no registered name is present with a null {@code name} — see {@link
+     *     RepositoryCoordinatesDto}.
+     */
+    public record Response(List<RepositoryCoordinatesDto> repositories) {}
+  }
+
+  /**
+   * The flat catalogue: every repository with the coordinates that address it publicly.
+   *
+   * <p><b>Two callers, two roles</b>, the same pair the by-id read below serves. qits-ci's trigger
+   * engine reads it with its machine identity — it is the replacement for walking the git host's
+   * internal {@code GET /git}, which answers opaque storage ids — and a browser session reads it
+   * too. A method-level {@code @RolesAllowed} <b>replaces</b> the class-level {@code qits:admin}, so
+   * naming only {@code qits:system} here would be a 403 for every browser.
+   *
+   * <p>This is a collection GET on the controller's own path; {@code /repositories/{repoId}} below
+   * is a different template and neither shadows the other.
+   *
+   * <p>A read that fails is a 5xx and never an empty list: "no repositories" is an answer a caller
+   * acts on. {@code RepositoryService#listCoordinates} holds it through a postgres cutover for the
+   * same reason.
+   */
+  @GET
+  @jakarta.annotation.security.RolesAllowed({"qits:admin", "qits:system"})
+  @Operation(
+      summary = "Every repository with its public coordinates",
+      description =
+          "The machine-readable catalogue: row id, project, addressable name and main branch, sorted"
+              + " by project then name. A repository that owns no name is listed with a null name.")
+  public ListRepositoriesRequest.Response list() {
+    return new ListRepositoriesRequest.Response(repositoryService.listCoordinates());
+  }
 
   public static record GetRepositoryRequest() {
     public record Response(RepositoryDto repository) {}

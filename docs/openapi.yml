@@ -1581,9 +1581,11 @@ paths:
       summary: Resolve a project-scoped repository name to its id
       description: "The name is the segment a committed relative submodule url (../<name>.git)\
         \ resolves to, with any .git suffix stripped. Resolution is exactly what wrapper\
-        \ membership honours: the (project, name) alias, and nothing else. The id\
-        \ answered is the opaque storage key this service and qits-githost share,\
-        \ not a name."
+        \ membership honours: the (project, name) alias, and nothing else. The projectId\
+        \ segment is the project's id OR its slug — the slug is the public spelling\
+        \ of a clone url (/git/qits/qits-ci) and the id is matched first, so both\
+        \ always resolve. The id answered is the opaque storage key this service and\
+        \ qits-githost share, not a name."
       parameters:
       - name: projectId
         in: path

@@ -440,6 +440,55 @@ public class ProjectRepositoryControllerTest {
   }
 
   /**
+   * <b>The project segment is the slug in public.</b> {@code /git/qits/qits-ci} is the clone url a
+   * person is given, qits-githost passes that segment through verbatim, and this is the route that
+   * has to make sense of it. The id is matched first and keeps working unchanged, so a machine that
+   * holds one never had to learn the slug — both address the same repository.
+   */
+  @Test
+  public void theProjectSegmentResolvesBySlugAsWellAsById() {
+    String slug = "name-res-by-slug";
+    String projectId =
+        given()
+            .contentType(ContentType.JSON)
+            .body(
+                new ProjectController.CreateProjectRequest(
+                    "Name Resolution By Slug", slug, null, null, ProjectRequests.DNS))
+            .when()
+            .post("/projects/api/projects")
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .path("project.id");
+    String repoId =
+        postRepository(projectId, null, "checkout", RepositoryArchetype.SERVICE)
+            .then()
+            .statusCode(Response.Status.OK.getStatusCode())
+            .extract()
+            .path("repository.id");
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        slug, projectId, "the id is a minted UUID — the two segments are genuinely different");
+
+    resolveByName(slug, "checkout")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositoryId", equalTo(repoId));
+    resolveByName(projectId, "checkout")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositoryId", equalTo(repoId));
+    // A committed ../checkout.git under the slug form folds to the same thing.
+    resolveByName(slug, "checkout.git")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositoryId", equalTo(repoId));
+    // A segment that is neither an id nor a slug is the same 404 an unknown name gets.
+    resolveByName("name-res-by-slug-typo", "checkout")
+        .then()
+        .statusCode(Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  /**
    * The alias table is the <b>only</b> resolution. A row's own id is an opaque storage key, so
    * asking for it as a name resolves nothing — the arm that read a name as an id is gone, and with
    * it the global collision it created.

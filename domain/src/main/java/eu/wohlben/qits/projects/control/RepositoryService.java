@@ -15,6 +15,7 @@ import eu.wohlben.qits.projects.gitmirror.GitMirrorException;
 import eu.wohlben.qits.projects.gitmirror.MergeOutcome;
 import eu.wohlben.qits.projects.gitmirror.PushOutcome;
 import eu.wohlben.qits.projects.gitmirror.RepoMirror;
+import eu.wohlben.qits.projects.persistence.ProjectRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import io.quarkus.narayana.jta.QuarkusTransaction;
@@ -88,6 +89,9 @@ public class RepositoryService {
   @Inject GitSubmoduleParser submoduleParser;
 
   @Inject RepositoryNameRepository repositoryNameRepository;
+
+  /** Turns the public clone url's project segment into a project id — see {@link #resolveProject}. */
+  @Inject ProjectRepository projectRepository;
 
   @Inject ProjectTemplate projectTemplate;
 
@@ -2033,16 +2037,24 @@ public class RepositoryService {
    * The repository a project addresses by {@code name} — the one resolution wrapper membership
    * honours, in one place so nothing can drift from it.
    *
-   * <p>One step, and deliberately only one: the {@code (project, name)} alias row. A repository's id
-   * is an opaque storage key now, so reading a name as an id would resolve nothing but a
-   * coincidence — and every creation path, adoption included, registers the alias in the same
-   * transaction as the row, so a repository without one is addressable by nothing and correctly
-   * answers empty here.
+   * <p>The name is resolved in one step and deliberately only one: the {@code (project, name)} alias
+   * row. A repository's id is an opaque storage key now, so reading a name as an id would resolve
+   * nothing but a coincidence — and every creation path, adoption included, registers the alias in
+   * the same transaction as the row, so a repository without one is addressable by nothing and
+   * correctly answers empty here.
+   *
+   * <p><b>The project half is a segment, not an id.</b> {@code /git/qits/qits-ci} is the public
+   * clone url, and the slug is its public spelling — so {@link #resolveProject} takes the segment by
+   * <b>id first, then by slug</b>. Both always work: a machine that holds the id keeps using it, a
+   * person reads and pastes the slug. Slugs are unique among live projects (V6), so the slug arm
+   * names at most one project; a segment that is one project's id <em>and</em> another's slug
+   * resolves to the first, and the second is unreachable under it.
    *
    * <p>Both callers are name resolutions a person can compare: the wrapper block the UI reads
    * ({@link WrapperReconcileService#view}) and the git host's name-addressed scheme behind {@code
    * GET /projects/api/projects/{projectId}/repositories/by-name/{repoName}}. One resolving a
-   * repository the other does not would show as drift that is not there.
+   * repository the other does not would show as drift that is not there. The wrapper block passes
+   * an id and is unaffected by the slug arm, which it never reaches.
    *
    * <p><b>Held through a postgres cutover, not failed.</b> This read is qits-githost's 404 by proxy:
    * the git host asks here for every name-addressed clone, fetch and push, and a connection lost
@@ -2053,13 +2065,41 @@ public class RepositoryService {
    * @Transactional}, and this method opens none): retrying inside an open one would re-run
    * statements on a connection already marked rollback-only. See db-patience-plan.md.
    *
+   * @param projectSegment the project's id or its slug — the first path segment of the public clone
+   *     url
    * @param name the addressable name, with no {@code .git} suffix — callers reading it off a url or
    *     a path segment normalize first
    */
-  public Optional<Repository> findByProjectAndName(String projectId, String name) {
+  public Optional<Repository> findByProjectAndName(String projectSegment, String name) {
     return DbRetry.call(
         "repository name resolution",
-        () -> repositoryNameRepository.findRepositoryByProjectAndName(projectId, name));
+        () ->
+            resolveProject(projectSegment)
+                .flatMap(
+                    projectId ->
+                        repositoryNameRepository.findRepositoryByProjectAndName(projectId, name)));
+  }
+
+  /**
+   * The project a public clone url's first segment names: <b>its id, or failing that its slug</b>.
+   *
+   * <p>Id first is what keeps every machine path valid — the id is always accepted, and a slug that
+   * happened to equal another project's id could otherwise take a caller to the wrong project. The
+   * slug arm is the public spelling and is unambiguous on its own: {@code Project.slug} is unique
+   * (V6) among live projects.
+   *
+   * <p>Two reads, both re-runnable, and both inside {@link #findByProjectAndName}'s {@link DbRetry}
+   * wrap on purpose: a connection lost while asking which project this is would otherwise answer
+   * "no such repository" for one that exists, which is the whole failure that wrap exists for.
+   */
+  private Optional<String> resolveProject(String projectSegment) {
+    if (projectSegment == null || projectSegment.isBlank()) {
+      return Optional.empty();
+    }
+    if (projectRepository.findByIdOptional(projectSegment).isPresent()) {
+      return Optional.of(projectSegment);
+    }
+    return projectRepository.findBySlug(projectSegment).map(project -> project.id);
   }
 
   // -----------------------------------------------------------------------------------------

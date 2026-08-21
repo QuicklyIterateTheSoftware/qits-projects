@@ -306,8 +306,19 @@ public class ProjectController {
 
   /**
    * Resolves a project-scoped repository name to its id — the read behind qits-githost's
-   * name-addressed git scheme {@code /git/<projectId>/<repoName>}, which it reaches
+   * name-addressed git scheme {@code /git/<project>/<repoName>}, which it reaches
    * through its optional {@code githost.RepositoryNameResolver} port.
+   *
+   * <p><b>The project segment is an id or a slug.</b> The git host passes the segment through
+   * verbatim, so this route is where the public spelling is decided — and the public spelling is the
+   * slug: {@code /git/qits/qits-ci} is what a person is given to clone. The id keeps working
+   * unchanged and is matched first, so nothing machine-addressed had to move. See {@code
+   * RepositoryService#findByProjectAndName} for the precedence and why it is that way round.
+   *
+   * <p><b>This route alone widened.</b> {@code GET /{projectId}/repositories} and {@code POST
+   * /{projectId}/repositories/adopt} stay id-only: neither is on the clone chain, both are called by
+   * a machine that already holds the project id (qits-workspaces, the projects SPA, the bootstrap),
+   * and a second spelling on a contract nobody spells by hand buys nothing.
    *
    * <p>This machine-facing lookup requires {@code qits:system}; network reachability alone does not
    * authorize it. The git host generates its client from {@code docs/openapi.yml}, so the one route
@@ -327,8 +338,11 @@ public class ProjectController {
       description =
           "The name is the segment a committed relative submodule url (../<name>.git) resolves to,"
               + " with any .git suffix stripped. Resolution is exactly what wrapper membership"
-              + " honours: the (project, name) alias, and nothing else. The id answered is the"
-              + " opaque storage key this service and qits-githost share, not a name.")
+              + " honours: the (project, name) alias, and nothing else. The projectId segment is"
+              + " the project's id OR its slug — the slug is the public spelling of a clone url"
+              + " (/git/qits/qits-ci) and the id is matched first, so both always resolve. The id"
+              + " answered is the opaque storage key this service and qits-githost share, not a"
+              + " name.")
   @APIResponse(
       responseCode = "200",
       description = "The name resolves",

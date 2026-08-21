@@ -79,9 +79,9 @@ class ScmBackupTriggerListenerTest {
     listener.onFrame(
         frameOf(
             new SCMPublishTag(
-                "tagged-repo", "v1.2.3", "aaa", "bbb", "qits", "qits@local", "release", true, now())));
-    listener.onFrame(frameOf(new SCMDeleteBranch("pruned-repo", "gone", "ccc", now())));
-    listener.onFrame(frameOf(new SCMDeleteTag("untagged-repo", "v0.9", "ddd", now())));
+                "tagged-repo", null, null, "v1.2.3", "aaa", "bbb", "qits", "qits@local", "release", true, now())));
+    listener.onFrame(frameOf(new SCMDeleteBranch("pruned-repo", null, null, "gone", "ccc", now())));
+    listener.onFrame(frameOf(new SCMDeleteTag("untagged-repo", null, null, "v0.9", "ddd", now())));
 
     assertEquals(List.of("tagged-repo", "pruned-repo", "untagged-repo"), backups.pushed);
   }
@@ -122,6 +122,8 @@ class ScmBackupTriggerListenerTest {
   private static SCMPublishCommit commit(String repoId, String branch, boolean suppressCi) {
     return new SCMPublishCommit(
         repoId,
+        null,
+        null,
         branch,
         "1111111111111111111111111111111111111111",
         "2222222222222222222222222222222222222222",

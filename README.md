@@ -175,6 +175,23 @@ does not do — no clone, no `origin` remote (so pull and push are not wired for
 repository), no workspace. A wrapper entry with no origin on this host and no reachable backend is
 skipped, with a warning, on every boot until the day that origin appears.
 
+Two keys, both defaulted so a deployed platform sets neither:
+
+    qits.startup-seed.enabled=true                 # the kill switch — off, the seed does not run at all
+    qits.startup-seed.reconcile-repositories=true  # off, the seed stops after the project and its wrapper
+    qits.startup-seed.wrapper-url=                 # redirect the wrapper clone source (a mirror, a fork, a fixture)
+    qits.startup-seed.dns-domain=                  # all three or none — the domain the seeded project resolves through
+    qits.startup-seed.dns-type=
+    qits.startup-seed.dns-value=
+
+**`reconcile-repositories` is for a first bootstrap and nothing else** (env
+`QITS_STARTUP_SEED_RECONCILE_REPOSITORIES`). At seed time the git host is empty and the bares are
+keyed by **minted storage ids**, so the adopt arm's `GET /git/<name>` can never match and every
+wrapper entry would fall through to the clone arm — mirroring all of qits in from GitHub before the
+bootstrap has seeded a single bare. Off, the seed creates the project and its wrapper origin exactly
+as always and stops there; the bootstrap then adopts the repositories itself, and the next boot's
+reconcile matches every entry by its alias.
+
 ## The backup twin
 
 Every repository this platform serves has a **forge twin**: the GitHub repository its project's

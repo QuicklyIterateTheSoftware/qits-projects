@@ -130,6 +130,29 @@ public class SelfSeedService {
   @ConfigProperty(name = "qits.startup-seed.dns-domain")
   Optional<String> dnsDomain;
 
+  /**
+   * Whether the seed walks the wrapper's {@code .gitmodules} after the project exists. Defaults to
+   * {@code true}, which is what every deployed platform runs — <b>only a first bootstrap sets it
+   * {@code false}</b> (env {@code QITS_STARTUP_SEED_RECONCILE_REPOSITORIES}), and it turns it back
+   * on for the same instance's next boot.
+   *
+   * <p>The reason is an ordering one. On a seed boot the git host is empty and the bares the
+   * bootstrap is about to create are keyed by <b>minted storage ids</b>, not by repository name. The
+   * reconcile's adopt arm asks {@code hasExistingOrigin(<entry name>)} — a {@code GET /git/<name>} —
+   * which on a UUID-keyed host can never match, so every {@code .gitmodules} entry falls through to
+   * the clone arm and the seed mirrors all of qits in from GitHub before the bootstrap has seeded a
+   * single bare. Held here, the bootstrap registers the repositories itself through the adopt
+   * endpoint (which is given both coordinates), and the next reconcile matches every entry by its
+   * alias and never reaches the adopt arm at all.
+   *
+   * <p>{@code false} holds the walk and nothing else: the {@code qits} project and its wrapper
+   * origin are created exactly as always, so a held boot is a complete project with no components
+   * rather than a half-written one — the same state {@link #reconcile} already tolerates when a
+   * forge is unreachable.
+   */
+  @ConfigProperty(name = "qits.startup-seed.reconcile-repositories", defaultValue = "true")
+  boolean reconcileRepositories;
+
   /** The record type: {@code A}, {@code AAAA} or {@code CNAME}. See {@link #dnsDomain}. */
   @ConfigProperty(name = "qits.startup-seed.dns-type")
   Optional<String> dnsType;
@@ -174,10 +197,23 @@ public class SelfSeedService {
     return override.filter(s -> !s.isBlank()).orElse(def).trim();
   }
 
-  /** Reconciles the manifest against the DB. Safe to run on every boot; additive and idempotent. */
+  /**
+   * Reconciles the manifest against the DB. Safe to run on every boot; additive and idempotent.
+   *
+   * <p>Stops after the project when {@link #reconcileRepositories} is off — the one thing a first
+   * bootstrap needs, and never set on a deployed platform.
+   */
   @ActivateRequestContext
   public void reconcile() {
     Project project = ensureProject();
+    if (!reconcileRepositories) {
+      // A bootstrap holding the walk until it has registered the bares itself — see the field.
+      LOG.infof(
+          "Self-seed: '%s' and its wrapper are in place; the repository reconcile is held"
+              + " (qits.startup-seed.reconcile-repositories=false).",
+          PROJECT_NAME);
+      return;
+    }
     // Heal every manifest-owned row FIRST, in its own pass, before anything reads one. For the
     // wrapper that is what lets the adopt below succeed at all when its url has drifted. It is a
     // separate pass rather than a step inside each entry because the wrapper's reconcile

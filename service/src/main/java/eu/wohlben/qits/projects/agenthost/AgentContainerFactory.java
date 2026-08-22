@@ -157,6 +157,13 @@ public class AgentContainerFactory {
   Optional<String> cpus;
 
   /**
+   * OOM-killer bias for an agent container. MEDIUM (800) reaps agents under host memory pressure
+   * after ci build containers (1000) but before workspaces (600).
+   */
+  @ConfigProperty(name = "qits.projects.agent-oom-score-adj", defaultValue = "800")
+  Integer agentOomScoreAdj;
+
+  /**
    * The window the <b>orchestrator's</b> own idle sweep measures, the same key {@link AgentIdleSweep}
    * reads for this service's. One key, two sweeps, and that is deliberate: the host's is what tears
    * the tunnel down and forgets the registry entry, which the orchestrator cannot do, and the
@@ -473,7 +480,14 @@ public class AgentContainerFactory {
             shared,
             // No docker socket. A project agent builds inside itself; it does not publish images.
             false,
-            new Security(false, false, memory, memory, pids(), cpus.filter(v -> !v.isBlank()).orElse(null)),
+            new Security(
+                false,
+                false,
+                memory,
+                memory,
+                pids(),
+                cpus.filter(v -> !v.isBlank()).orElse(null),
+                agentOomScoreAdj),
             null,
             containerName(projectSlug),
             Long.toString(hostUid()),

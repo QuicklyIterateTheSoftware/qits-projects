@@ -42,13 +42,16 @@ class AgentContainerFactoryTest {
   private static final String PROJECT_ID = "11111111-2222-3333-4444-555555555555";
 
   /**
-   * Read from config rather than written down, unlike every other shipped value this class asserts.
-   * The reference is a version pin that a release train rewrites on every qits-projects-daemon
-   * release, so a literal here would go red on a bump that is working exactly as intended. What is
-   * still under test is that the shipped value is a qualified, pinned reference at all.
+   * Composed from the two shipped keys rather than written down. The version half is a pin the
+   * deployer overrides at runtime (from qits-configuration), so a literal here would go red on a
+   * bump that is working exactly as intended. What is still under test is that the composed value is
+   * a qualified, pinned reference at all. {@link #composesTheReferenceFromRepoAndVersion} pins the
+   * exact default; this asserts the factory joins the same halves the config carries.
    */
   private static final String IMAGE =
-      ConfigProvider.getConfig().getValue("qits.projects.agent-image", String.class);
+      ConfigProvider.getConfig().getValue("qits.projects.agent-image-repo", String.class)
+          + ":"
+          + ConfigProvider.getConfig().getValue("qits.projects.agent-image-version", String.class);
 
   @Inject AgentContainerFactory factory;
 
@@ -86,6 +89,36 @@ class AgentContainerFactoryTest {
         repository.contains("/") && repository.substring(0, repository.indexOf('/')).contains(":"),
         "the registry host is part of the value: " + IMAGE);
     assertFalse(IMAGE.endsWith(":latest"), "a floating tag makes the running daemon unanswerable");
+  }
+
+  /**
+   * The two keys compose to the fully qualified default the deployment starts with. This pins the
+   * shipped {@code application.properties} default exactly, because the version half no longer moves
+   * in this file — the deployer overrides it from qits-configuration — so the default is now stable.
+   */
+  @Test
+  void composesTheReferenceFromRepoAndVersion() {
+    assertEquals(
+        "registry.dev.localhost:8080/qits/project-agent:2026.820.154053",
+        spec().image(),
+        "repo and version joined as <repo>:<version>, fully qualified");
+  }
+
+  /**
+   * The deployer injects {@code QITS_PROJECTS_AGENT_IMAGE_VERSION}, which SmallRye maps onto {@code
+   * qits.projects.agent-image-version}, and the injected value wins over the default. A plain
+   * instance stands in for that injection so the override is exercised without rebooting the app:
+   * the factory composes whatever version it is handed against the committed repo, staying fully
+   * qualified.
+   */
+  @Test
+  void theInjectedVersionWinsOverTheDefault() {
+    AgentContainerFactory overridden = new AgentContainerFactory();
+    overridden.imageRepo = "registry.dev.localhost:8080/qits/project-agent";
+    overridden.imageVersion = "2026.999.000000";
+
+    assertEquals(
+        "registry.dev.localhost:8080/qits/project-agent:2026.999.000000", overridden.image());
   }
 
   /**

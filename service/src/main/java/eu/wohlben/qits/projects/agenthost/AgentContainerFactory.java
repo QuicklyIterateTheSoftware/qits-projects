@@ -58,21 +58,38 @@ public class AgentContainerFactory {
   private static final Logger LOG = Logger.getLogger(AgentContainerFactory.class);
 
   /**
-   * The image the per-project agent runs — the workspace toolchain plus the daemon binary,
-   * registry-qualified and pinned to a released version ({@code
-   * localhost:8081/qits/project-agent:<calver>}). The value ships in this service's {@code
-   * application.properties}, which carries the reasoning for both halves of that shape, and which is
-   * also the single file the release train rewrites.
+   * The registry host and path of the image the per-project agent runs — the workspace toolchain
+   * plus the daemon binary ({@code registry.dev.localhost:8080/qits/project-agent}). It is the fixed
+   * half of the reference: {@link #imageVersion} carries the calver tag, and {@link #image()} joins
+   * them as {@code <repo>:<version>}.
    *
-   * <p><b>No {@code defaultValue}</b>, deliberately, and unlike every other key on this class. A
-   * default here would be a second copy of the pin that the train does not move, so it would be
-   * stale from the first bump onward — and it would be a stale copy of the exact thing the pin
-   * exists to end: an unqualified {@code qits/project-agent:latest} resolving to whatever a host
-   * happens to have lying in its local image store. A deployment that loses the property should
-   * fail at startup and say which key is missing, not quietly launch a hand-built tag.
+   * <p><b>The registry host is part of the value.</b> A bare name would resolve against whatever is
+   * lying in the host daemon's local image store — the {@code qits/project-agent:native} drift this
+   * shape exists to end — so the value handed to {@code docker run} must be fully qualified. The
+   * reasoning for both halves lives in {@code application.properties}.
    */
-  @ConfigProperty(name = "qits.projects.agent-image")
-  String image;
+  @ConfigProperty(name = "qits.projects.agent-image-repo")
+  String imageRepo;
+
+  /**
+   * The released calver the agent image is pinned to. Read from config, never a constant, because
+   * the deployer injects {@code QITS_PROJECTS_AGENT_IMAGE_VERSION} — sourced from qits-configuration,
+   * kept in step by the project-agent's own {@code SoftwareRelease} event — and SmallRye maps that
+   * env var onto this property automatically, so the injected value wins over the {@code
+   * application.properties} default.
+   */
+  @ConfigProperty(name = "qits.projects.agent-image-version")
+  String imageVersion;
+
+  /**
+   * The fully qualified, version-pinned image reference: {@code <repo>:<version>}. Composed rather
+   * than stored so the version half can be overridden at runtime by an env var while the registry
+   * host and path stay committed. The result is byte-identical in shape to the old single key —
+   * {@code registry.dev.localhost:8080/qits/project-agent:<calver>}.
+   */
+  String image() {
+    return imageRepo + ":" + imageVersion;
+  }
 
   /**
    * The shared Docker network every agent container joins (and qits-projects is on), so the daemon
@@ -436,7 +453,7 @@ public class AgentContainerFactory {
     String memory = memoryLimit.filter(value -> !value.isBlank()).orElse(null);
     Spec spec =
         new Spec(
-            image,
+            image(),
             // No entrypoint and no command: the container runs only qits-projects-daemon, via the
             // image ENTRYPOINT, and deliberately has no `sleep infinity` fallback — a container that
             // cannot run the daemon must fail to start rather than linger with this service's uid

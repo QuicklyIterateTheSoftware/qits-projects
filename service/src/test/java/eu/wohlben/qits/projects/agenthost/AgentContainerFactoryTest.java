@@ -219,6 +219,10 @@ class AgentContainerFactoryTest {
         "the same value, so the container cannot spill the difference into host swap");
     assertNull(spec.security().pidsLimit(), "blank config sets no cap");
     assertNull(spec.security().cpus(), "blank config sets no cap");
+    assertEquals(
+        800,
+        spec.security().oomScoreAdj(),
+        "MEDIUM bias: reaped after ci build (1000), before workspaces (600)");
   }
 
   /**

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-projects</artifactId>
+        <version>2026.823.105839</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The WORKSPACE daemon's control-plane wire contract: plain records + enums + the shared
+         type/field-name constants, framework-free and dependency-free. No JSON library on purpose —
+         each side serializes with whatever it already carries (Jackson here, Vert.x JsonObject in
+         the native daemon binary).
+
+         VENDORED COPY, the second of its kind in this reactor. projects-daemon-protocol/ is the
+         contract of qits-projects-daemon (the per-project agent container); THIS module is the
+         contract of qits-workspace-daemon, which runs unchanged inside every REFINEMENT container —
+         the daemon image is reused as-is, dialling home to whatever QITS_WORKSPACE_DAEMON_URL
+         names, and with this module that home is qits-projects. The canonical source is
+         qits-workspace-daemon/workspace-daemon-protocol; qits-workspaces carries the same copy.
+         It is copied rather than depended on because that module is published to no registry, and
+         a clone of qits-projects alone must `mvn verify` green.
+
+         The same three rules keep the copy honest:
+           - The java PACKAGE is identical (eu.wohlben.qits.workspacedaemon.protocol), so the day
+             this artifact is published somewhere, deleting this module and adding a <dependency>
+             is a one-line change with no source edits.
+           - The artifactId is NOT identical — qits-projects-workspace-daemon-protocol under this
+             repo's own groupId — so the vendored jars can never collide in ~/.m2 or a classpath.
+           - DaemonCodecTest travels with it. It runs in the daemon repo, in qits-workspaces and
+             here; a drift in any copy fails a build rather than a socket at runtime. Any change
+             starts in the daemon repo and bumps DaemonProtocol.CAPABILITY_VERSION. -->
+    <artifactId>qits-projects-workspace-daemon-protocol</artifactId>
+    <name>qits-projects :: workspace-daemon-protocol (vendored)</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

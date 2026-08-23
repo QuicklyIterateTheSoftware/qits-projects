@@ -92,6 +92,16 @@ public class InMemoryProcessRegistry implements TechnicalProcessRegistry {
     scheduler.shutdownNow();
   }
 
+  /** The port's detached begin: a process keyed by nothing but its own id. */
+  @Override
+  public TechnicalProcess begin(String kind) {
+    String id = UUID.randomUUID().toString();
+    InMemoryTechnicalProcess process = new InMemoryTechnicalProcess(id, null, null, this::onDone);
+    byId.put(id, process);
+    scheduleIdleReaper(process);
+    return process;
+  }
+
   /** Register a new process for a workspace; the newest one is the workspace's active process. */
   public TechnicalProcess begin(String repoId, String workspaceId) {
     String id = UUID.randomUUID().toString();

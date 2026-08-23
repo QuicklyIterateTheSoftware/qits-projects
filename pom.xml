@@ -30,7 +30,7 @@
          the mandatory -Dqits.variant=oauth|forwardauth|local auth profiles. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-projects</artifactId>
-    <version>2026.823.93531</version>
+    <version>2026.823.105839</version>
     <packaging>pom</packaging>
     <name>qits-projects</name>
 
@@ -41,6 +41,7 @@
              vendored copy of the daemon repo's wire contract and depends on nothing at all. -->
         <module>gitmirror</module>
         <module>projects-daemon-protocol</module>
+        <module>workspace-daemon-protocol</module>
         <module>domain</module>
         <module>epics</module>
         <module>service</module>
@@ -220,6 +221,13 @@
                      consumed only by `service` — the agent harness is a service-layer concern. -->
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-projects-daemon-protocol</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The vendored WORKSPACE-daemon wire contract — the daemon a refinement
+                     container runs, unchanged. Same shape as the sibling above. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-projects-workspace-daemon-protocol</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

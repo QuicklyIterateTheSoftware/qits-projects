@@ -1,0 +1,33 @@
+# Follow the workspace image. qits-workspace-daemon's release is what publishes qits/workspace —
+# the toolchain-plus-daemon image every refinement container runs — so its SoftwareRelease moves
+# the pin this service starts those containers with
+# (qits.projects.refinement-image-version in service/src/main/resources/application.properties).
+#
+# The same maintenance-branch shape as ci-event-upstream-spa-projects.yml: rewrite the line, commit,
+# force-push the branch; the branch build releases this service through the ordinary door, and the
+# new pin goes live with the next deploy. Containers already running are untouched — an image bump
+# is applied at the next wake, which is the one moment it can be applied without taking a container
+# away from somebody working in it.
+event: SoftwareRelease
+when:
+  - repository: { exact: qits-workspace-daemon }
+    packageType: { exact: docker }
+    packageName: { exact: "qits/workspace" }
+steps:
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 600
+    script: |
+      set -eu
+      version=$(printf '%s' "$QITS_EVENT_PAYLOAD" | jq -er .version)
+      # The version reaches a sed s### expression below; refuse anything outside the calver/semver
+      # alphabet rather than trying to quote it (the eventstream follow's reasoning, verbatim).
+      case "$version" in
+        ''|*[!0-9A-Za-z._+-]*) echo "refusing an implausible version: $version" >&2; exit 1 ;;
+      esac
+      sed -i -E "s#^qits.projects.refinement-image-version=.*#qits.projects.refinement-image-version=$version#" \
+        service/src/main/resources/application.properties
+      git add service/src/main/resources/application.properties
+      git diff --cached --quiet && exit 0
+      git -c user.name="qits release train" -c user.email="release-train@qits.local" commit -q \
+        -m "bump(qits-workspace-daemon@$version): follow the workspace image"
+      git push --force "$QITS_CI_REPOSITORY_URL" HEAD:refs/heads/maintenance/qits-workspace-daemon

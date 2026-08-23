@@ -319,7 +319,7 @@ public class ContainerProxyRoute {
    * inbound request carried: forwarding a caller-supplied Authorization would be both meaningless
    * and a way to smuggle a credential into a container.
    */
-  static ProxyInterceptor bearer(String token) {
+  public static ProxyInterceptor bearer(String token) {
     return new ProxyInterceptor() {
       @Override
       public Future<ProxyResponse> handleProxyRequest(ProxyContext context) {
@@ -336,7 +336,7 @@ public class ContainerProxyRoute {
    * container is worth three lines to prevent. ({@code ProxyInterceptor} has no abstract method —
    * it is not a functional interface — so this must be an explicit implementation, not a lambda.)
    */
-  static ProxyInterceptor hostRewrite(int port) {
+  public static ProxyInterceptor hostRewrite(int port) {
     return new ProxyInterceptor() {
       @Override
       public Future<ProxyResponse> handleProxyRequest(ProxyContext context) {

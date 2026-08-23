@@ -526,6 +526,68 @@ it again — deliberately not automatic, since the `/workspace` volume a remove 
 uncommitted work lives. The detail is a field and not a sixth `AgentRuntimeStatus`: the SPA switches
 on those five strings and they are a published contract.
 
+## Refinement containers
+
+One container per REFINING epic — the refining route's whole backend, which used to be an ordinary
+qits-workspaces workspace on a `refining/*` branch (epic refinement-improvements, part 2). The host
+side is `service/…/refinementhost/`; the container runs the WORKSPACE image and daemon, unchanged —
+`qits-workspace-daemon` dials home to whatever `QITS_WORKSPACE_DAEMON_URL` names, and this service
+is that home now. `workspace-daemon-protocol/` is that daemon's wire contract, vendored beside
+`projects-daemon-protocol/` (two daemons, two vocabularies, two modules; the codec test travels with
+each).
+
+The shape deliberately mirrors the project-agent harness one section up — control socket, registry,
+reverse tunnel, verbatim proxy with the hand-rolled websocket upgrade — on refinement's own paths,
+all three append-only once a container exists (`RefinementPaths`):
+
+    control socket   ws://<host>:<port>/projects/refinement-daemon/<rowId>
+    dial-back        /projects/refinement-daemon/stream/<nonce>
+    proxy prefix     /projects/refinement-container/<rowId>/
+
+Where it differs from the agent harness, each difference is the domain line:
+
+- **Keyed by epic, addressed by row id.** `refinement` (V4) holds one row per epic (unique), with
+  the branch (`refining/<epicSlug>`), the parent (the wrapper's default branch — a refinement always
+  forks it, which is why there is no parent/child tree and no integrate door), the preamble computed
+  from the epic tree at create, and the commissioned credential — ON THE ROW, because
+  `Recreate.ifChanged` hashes the whole spec and a resume must reproduce the pair byte for byte.
+- **A refinement runs no code.** `BOOTSTRAP_AUTORUN=false`, `SERVICES_AUTOSTART=false`, no
+  `SERVICE_PROXY_BASE`, no actions MCP server — the tab set this backs has no Services or Actions
+  tab, and its web view frames the deployed environment, not a dev server.
+- **There is a removal verb.** Discard tears down container → volume → credential → branch → row,
+  in that order; the agent harness deliberately has no removal at all. `RefinementCommissions`
+  decommissions at the explicit seams; `RefinementCommissionReconcile` reaps `refinement`-kind idp
+  clients no row claims (its own CONTEXT_KIND, invisible to the agent reconcile and vice versa).
+- **The ensure ladder runs off the request thread** (`RefinementService`): the browser gets a
+  technical-process id to watch instead of a request that hangs behind an image pull. One
+  `Semaphore` permit per row — a semaphore and not a lock, because the permit is taken on the
+  request thread and released on the worker. The daemon's provision output (`CommandChunk`s tagged
+  `provision`) streams into the narration via `RefinementDaemonRegistry`, and its terminal
+  `Provisioned`/`ProvisionFailed` settles it.
+- **`processhost/` is the technical-process port's live implementation** — the piece the domain
+  port's javadoc always said an assembling application supplies. Standing it up for refinement also
+  lights the repository-scoped narration (pull/push/sync leases) that ran unnarrated before, and
+  `api/TechnicalProcessEventsController` is the SSE controller the port was waiting for. Everything
+  in it is this process's memory; an evicted id answers the 404 the frontend reads as "expired".
+- **The image pin rides qits-workspace-daemon's releases**: that repo's release publishes
+  `qits/workspace`, and `.config/qits/ci-event-upstream-workspace-daemon.yml` moves
+  `qits.projects.refinement-image-version` the same way the SPA follow moves the webui gitlink.
+  Deployments can override it as `QITS_PROJECTS_REFINEMENT_IMAGE_VERSION`.
+- **Git reaches the edge** (`qits.projects.refinement-git-url`, default
+  `http://qits-platform-edge:8080`): the workspace image's credential helper speaks oauth2 Basic and
+  the edge rewrites it to a Bearer, exactly as a workspace's does. The three registry keys
+  (`refinement-maven-repository-url` / `-npm-registry-url` / `-npm-proxy-url`) ship blank like
+  qits-workspaces' — unset injects nothing.
+
+The REST surface is under `/projects/api`: `POST /refinements` (find-or-create keyed by epic —
+adopt-existing is the create's ordinary path, not an error dance), `GET/verbs /refinements/{id}`,
+`GET /projects/{projectId}/refinements` (the LIGHT projection — live halves, no git drift, because
+the list redraws on every activity hint), the prompt draft and attachments (content URLs are
+embedded into epic markdown, so attachment ids are never renumbered), the per-row SSE hint channel,
+and the technical-process stream. The suite's seams are `FakeRefinementRuntime` and
+`FakeRefinementCredentials`, winning over the `@DefaultBean` adapters exactly as the agent fakes do
+— and read through METHODS, never public fields, because a client proxy does not proxy field access.
+
 ## The container orchestrator
 
 **This service holds no docker socket and spawns no process.** Every container verb the harness has

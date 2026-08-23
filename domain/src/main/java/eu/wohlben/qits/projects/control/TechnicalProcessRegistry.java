@@ -26,6 +26,13 @@ import java.util.Optional;
 public interface TechnicalProcessRegistry {
 
   /**
+   * Register an operation scoped to nothing but its own id — the refinement container ensure's
+   * shape, where the caller owns the single-flight itself (one lock per refinement row) and only
+   * needs a subscribable narration. {@code kind} is a label for the log, not a key.
+   */
+  TechnicalProcess begin(String kind);
+
+  /**
    * Register a repository-scoped operation of {@code kind} ({@code pull}/{@code push}/{@code
    * sync}), before any git runs — so the currently-fetching repo is visible while its {@code git
    * fetch} blocks on the network.

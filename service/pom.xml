@@ -55,6 +55,12 @@
             <artifactId>qits-projects-daemon-protocol</artifactId>
         </dependency>
         <dependency>
+            <!-- The workspace daemon's wire contract, vendored: what a refinement container's
+                 dial-home speaks (refinementhost/). Sources, not a published jar. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-workspace-daemon-protocol</artifactId>
+        </dependency>
+        <dependency>
             <!-- The platform event bus. It arrives HERE and not in `domain` on purpose, twice over:
                  `bus/` is an inbound adapter like `api/` and `wiring/`, and this jar brings a THIRD
                  datasource with its own Flyway lineage — putting it on domain's classpath would make

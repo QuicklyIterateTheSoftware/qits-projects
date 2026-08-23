@@ -224,6 +224,13 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <!-- The vendored WORKSPACE-daemon wire contract — the daemon a refinement
+                     container runs, unchanged. Same shape as the sibling above. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-projects-workspace-daemon-protocol</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-projects-domain</artifactId>
                 <version>${project.version}</version>

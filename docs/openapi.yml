@@ -4,6 +4,11 @@
 openapi: 3.1.0
 components:
   schemas:
+    ActiveProcessResponse:
+      type: object
+      properties:
+        technicalProcessId:
+          type: string
     AdoptProjectRepositoryRequest:
       type: object
       required:
@@ -37,6 +42,21 @@ components:
       - PROVISIONING
       - FAILED
       - ABSENT
+    AttachmentDto:
+      type: object
+      properties:
+        id:
+          type: string
+        mimeType:
+          type: string
+        label:
+          type: string
+        source:
+          type: string
+        createdAt:
+          $ref: "#/components/schemas/Instant"
+        dataBase64:
+          type: string
     AuditEntityType:
       type: string
       enum:
@@ -226,6 +246,11 @@ components:
           type: string
         dependsOnTaskId:
           type: string
+    DiscardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
     DnsSpec:
       type: object
       required:
@@ -246,6 +271,30 @@ components:
       - NO_MATCHING_ZONE
       - NOT_CONFIGURED
       - FAILED
+    DraftDto:
+      type: object
+      properties:
+        content:
+          type: string
+        serializedPrompt:
+          type: string
+        promptVersion:
+          type: integer
+          format: int64
+        lastRunAt:
+          $ref: "#/components/schemas/Instant"
+        lastRunPromptVersion:
+          type: integer
+          format: int64
+        lastRunCommandId:
+          type: string
+        updatedAt:
+          $ref: "#/components/schemas/Instant"
+    DraftResponse:
+      type: object
+      properties:
+        draft:
+          $ref: "#/components/schemas/DraftDto"
     Entry:
       type: object
       properties:
@@ -351,6 +400,46 @@ components:
           $ref: "#/components/schemas/Instant"
         detail:
           type: string
+    ListResponse:
+      type: object
+      properties:
+        refinements:
+          type: array
+          items:
+            $ref: "#/components/schemas/RefinementDto"
+    ListResponse1:
+      type: object
+      properties:
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachmentDto"
+    NewAttachment:
+      type: object
+      required:
+      - label
+      - source
+      - dataBase64
+      properties:
+        mimeType:
+          type: string
+        label:
+          type: string
+          pattern: \S
+        source:
+          type: string
+          pattern: \S
+        dataBase64:
+          type: string
+          pattern: \S
+    OpenRequest:
+      type: object
+      required:
+      - epicId
+      properties:
+        epicId:
+          type: string
+          pattern: \S
     Outcome:
       type: string
       enum:
@@ -361,6 +450,13 @@ components:
       - SYNC_TARGET_UPDATED
       - DEREGISTERED
       - SKIPPED
+    ProcessResponse:
+      type: object
+      properties:
+        refinement:
+          $ref: "#/components/schemas/RefinementDto"
+        technicalProcessId:
+          type: string
     ProjectDnsRecordDto:
       type: object
       properties:
@@ -389,6 +485,55 @@ components:
           type: string
         dns:
           $ref: "#/components/schemas/ProjectDnsRecordDto"
+    RefinementDto:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        epicId:
+          type: string
+        projectId:
+          type: string
+        repositoryId:
+          type: string
+        branch:
+          type: string
+        parent:
+          type: string
+        label:
+          type: string
+        preamble:
+          type: string
+        runtimeStatus:
+          type: string
+        runtimeError:
+          type: string
+        clean:
+          type: boolean
+        ahead:
+          type: integer
+          format: int32
+        behind:
+          type: integer
+          format: int32
+        conflictsWithParent:
+          type: boolean
+        agentActivity:
+          type: string
+        daemonConnectedAt:
+          $ref: "#/components/schemas/Instant"
+        daemonVersion:
+          type: string
+        daemonOutdated:
+          type: boolean
+        createdAt:
+          $ref: "#/components/schemas/Instant"
+    RefinementResponse:
+      type: object
+      properties:
+        refinement:
+          $ref: "#/components/schemas/RefinementDto"
     RepositoryArchetype:
       type: string
       enum:
@@ -672,6 +817,15 @@ components:
       properties:
         feature:
           $ref: "#/components/schemas/FeatureDto"
+    SaveRequest:
+      type: object
+      required:
+      - content
+      properties:
+        content:
+          type: string
+        serializedPrompt:
+          type: string
     SetMainBranchRequest:
       type: object
       required:
@@ -718,6 +872,24 @@ components:
           $ref: "#/components/schemas/Instant"
         updatedAt:
           $ref: "#/components/schemas/Instant"
+    TechnicalProcessFrame:
+      type: object
+      properties:
+        segment:
+          type: string
+        kind:
+          type: string
+        seq:
+          type: integer
+          format: int64
+        line:
+          type: string
+        status:
+          type: string
+        hint:
+          type: string
+        hintTarget:
+          type: string
     TransitionEpicRequest:
       type: object
       properties:
@@ -1449,6 +1621,31 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+  /projects/api/projects/{projectId}/refinements:
+    get:
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: List
+      tags:
+      - Project Refinements Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/projects/{projectId}/repositories:
     get:
       parameters:
@@ -1648,6 +1845,450 @@ paths:
           description: Not Allowed
       tags:
       - Project Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefinementResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
+      summary: Open
+      tags:
+      - Refinement Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}:
+    get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefinementResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Get
+      tags:
+      - Refinement Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/active-process:
+    get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveProcessResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Active Process
+      tags:
+      - Refinement Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/discard:
+    post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscardResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Discard
+      tags:
+      - Refinement Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/ensure-container:
+    post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Ensure
+      tags:
+      - Refinement Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/events:
+    get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            text/event-stream:
+              schema:
+                type: array
+                items:
+                  type: string
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Events
+      tags:
+      - Refinement Events Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/prompt-attachments:
+    get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResponse1"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: List
+      tags:
+      - Refinement Prompt Attachment Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+    post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewAttachment"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {}
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
+      summary: Add
+      tags:
+      - Refinement Prompt Attachment Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/prompt-attachments/{attachmentId}:
+    put:
+      parameters:
+      - name: attachmentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewAttachment"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
+      summary: Replace
+      tags:
+      - Refinement Prompt Attachment Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+    delete:
+      parameters:
+      - name: attachmentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Delete
+      tags:
+      - Refinement Prompt Attachment Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/prompt-attachments/{attachmentId}/content:
+    get:
+      parameters:
+      - name: attachmentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            image/png: {}
+            image/jpeg: {}
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Content
+      tags:
+      - Refinement Prompt Attachment Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/prompt-draft:
+    put:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DraftResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
+      summary: Save
+      tags:
+      - Refinement Prompt Draft Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+    get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DraftResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Get
+      tags:
+      - Refinement Prompt Draft Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+    delete:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Delete
+      tags:
+      - Refinement Prompt Draft Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/recreate-container:
+    post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Recreate
+      tags:
+      - Refinement Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/stop-container:
+    post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefinementResponse"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Stop
+      tags:
+      - Refinement Controller
       security:
       - SecurityScheme:
         - qits:admin
@@ -2153,6 +2794,33 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+  /projects/api/technical-processes/{id}/events:
+    get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            text/event-stream:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TechnicalProcessFrame"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Events
+      tags:
+      - Technical Process Events Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
 info:
   title: qits-projects API
-  version: 2026.820.134744
+  version: 2026.823.93531

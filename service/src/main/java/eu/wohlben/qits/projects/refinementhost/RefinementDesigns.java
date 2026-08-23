@@ -170,7 +170,10 @@ public class RefinementDesigns {
                   base.html = proposal.html;
                   base.htmlBytes = proposal.htmlBytes;
                   base.truncated = proposal.truncated;
-                  base.sourceRoute = proposal.sourceRoute;
+                  // An agent's revision carries no route; the page it revises keeps its own.
+                  if (proposal.sourceRoute != null) {
+                    base.sourceRoute = proposal.sourceRoute;
+                  }
                   base.updatedAt = Instant.now();
                   store.delete(proposal);
                   return base;

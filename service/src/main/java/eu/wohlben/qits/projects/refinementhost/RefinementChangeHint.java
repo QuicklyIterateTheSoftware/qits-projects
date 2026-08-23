@@ -28,6 +28,8 @@ public record RefinementChangeHint(Long refinementId, Topic topic) {
     /** The host-held prompt draft changed — re-read it. */
     PROMPT_DRAFT,
     /** The host-held prompt attachments changed — re-read the list. */
-    PROMPT_ATTACHMENTS
+    PROMPT_ATTACHMENTS,
+    /** The host-held designs changed — re-read the list. */
+    DESIGNS
   }
 }

@@ -41,6 +41,9 @@ public class ReadOnlyRepositoryToolFilter implements ToolFilter {
    * <p>The epic write tools are here for the same reason: an unattended run must not rewrite the
    * project's plan. The refinement agent that owns them connects without the marker, so its own
    * surface is unchanged.
+   *
+   * <p>{@code propose_design} joins them: a proposal is a row a person then has to read and rule
+   * on, and an unattended run must not fill the Design tab with work nobody asked for.
    */
   private static final Set<String> MUTATING_TOOLS =
       Set.of(
@@ -56,7 +59,8 @@ public class ReadOnlyRepositoryToolFilter implements ToolFilter {
           "remove_feature",
           "add_task",
           "update_task",
-          "remove_task");
+          "remove_task",
+          "propose_design");
 
   @Inject HttpServerRequest request;
 

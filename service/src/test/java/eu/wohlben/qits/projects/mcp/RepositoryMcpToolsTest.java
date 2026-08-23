@@ -331,7 +331,12 @@ public class RepositoryMcpToolsTest {
                       "remove_feature",
                       "add_task",
                       "update_task",
-                      "remove_task"),
+                      "remove_task",
+                      // RefinementDesignMcpTools — the frozen designs of a refinement. No resolve
+                      // tool: accepting a proposal is a human act in the Design tab.
+                      "list_designs",
+                      "get_design",
+                      "propose_design"),
                   java.util.Set.copyOf(names),
                   "unexpected tool surface: " + names);
             })

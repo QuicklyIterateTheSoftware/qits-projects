@@ -588,6 +588,24 @@ and the technical-process stream. The suite's seams are `FakeRefinementRuntime` 
 `FakeRefinementCredentials`, winning over the `@DefaultBean` adapters exactly as the agent fakes do
 — and read through METHODS, never public fields, because a client proxy does not proxy field access.
 
+**Designs are frozen HTML kept with the refinement** (`refinement_design`, V5) — one self-contained
+document per page, styles inline, cascading from the row like the draft and attachments do.
+`RefinementDesigns` holds the writes and `/refinements/{id}/designs` serves them; a list leaves the
+document out and only the single read carries it.
+
+There is deliberately **no content route**. Agent-authored HTML served same-origin would be an XSS
+door into the platform's own session, so the bytes only ever travel as a JSON field and the SPA
+renders them in a sandboxed iframe with scripts off. Do not add a `text/html` route here.
+
+**A row is ACTIVE or PROPOSED, and only a person crosses that line.** A REST capture is ACTIVE at
+once; the three MCP tools on the `repository` server (`list_designs`, `get_design`,
+`propose_design`) let a refinement agent read the designs and propose a revision, which lands
+PROPOSED with the agent's note on it. `POST …/{designId}/resolve` is the decision: `REPLACE` copies
+the proposal onto the design it revises and drops the proposal, `KEEP` makes the proposal a design
+of its own, and discarding is a plain `DELETE`. `propose_design` is in
+`ReadOnlyRepositoryToolFilter`'s mutating set — an unattended run must not fill the tab with work
+nobody asked for.
+
 ## The container orchestrator
 
 **This service holds no docker socket and spawns no process.** Every container verb the harness has

@@ -246,6 +246,34 @@ components:
           type: string
         dependsOnTaskId:
           type: string
+    DesignDto:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+        basedOnDesignId:
+          type: string
+        note:
+          type: string
+        sourceRoute:
+          type: string
+        htmlBytes:
+          type: integer
+          format: int32
+        truncated:
+          type: boolean
+        createdBy:
+          type: string
+        createdAt:
+          $ref: "#/components/schemas/Instant"
+        updatedAt:
+          $ref: "#/components/schemas/Instant"
+        html:
+          type: string
     DiscardResponse:
       type: object
       properties:
@@ -410,6 +438,13 @@ components:
     ListResponse1:
       type: object
       properties:
+        designs:
+          type: array
+          items:
+            $ref: "#/components/schemas/DesignDto"
+    ListResponse2:
+      type: object
+      properties:
         attachments:
           type: array
           items:
@@ -432,6 +467,22 @@ components:
         dataBase64:
           type: string
           pattern: \S
+    NewDesign:
+      type: object
+      required:
+      - title
+      - html
+      properties:
+        title:
+          type: string
+          pattern: \S
+        html:
+          type: string
+          pattern: \S
+        sourceRoute:
+          type: string
+        truncated:
+          type: boolean
     OpenRequest:
       type: object
       required:
@@ -534,6 +585,14 @@ components:
       properties:
         refinement:
           $ref: "#/components/schemas/RefinementDto"
+    RenameDesign:
+      type: object
+      required:
+      - title
+      properties:
+        title:
+          type: string
+          pattern: \S
     RepositoryArchetype:
       type: string
       enum:
@@ -574,6 +633,14 @@ components:
           type: string
         lastBackup:
           $ref: "#/components/schemas/LastBackupDto"
+    ResolveDesign:
+      type: object
+      required:
+      - mode
+      properties:
+        mode:
+          type: string
+          pattern: \S
     Response:
       type: object
       properties:
@@ -1927,6 +1994,198 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+  /projects/api/refinements/{id}/designs:
+    get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResponse1"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: List
+      tags:
+      - Refinement Design Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+    post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewDesign"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {}
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
+      summary: Add
+      tags:
+      - Refinement Design Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/designs/{designId}:
+    put:
+      parameters:
+      - name: designId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameDesign"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DesignDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
+      summary: Rename
+      tags:
+      - Refinement Design Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+    get:
+      parameters:
+      - name: designId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DesignDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Get
+      tags:
+      - Refinement Design Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+    delete:
+      parameters:
+      - name: designId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      summary: Delete
+      tags:
+      - Refinement Design Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+  /projects/api/refinements/{id}/designs/{designId}/resolve:
+    post:
+      parameters:
+      - name: designId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveDesign"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DesignDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
+      summary: Resolve
+      tags:
+      - Refinement Design Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
   /projects/api/refinements/{id}/discard:
     post:
       parameters:
@@ -2022,7 +2281,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListResponse1"
+                $ref: "#/components/schemas/ListResponse2"
         "401":
           description: Not Authorized
         "403":
@@ -2823,4 +3082,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.823.93531
+  version: 2026.823.112612

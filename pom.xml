@@ -30,7 +30,7 @@
          the mandatory -Dqits.variant=oauth|forwardauth|local auth profiles. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-projects</artifactId>
-    <version>2026.823.112612</version>
+    <version>2026.823.153819</version>
     <packaging>pom</packaging>
     <name>qits-projects</name>
 

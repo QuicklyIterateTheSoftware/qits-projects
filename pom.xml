@@ -41,6 +41,7 @@
              vendored copy of the daemon repo's wire contract and depends on nothing at all. -->
         <module>gitmirror</module>
         <module>projects-daemon-protocol</module>
+        <module>workspace-daemon-protocol</module>
         <module>domain</module>
         <module>epics</module>
         <module>service</module>

@@ -59,7 +59,7 @@ public class RefinementContainerFactoryTest {
     // Both halves of the name-addressed clone — relative submodule urls depend on them.
     assertEquals("project-1", env.get("QITS_WORKSPACE_DAEMON_PROJECT_ID"));
     assertEquals("demo-demo", env.get("QITS_WORKSPACE_DAEMON_REPO_NAME"));
-    assertEquals("http://qits-platform-edge:8080/git", env.get("QITS_WORKSPACE_DAEMON_GIT_BASE_URL"));
+    assertEquals("http://githost.dev.internal:8080/git", env.get("QITS_WORKSPACE_DAEMON_GIT_BASE_URL"));
     // A refinement runs no code: no bootstrap chain and no service autostart, structurally.
     assertEquals("false", env.get("QITS_WORKSPACE_DAEMON_BOOTSTRAP_AUTORUN"));
     assertEquals("false", env.get("QITS_WORKSPACE_DAEMON_SERVICES_AUTOSTART"));
@@ -104,7 +104,7 @@ public class RefinementContainerFactoryTest {
     assertEquals("dyn-refinement-7-1", env.get("QITS_COMMISSIONED_CLIENT_ID"));
     assertEquals("secret-dyn-refinement-7-1", env.get("QITS_COMMISSIONED_CLIENT_SECRET"));
     assertEquals("qits-projects", env.get("QITS_WORKSPACE_DAEMON_AUTH_AUDIENCE"));
-    assertEquals("qits-platform-edge:8080", env.get("QITS_GIT_AUTH_HOST"));
+    assertEquals("githost.dev.internal:8080", env.get("QITS_GIT_AUTH_HOST"));
     assertEquals("qits-githost", env.get("QITS_GIT_AUTH_AUDIENCE"));
     assertEquals("/etc/qits-gitconfig", env.get("GIT_CONFIG_GLOBAL"));
   }

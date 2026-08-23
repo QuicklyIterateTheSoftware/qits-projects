@@ -132,14 +132,15 @@ public class RefinementContainerFactory {
   String gitHostAudience;
 
   /**
-   * The address a refinement container reaches git at — the platform edge, whose oauth2 Basic
-   * transport rewrites the helper's Basic into a Bearer before githost sees it, exactly as a
-   * workspace's does ({@code qits.workspace.container-git-url} in the reference). The daemon's
-   * clone base is this plus {@code /git}.
+   * The address a refinement container reaches git at — the same authority the deployed
+   * qits-workspaces injects into every workspace container, whose oauth2 transport rewrites the
+   * image's Basic credential helper into a Bearer. The daemon's clone base is this plus
+   * {@code /git}; {@code QITS_GIT_AUTH_HOST} is its authority. The shipped default is the platform's
+   * own spelling and {@code application.properties} carries the measurement behind it.
    */
   @ConfigProperty(
       name = "qits.projects.refinement-git-url",
-      defaultValue = "http://qits-platform-edge:8080")
+      defaultValue = "http://githost.dev.internal:8080")
   String containerGitUrl;
 
   /** The observability MCP server a repository-scope launch attaches beside {@code repository}. */

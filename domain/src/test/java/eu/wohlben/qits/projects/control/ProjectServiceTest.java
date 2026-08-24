@@ -180,6 +180,35 @@ public class ProjectServiceTest {
     assertTrue(projectRepository.find("slug", "slug-collision-supplied-2").list().isEmpty());
   }
 
+  /**
+   * A slug is the first path segment on every application host, and that host path-routes every
+   * application's own segment as well — so a project called "projects" would be shadowed by this
+   * service's own API and nothing would say so. A supplied one is refused loudly.
+   */
+  @Test
+  public void aSuppliedReservedSlugIsRefused() {
+    for (String reserved : new String[] {"projects", "services", "api", "q", "main-navigation"}) {
+      var refusal =
+          assertThrows(
+              BadRequestException.class,
+              () -> projectService.create("Reserved " + reserved, reserved, null),
+              reserved + " must be refused as a slug");
+      assertTrue(refusal.getMessage().contains("reserved"), refusal.getMessage());
+    }
+    assertTrue(projectRepository.find("slug", "projects").list().isEmpty());
+  }
+
+  /**
+   * A derived slug says nothing about the value, so a reserved one suffixes like any other
+   * collision — the reservation must not make an ordinary display name uncreatable.
+   */
+  @Test
+  public void aDerivedReservedSlugTakesTheNextFreeSuffix() {
+    var project = projectService.create("Docs", null, null);
+
+    assertEquals("docs-2", project.slug);
+  }
+
   /** The constraint itself, under the service that is supposed to make it unreachable. */
   @Test
   public void theDatabaseRefusesTwoProjectsOnOneSlug() {

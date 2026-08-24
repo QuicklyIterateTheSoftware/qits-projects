@@ -81,8 +81,9 @@ and `domain.seeding.*` to break cycles that do not exist here.
 
 ## Paths
 
-Everything is served under this service's gateway segment — see the table in the README. Three
-things about that are easy to get wrong:
+**The client is served at `/`** on this service's own host (`projects.<env>.<domain>`); every
+machine surface keeps the segment `/projects` — see the table in the README. Three things about
+that are easy to get wrong:
 
 - **`@WebSocket` does not follow `quarkus.rest.path`.** The remote-login socket spells
   `/projects/api/...` out as a literal and has to be kept in step with the key by hand. Anything new
@@ -90,17 +91,16 @@ things about that are easy to get wrong:
 - **The MCP server's name is not its path.** It is mounted at `/projects/mcp` and is still *named*
   `repository` (`@McpServer("repository")`), because qits-workspace-daemon addresses it by name.
   Renaming it breaks the daemon; an *undeclared* name stops the process booting outright.
-- **A new machine surface outside `/projects/api` needs a line in
-  `quarkus.quinoa.ignored-path-prefixes`.** Quinoa's SPA fallback is a catch-all at `/projects/*`
-  registered near-last, so a real route still wins — but a path matching *no* route is rerouted to
-  `index.html` and answers `200 text/html`, which a machine client parses as data. The key is set
-  explicitly (`/api,/q,/mcp,/daemon,/container`) rather than derived, because the derivation reads
-  only `quarkus.rest.path` and `quarkus.http.non-application-root-path` and nothing names the MCP
-  root-path or the agent harness's raw routes. Setting it **replaces** the derivation, so `/api` and
-  `/q` are repeated by hand, and the values are matched **after** `ui-root-path` is stripped —
-  `/projects/mcp` written there matches nothing at all and is indistinguishable from leaving the key
-  unset. The remote-login websocket needs no entry only because its literal sits under
-  `/projects/api`.
+- **A machine surface outside `/projects` needs a line in
+  `quarkus.quinoa.ignored-path-prefixes`.** Quinoa's SPA fallback is a catch-all at `/*` now, so a
+  real route still wins — but a path matching *no* route is rerouted to `index.html` and answers
+  `200 text/html`, which a machine client parses as data. The values are **absolute request paths**
+  since `ui-root-path` became `/` (they used to be tails relative to it, which is why the old list
+  read `/api,/q,/mcp,/daemon,/container`), so the whole list is one prefix: `/projects` covers
+  `/projects/api`, `/projects/q`, `/projects/mcp` and both daemon harnesses. This service owns no
+  route outside that segment; one that did — `/v2`, `/git` — would list it beside. Setting the key
+  **replaces** Quinoa's derivation rather than extending it, and the derivation never named the MCP
+  root-path or the harnesses' raw routes anyway.
 
 Path parameters naming a repository are `{repoId}` everywhere. Parameter names are visible in the
 generated client, so keep them uniform. Note the two reconciles under a project are deliberately
@@ -283,6 +283,14 @@ It was deliberately non-unique until 2026-08-08. The correction had to be its ow
 V1's column comment said the opposite and an applied file is checksummed — but the move to postgres
 restarted both lineages, so the constraint now sits in `V1__init.sql` beside a comment that agrees
 with it.
+
+**A set of slugs is RESERVED** (`ProjectService.RESERVED_SLUGS`): the six repository categories,
+`api`, `q`, `main-navigation`, and every application segment the platform routes. A slug is the
+first path segment of every address on every application host, and those hosts path-route every
+application's segment too — so a project called `projects` would be shadowed by this service's own
+API with nothing to say so. A supplied reserved slug is a **400**; a derived one suffixes like any
+other collision, so "Docs" still creates, as `docs-2`. **A new service segment belongs in that list
+on the day it is routed.**
 
 Uniqueness is reached two ways, and the difference is what the caller said:
 

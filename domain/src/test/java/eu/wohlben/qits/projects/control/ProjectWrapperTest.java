@@ -223,11 +223,14 @@ public class ProjectWrapperTest {
   /**
    * Regression: the format allows 1-40 characters. An earlier draft of the pattern required at
    * least two, which rejected a slug {@code slugify} legitimately produces.
+   *
+   * <p>Not {@code q}, which the platform reserves — {@code /q} is the non-application root path on
+   * every service host.
    */
   @Test
   public void aSingleCharacterSlugIsAccepted() {
     assertEquals("x", projectService.create("X", null).slug);
-    assertEquals("q", projectService.create("Explicit", "q", null).slug);
+    assertEquals("z", projectService.create("Explicit", "z", null).slug);
   }
 
   @Test

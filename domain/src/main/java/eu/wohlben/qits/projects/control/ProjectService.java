@@ -24,6 +24,7 @@ import jakarta.transaction.Transactional;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.jboss.logging.Logger;
 
@@ -40,6 +41,57 @@ public class ProjectService {
    * refuses it loudly when {@code <slug>-<slug>} cannot be an id.
    */
   private static final int MAX_SLUG_LENGTH = 31;
+
+  /**
+   * The slugs no project may take, because every service host reads them as something else.
+   *
+   * <p>A slug is the <b>first path segment</b> of every address on every SPA —
+   * {@code https://ci.dev.example.com/<slug>/services/qits-ci/runs} — and each of those hosts also
+   * path-routes every application's own segment and every wire route, on every host. So a project
+   * whose slug spells one of them would be shadowed by the route: {@code /projects/…} reaches this
+   * service's API rather than the project called "projects", and nothing would say so.
+   *
+   * <p>Three families, one list because they are one rule:
+   *
+   * <ul>
+   *   <li>the six repository categories — segment two of the repository form, so a slug spelling
+   *       one would make {@code /services/daemons/x} unreadable;
+   *   <li>{@code api}, {@code q} and {@code main-navigation} — served under every host;
+   *   <li>every application segment the platform routes.
+   * </ul>
+   *
+   * <p><b>A new service segment belongs here on the day it is routed</b>, before a project can take
+   * it — see {@code docs/project-setup-quinoa-angular.md} in the superproject.
+   */
+  private static final Set<String> RESERVED_SLUGS =
+      Set.of(
+          "services",
+          "daemons",
+          "libs",
+          "frontends",
+          "cli",
+          "images",
+          "api",
+          "q",
+          "main-navigation",
+          "projects",
+          "ci",
+          "workspaces",
+          "artifacts",
+          "docs",
+          "configuration",
+          "observability",
+          "githost",
+          "git",
+          "v2",
+          "events",
+          "platform-deployments",
+          "maintenance",
+          "mirror",
+          "orchestrator",
+          "system",
+          "idp",
+          "stt");
 
   @Inject ProjectRepository projectRepository;
 
@@ -234,12 +286,25 @@ public class ProjectService {
    * names the project's upstream backup organisation and its wrapper repository ({@code
    * <slug>-<slug>}), so a silent rename would create a project whose wrapper does not match the
    * upstream the caller meant, and nothing would say so until a push failed.
+   *
+   * <p><b>A {@linkplain #RESERVED_SLUGS reserved} slug is a 400 either way.</b> Supplied, it is
+   * refused loudly, because the caller named a value the platform cannot address. Derived, it takes
+   * the next free suffix like any other collision — the name says nothing about the slug, so
+   * "Docs" becoming {@code docs-2} is the same answer a second project called "Docs" would get.
    */
   private String resolveSlug(String name, String slug, String projectId) {
     if (slug == null || slug.isBlank()) {
       return nextFreeSlug(slugify(name, projectId));
     }
     String trimmed = slug.trim();
+    if (RESERVED_SLUGS.contains(trimmed)) {
+      throw new BadRequestException(
+          "The slug '"
+              + trimmed
+              + "' is reserved. A slug is the first path segment of every address on every"
+              + " application host, and that segment already routes something else — a repository"
+              + " category, a platform path, or an application's own segment. Choose another.");
+    }
     if (!ProjectSlugValidator.matches(trimmed)) {
       throw new BadRequestException(
           "Invalid project slug '"
@@ -271,9 +336,13 @@ public class ProjectService {
    * <p>A read before a write with no lock, so two concurrent creates of the same name can both pass
    * it and the second then fails the unique constraint as a 500. Accepted, as it is in epics:
    * project creation is hand-driven and a retry succeeds.
+   *
+   * <p>A {@linkplain #RESERVED_SLUGS reserved} slug counts as taken, so a project called "Docs"
+   * derives {@code docs-2} rather than failing. The suffixing is what keeps the reservation from
+   * making an ordinary display name uncreatable.
    */
   private String nextFreeSlug(String base) {
-    if (projectRepository.findBySlug(base).isEmpty()) {
+    if (isFree(base)) {
       return base;
     }
     for (int n = 2; ; n++) {
@@ -283,10 +352,15 @@ public class ProjectService {
               ? base
               : base.substring(0, MAX_SLUG_LENGTH - suffix.length()).replaceAll("-+$", "");
       String candidate = head + suffix;
-      if (projectRepository.findBySlug(candidate).isEmpty()) {
+      if (isFree(candidate)) {
         return candidate;
       }
     }
+  }
+
+  /** Neither reserved by the platform's routing nor already another project's. */
+  private boolean isFree(String slug) {
+    return !RESERVED_SLUGS.contains(slug) && projectRepository.findBySlug(slug).isEmpty();
   }
 
   /**

@@ -1,6 +1,18 @@
 # How qits-platform-deployments deploys this repo. It reads this file from the git host at
 # the built sha, so the answer travels with the commit.
 #
+# `routes` is the path prefix the edge sends here — on EVERY vhost, so /projects/api reaches this
+# service from any application's host. `host` is the DNS label of this service's OWN vhost,
+# projects.<env>.<domain>, where the SPA is served at `/`. It is spelled rather than derived only
+# because the derivation (application name minus qits-/qits-platform-) already answers `projects`
+# and this is the landing service — the edge sends `/` on the environment host here, so the label
+# is worth stating out loud.
+#
+# `navigation-entries` places this application in the shared sidebar: `<slot>.<Label>:<position>`,
+# comma separated. `system.Overview:1` puts it first in the global group, which is what replaced
+# the synthesized Home link. It supersedes the old flat `navigation: Projects:4` — that key still
+# parses, and naming both is an error.
+#
 # CARRYING THE FILE AT ALL is the other thing it says. qits-workspaces reads it on a release to
 # decide whether this repository deploys — a library or an SPA carries none and its release is
 # the trunk push alone — and then promotes onto the branch it is configured with
@@ -12,7 +24,8 @@
 deployment_target: environment
 
 routes: /projects
-navigation: Projects:4
+host: projects
+navigation-entries: system.Overview:1
 
 # THREE DATABASES, because this application opens three datasources with three Flyway lineages:
 # `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and

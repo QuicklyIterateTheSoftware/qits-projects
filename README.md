@@ -66,29 +66,33 @@ The `--enable-native-access` flag on the JVM line is for the sign-in terminal: i
 PTY through `java.lang.foreign`, and a runner jar cannot add its own JVM flags. The native binary
 needs nothing — it resolved native access at build time.
 
-Everything it serves sits under its gateway segment, `/projects`:
+**The client is served at `/` on this service's own host**, `projects.<env>.<domain>`, and every
+machine surface keeps the segment `/projects`:
 
 | | |
 |---|---|
-| `/projects` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path`); unmatched paths under it fall back to `index.html`, so the client's own router gets its deep links — except under the prefixes below |
+| `/` | the Angular SPA, built from `service/src/main/webui` by Quinoa and served by this process (`quarkus.quinoa.ui-root-path=/`); unmatched paths fall back to `index.html`, so the client's own router gets its deep links — except under the prefix below. This is also the platform's landing page: the edge sends `/` on the environment host here |
 | `/projects/api/…` | the REST surface (`quarkus.rest.path`) |
 | `/projects/api/projects/{projectId}/repositories/by-name/{repoName}` | `(project, name) → repositoryId`, what the git host resolves its name-addressed route `/git/<projectId>/<repoName>` through. Requires `qits:system` — the only route the git host calls, now that the post-receive intake has become a domain event |
 | `/projects/api/repositories/{repoId}/remote-login` | the sign-in websocket — a literal `@WebSocket` path, which does **not** follow `quarkus.rest.path` |
 | `/projects/mcp` | the MCP server, still *named* `repository` |
 | `/projects/q/openapi`, `/projects/q/swagger-ui` | the API document and its UI (`quarkus.http.non-application-root-path`) |
 
-qits-gateway routes verbatim by prefix — `/projects/*` → this service, no rewriting — so the segment
-is served here or the service is not reachable through it. There is no unprefixed form.
+The edge path-routes `/projects/*` here from **every** vhost, verbatim and with no rewriting, so a
+same-origin API call works from any application's host. The client's own addresses start at the
+first path segment — `/<projectSlug>/`, `/<projectSlug>/<category>/<repoName>/` — which is what
+leaves no segment to spend on naming the application.
 
-The SPA takes the *whole* segment, so it is the one that can swallow the rest: the deep-link
-fallback answers anything under `/projects` that matched no route, with `200 text/html`. That is
-right for a person and wrong for a machine, which parses `index.html` as garbage data — so
-`quarkus.quinoa.ignored-path-prefixes=/api,/q,/mcp` is spelled out rather than left to Quinoa's
-derivation, which reads `quarkus.rest.path` and `quarkus.http.non-application-root-path` and so
-knows nothing of `/projects/mcp`. Without `/mcp` in that list, `/projects/mcp/typo` answered `200`
-HTML while `/projects/mcp` itself answered `405`. Setting the key **replaces** the derivation rather
-than extending it, which is why `/api` and `/q` are repeated by hand, and the values are relative to
-`ui-root-path` — `/projects/api` there would silently match nothing.
+The SPA now takes the *whole root*, so it is the one that can swallow everything else: the deep-link
+fallback answers anything that matched no route with `200 text/html`. That is right for a person and
+wrong for a machine, which parses `index.html` as garbage data — so
+`quarkus.quinoa.ignored-path-prefixes=/projects` says what the fallback may not reach. **The values
+are absolute request paths** now that `ui-root-path` is `/`, and one prefix covers the lot:
+`/projects/api`, `/projects/q`, `/projects/mcp` and both daemon harnesses are all under it. Setting
+the key replaces Quinoa's derivation rather than extending it, and the derivation was incomplete
+here anyway — it reads `quarkus.rest.path` and `quarkus.http.non-application-root-path` and knows
+nothing of `/projects/mcp`, which is how `/projects/mcp/typo` once answered `200` HTML while
+`/projects/mcp` itself answered `405`.
 
 It was extracted as a library jar, on the reasoning that packaging it would need an auth variant, a
 webui and a main class. All three have lapsed: authentication terminates at `qits-gateway` and this

@@ -133,9 +133,53 @@ public class PackagedSurfaceIT {
   public void realRoutesAnswerAndOnlyUnderTheSegment() {
     given().when().get("/projects/api/projects").then().statusCode(200);
     given().when().get("/projects/api/repositories/no-such-repository").then().statusCode(404);
-    // qits-gateway routes verbatim by prefix, so there is no unprefixed form to fall back to. If
-    // this ever answers, quarkus.rest.path has stopped being applied.
-    given().when().get("/api/projects").then().statusCode(404);
+    // A path under the segment that names no route is a 404 and never the client: /projects is an
+    // ignored prefix, so the SPA's catch-all does not reach it. This is the assertion that fails
+    // the day somebody drops quarkus.quinoa.ignored-path-prefixes — a machine would then parse
+    // index.html as data.
+    given().when().get("/projects/api/nope").then().statusCode(404);
+    given().when().get("/projects/").then().statusCode(404);
+    // A wire path mistyped is the same story one route over.
+    given().when().get("/projects/mcp-typo").then().statusCode(404);
+  }
+
+  /**
+   * The client is served at the ROOT, because this service has a host of its own.
+   *
+   * <p>{@code <base href="/">} is what the whole flip comes down to: the Angular build writes it
+   * from {@code angular.json}, so a base of {@code /projects/} here means the packaged webui is a
+   * SPA built for the old shape and every asset it asks for would 404 on this host.
+   *
+   * <p>The deep link is the other half. {@code /qits/services/qits-ci} is a scoped address the
+   * client routes and the build produced no file for, so answering index.html is the SPA-routing
+   * fallback doing its job — and it must reach paths that look nothing like this service's own.
+   */
+  @Test
+  public void theClientIsServedAtTheRootAndAnswersDeepLinks() {
+    given()
+        .when()
+        .get("/")
+        .then()
+        .statusCode(200)
+        .contentType(org.hamcrest.Matchers.containsString("text/html"))
+        .body(org.hamcrest.Matchers.containsString("<base href=\"/\">"));
+    given()
+        .when()
+        .get("/qits/services/qits-ci")
+        .then()
+        .statusCode(200)
+        .contentType(org.hamcrest.Matchers.containsString("text/html"));
+  }
+
+  /** Health is under the segment, where the deployer's gate looks for it. */
+  @Test
+  public void healthIsReadyUnderTheSegment() {
+    given()
+        .when()
+        .get("/projects/q/health/ready")
+        .then()
+        .statusCode(200)
+        .body("status", org.hamcrest.Matchers.equalTo("UP"));
   }
 
   @Test

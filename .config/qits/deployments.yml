@@ -25,7 +25,12 @@ deployment_target: environment
 
 routes: /projects
 host: projects
-navigation-entries: system.Overview:1
+# Two placements. `system.Overview` is the environment's own door. `services.details.Api Docs`
+# hangs under every service's repository row at position 6 (after Docs 1, CI 2, Artifacts 3,
+# Configuration 4, Workspaces 5), and the `=api-docs` subpath opens THIS application's viewer route
+# under the scope — `/<project>/services/<repo>/api-docs` — which frames that repository's own
+# swagger-ui.
+navigation-entries: system.Overview:1, services.details.Api Docs:6=api-docs
 
 # THREE DATABASES, because this application opens three datasources with three Flyway lineages:
 # `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and
@@ -46,3 +51,8 @@ navigation-entries: system.Overview:1
 # unresolvable and the process refuses to boot at Flyway. Being dark (`qits.eventstream.enabled`)
 # would not save it — dark stops publishing, sweeping and dialling, never the datasource.
 resources: postgresql:db, postgresql:epics:qits_epics, postgresql:eventstream:qits_projects_eventstream
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /projects/q/swagger-ui

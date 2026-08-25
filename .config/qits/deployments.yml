@@ -27,10 +27,10 @@ routes: /projects
 host: projects
 # Two placements. `system.Overview` is the environment's own door. `services.details.Api Docs`
 # hangs under every service's repository row at position 6 (after Docs 1, CI 2, Artifacts 3,
-# Configuration 4, Workspaces 5), and the `=api-docs` subpath opens THIS application's viewer route
+# (Api Docs 1, Docs 2, Code 3, CI 4, Artifacts 5, Configuration 6, Workspaces 7) — Api Docs leads it — and the `=api-docs` subpath opens THIS application's viewer route
 # under the scope — `/<project>/services/<repo>/api-docs` — which frames that repository's own
 # swagger-ui.
-navigation-entries: system.Overview:1, services.details.Api Docs:6=api-docs
+navigation-entries: system.Overview:1, services.details.Api Docs:1=api-docs
 
 # THREE DATABASES, because this application opens three datasources with three Flyway lineages:
 # `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and

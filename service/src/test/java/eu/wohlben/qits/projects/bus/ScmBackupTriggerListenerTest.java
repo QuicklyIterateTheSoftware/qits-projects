@@ -105,10 +105,10 @@ class ScmBackupTriggerListenerTest {
   void aFrameNamingNoRepositoryIsSettledRatherThanRetriedForever() {
     listener.onFrame(
         new EventFrame(
-            UUID.randomUUID().toString(), "SCMDeleteTag", now(), "{\"tagName\":\"v1\"}", null, null));
+            UUID.randomUUID().toString(), "SCMDeleteTag", now(), "{\"tagName\":\"v1\"}", null, null, null));
     listener.onFrame(
         new EventFrame(
-            UUID.randomUUID().toString(), "SCMPublishCommit", now(), "not json at all", null, null));
+            UUID.randomUUID().toString(), "SCMPublishCommit", now(), "not json at all", null, null, null));
 
     assertTrue(backups.pushed.isEmpty(), "nothing to back up, and nothing thrown");
   }
@@ -146,7 +146,7 @@ class ScmBackupTriggerListenerTest {
         envelope.occurredAt(),
         envelope.payload(),
         null,
-        envelope.parentId());
+        envelope.parentId(), null);
   }
 
   private static final class RecordingBackups extends BackupPushService {

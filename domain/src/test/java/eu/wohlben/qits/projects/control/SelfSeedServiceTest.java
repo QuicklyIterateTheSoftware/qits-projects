@@ -186,11 +186,11 @@ public class SelfSeedServiceTest {
 
   /**
    * The whole point of the rework, and its sharpest consequence: a placeable repository the wrapper
-   * does not declare is not part of the project, so the reconcile deregisters its row. Its history
-   * on the git host is untouched — putting the entry back re-adopts it.
+   * does not declare is not part of the project, so the reconcile reports it undeclared. It deletes
+   * nothing — a delete would take the repository off the git host, and a person decides that.
    */
   @Test
-  public void aPlaceableRowTheWrapperDoesNotDeclareIsDeregistered() throws Exception {
+  public void aPlaceableRowTheWrapperDoesNotDeclareIsReportedUndeclared() throws Exception {
     Project project =
         projectService.create("qits", "qits", "pre-existing", fixture(QITS_WRAPPER_FIXTURE));
     Repository stray =
@@ -202,12 +202,12 @@ public class SelfSeedServiceTest {
     // A count query rather than findByIdOptional: the test shares the request-scoped persistence
     // context that loaded this row, and a find would hand back its cached copy.
     assertEquals(
-        0,
+        1,
         repositoryRepository.count("id = ?1", stray.id),
-        "a SERVICE row no wrapper entry names loses its row");
+        "a SERVICE row no wrapper entry names keeps its row until somebody deletes it");
     assertTrue(
         Files.isDirectory(Path.of(gitHost.fetchUrl(stray.id))),
-        "its repository on the git host is untouched — deregistration is about membership only");
+        "and its repository on the git host is untouched");
   }
 
   /**
@@ -218,8 +218,8 @@ public class SelfSeedServiceTest {
    * is the wrapper alone now, and the wrapper's archetype cannot drift (a row is the wrapper by
    * being {@code PROJECT}). The live case that forced this into existence was {@code qits-backend},
    * seeded as a placeable {@code SERVICE} before the archetype rework and therefore one reconcile
-   * away from being deregistered for not being a submodule of a wrapper it was never meant to be
-   * in. That repository is out of the platform now; the behaviour it bought is not, and it is what
+   * away from being reported undeclared for not being a submodule of a wrapper it was never meant
+   * to be in. That repository is out of the platform now; the behaviour it bought is not, and it is what
    * the next entry added here will rely on.
    */
   @Test

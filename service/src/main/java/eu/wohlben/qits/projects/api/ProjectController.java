@@ -32,6 +32,9 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.media.Content;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
@@ -258,7 +261,16 @@ public class ProjectController {
      *     drift the reconcile action resolves.
      */
     public record Response(List<Entry> entries, WrapperReconcileService.WrapperView wrapper) {
-      public record Entry(RepositoryDto repository) {}
+      /**
+       * @param declared whether the wrapper's {@code .gitmodules} names this repository — false is
+       *     a row that is not part of the project any more, which the reconcile reports {@code
+       *     UNDECLARED} and never deletes on its own. True for everything membership does not apply
+       *     to: the wrapper itself, an unplaceable archetype, a project with no wrapper, and a
+       *     manifest that is unreadable or declares nothing.
+       */
+      public record Entry(
+          RepositoryDto repository,
+          @Schema(description = "The wrapper's .gitmodules names this repository") boolean declared) {}
     }
   }
 
@@ -275,12 +287,31 @@ public class ProjectController {
   public ListProjectRepositoriesRequest.Response listRepositories(
       @PathParam("projectId") String projectId) {
     var repos = projectService.getRepositories(projectId);
+    var wrapper = wrapperReconcileService.view(projectId);
+    // The same reading of membership the write guard and the reconcile take, off the view already
+    // computed for the response: a manifest with entries decides, and anything else declares
+    // everything. A second spelling of the rule here is how the page and the guard would drift.
+    Set<String> declaredIds =
+        wrapper == null
+            ? Set.of()
+            : wrapper.entries().stream()
+                .map(WrapperReconcileService.WrapperView.Entry::repositoryId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+    boolean manifestDecides = wrapper != null && !wrapper.entries().isEmpty();
     var entries =
         repos.stream()
-            .map(r -> new ListProjectRepositoriesRequest.Response.Entry(repositoryMapper.toDto(r)))
+            .map(
+                r ->
+                    new ListProjectRepositoriesRequest.Response.Entry(
+                        repositoryMapper.toDto(r),
+                        !manifestDecides
+                            || r.archetype == null
+                            || !r.archetype.isPlaceable()
+                            || r.id.equals(wrapper.repositoryId())
+                            || declaredIds.contains(r.id)))
             .toList();
-    return new ListProjectRepositoriesRequest.Response(
-        entries, wrapperReconcileService.view(projectId));
+    return new ListProjectRepositoriesRequest.Response(entries, wrapper);
   }
 
   /**
@@ -485,7 +516,8 @@ public class ProjectController {
 
   public static record ReconcileProjectRepositoriesRequest() {
     /**
-     * @param entries one line per wrapper entry, plus one per row the wrapper no longer names
+     * @param entries one line per wrapper entry, plus one {@code UNDECLARED} line per row the
+     *     wrapper no longer names
      */
     public record Response(
         String projectId,
@@ -506,9 +538,10 @@ public class ProjectController {
           "The wrapper repository is the project's configuration: every submodule entry gets a"
               + " repository (adopted when the git host already serves it, cloned from the entry's"
               + " backend otherwise), the directory an entry sits under decides its archetype, and"
-              + " a repository no entry names is deregistered — its row goes, its history on the"
-              + " git host stays. Idempotent, and the way a project imported from a wrapper url is"
-              + " materialized.")
+              + " a repository no entry names is reported UNDECLARED and left alone. This never"
+              + " deletes: a deleted repository loses its history on the git host, so the answer"
+              + " names the strays and a person decides. Idempotent, and the way a project imported"
+              + " from a wrapper url is materialized.")
   @APIResponse(
       responseCode = "200",
       description =

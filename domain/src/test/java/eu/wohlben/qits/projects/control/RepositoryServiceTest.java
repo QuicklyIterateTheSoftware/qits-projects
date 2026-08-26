@@ -127,11 +127,49 @@ public class RepositoryServiceTest {
     // Delete via the aggregate root (project) — the path a seed reset takes.
     projectService.delete(project.id);
 
-    assertFalse(Files.exists(mirrorDir), "the local mirror should be removed after delete (⚖2 — the"
-        + " git host's own copy is untouched, there is just no delete verb for it to reach)");
+    assertFalse(Files.exists(mirrorDir), "the local mirror should be removed after delete");
+    assertTrue(
+        fakeGitHostRepositories.find(repo.id).isEmpty(),
+        "and so should the git host's own repository — a delete is the whole footprint now, which"
+            + " is what overruled ⚖2");
     assertTrue(
         workspaceLifecycle.releasedRepository(repo.id),
         "the workspaces context is asked to release the repository before its row goes");
+    assertThrows(NotFoundException.class, () -> repositoryService.get(repo.id));
+  }
+
+  /**
+   * The delete calls the git host inside its own transaction, so the two sides cannot disagree: a
+   * host that fails takes the request down with it and the row is still there afterwards.
+   */
+  @Test
+  public void aGitHostThatFailsTheDeleteKeepsTheRow() throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Delete Host Failure", null);
+    var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
+
+    fakeGitHostRepositories.failDeleteOf(repo.id);
+    try {
+      assertThrows(GitHostException.class, () -> repositoryService.deleteInternal(repo.id));
+    } finally {
+      fakeGitHostRepositories.allowDeletes();
+    }
+
+    assertEquals(repo.id, repositoryService.get(repo.id).id, "the row survives the host's failure");
+  }
+
+  /** A host holding nothing under that id is where the delete was heading, so the row still goes. */
+  @Test
+  public void aRepositoryTheGitHostNoLongerHoldsStillLosesItsRow() throws Exception {
+    String fixtureUrl = GitFixtures.path("testing-repo.git");
+    var project = projectService.create("Delete Already Gone", null);
+    var repo = repositoryService.cloneRepository(fixtureUrl, null, project);
+
+    assertTrue(fakeGitHostRepositories.delete(repo.id), "the host held it before this");
+    assertFalse(fakeGitHostRepositories.delete(repo.id), "and answers 'nothing here' now");
+
+    repositoryService.deleteInternal(repo.id);
+
     assertThrows(NotFoundException.class, () -> repositoryService.get(repo.id));
   }
 

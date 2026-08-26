@@ -447,6 +447,11 @@ public class ProjectService {
         });
   }
 
+  /**
+   * Deletes the project and every repository under it, wrapper included — and because each one goes
+   * through {@link RepositoryService#deleteInternal}, every one of those repositories is deleted on
+   * the git host too, history and all.
+   */
   @Transactional
   public void delete(String id) {
     Project project = get(id);

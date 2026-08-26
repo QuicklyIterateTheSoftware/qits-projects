@@ -265,6 +265,31 @@ public class ProjectRepositoryControllerTest {
         .body("wrapper.entries[0].name", equalTo("keeper"));
   }
 
+  /**
+   * What the project setup page reads a stray off: {@code declared} is the wrapper's answer about
+   * one row, and it is false for exactly the rows the reconcile reports {@code UNDECLARED}. The
+   * wrapper itself is always declared — membership is not a question that applies to the project
+   * root.
+   */
+  @Test
+  public void theListingSaysWhichRowsTheWrapperDeclares() {
+    String projectId = createProject("Declared Listing");
+    postRepository(projectId, null, "member", RepositoryArchetype.LIBRARY)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode());
+    registerStray(projectId);
+
+    given()
+        .when()
+        .get("/projects/api/projects/" + projectId + "/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("entries.find { it.repository.name == 'member' }.declared", equalTo(true))
+        .body("entries.find { it.repository.name == 'testing-repo' }.declared", equalTo(false))
+        .body(
+            "entries.find { it.repository.archetype == 'PROJECT' }.declared", equalTo(true));
+  }
+
   // --- backup triggers ---
 
   /**

@@ -22,9 +22,9 @@ import org.jboss.logging.Logger;
  * Brings a project's rows in line with its wrapper's {@code .gitmodules}.
  *
  * <p>The wrapper <b>is</b> the project's configuration, and this is what makes that true of the
- * database too: every entry gets a row, every placeable row without an entry loses its row, and the
- * directory an entry sits under decides the row's archetype. Importing a wrapper url and running
- * this is how a whole project is restored.
+ * database too: every entry gets a row, every placeable row without an entry is reported as
+ * undeclared, and the directory an entry sits under decides the row's archetype. Importing a wrapper
+ * url and running this is how a whole project is restored.
  *
  * <p>It replaces the recursive submodule import, which had the relationship backwards: it walked
  * whatever a repository happened to reference, at any depth, and registered all of it as siblings
@@ -45,10 +45,10 @@ import org.jboss.logging.Logger;
  *   <li>anything else is skipped with a warning that says what was missing.
  * </ol>
  *
- * <p>Deregistration is deliberately the lightest possible action ({@link
- * RepositoryService#deregisterRow}): the row goes, the git host's repository and the mirror stay. A
- * removed entry is a statement about membership, and putting the entry back re-adopts the very same
- * repository.
+ * <p><b>This reconcile deletes nothing (2026-08-26).</b> A placeable row no entry names is
+ * reported {@code UNDECLARED} and left exactly as it is. Deleting a repository destroys its history
+ * on the git host now, and an edit to one file is not consent to that — so the answer names the
+ * rows, and a person decides in the UI whether to delete one or put its wrapper entry back.
  *
  * <p>Every item is reconciled in its own try/catch. One entry that cannot be resolved never denies
  * the rest, and the outcome list is the answer rather than an exception — the same shape as {@code
@@ -74,8 +74,8 @@ public class WrapperReconcileService {
      * missing and now names the forge twin the wrapper implies.
      */
     SYNC_TARGET_UPDATED,
-    /** A placeable row no entry matched: its row is gone, its repository is not. */
-    DEREGISTERED,
+    /** A placeable row no entry matched: nothing was done to it, and somebody has to decide. */
+    UNDECLARED,
     /** Nothing could be decided — see the warning. */
     SKIPPED
   }
@@ -87,9 +87,9 @@ public class WrapperReconcileService {
    * client has to read {@code outcome} to tell them apart:
    *
    * <ul>
-   *   <li>a <b>{@code DEREGISTERED}</b> line is about a row the wrapper does <em>not</em> name, so
+   *   <li>an <b>{@code UNDECLARED}</b> line is about a row the wrapper does <em>not</em> name, so
    *       there is no path: {@code path} is null, {@code name} is the row's alias, {@code
-   *       repositoryId} is the row that was removed and {@code archetype} is the one it carried.
+   *       repositoryId} is the row still standing and {@code archetype} is the one it carries.
    *   <li>a wrapper that declares nothing answers with a <b>single {@code SKIPPED}</b> line about
    *       the wrapper itself: {@code path}, {@code name} and {@code archetype} are all null and
    *       {@code repositoryId} is the wrapper's own id.
@@ -173,10 +173,10 @@ public class WrapperReconcileService {
     }
 
     if (declared.isEmpty()) {
-      // An empty manifest is not a manifest. Deregistering every component of a project whose
-      // wrapper simply has not started declaring them yet would delete the project's contents on
-      // the strength of a file that is not there — so the one entry is what turns the wrapper into
-      // the configuration, exactly as the membership guard reads it.
+      // An empty manifest is not a manifest. Calling every component of a project undeclared
+      // because its wrapper simply has not started declaring them yet would report the whole
+      // project as strays — so the one entry is what turns the wrapper into the configuration,
+      // exactly as the membership guard reads it.
       outcomes.add(
           new EntryOutcome(
               null,
@@ -185,9 +185,10 @@ public class WrapperReconcileService {
               null,
               Outcome.SKIPPED,
               "The wrapper declares no submodules, so nothing was registered and nothing was"
-                  + " deregistered. Commit a .gitmodules entry per component and run this again."));
+                  + " reported undeclared. Commit a .gitmodules entry per component and run this"
+                  + " again."));
     } else {
-      outcomes.addAll(deregisterUnmatched(project, matchedRepoIds));
+      outcomes.addAll(reportUndeclared(project, matchedRepoIds));
     }
     return new Reconciliation(projectId, wrapper.id, branch, List.copyOf(outcomes));
   }
@@ -477,38 +478,26 @@ public class WrapperReconcileService {
   // -------------------------------------------------------------------------------------------
 
   /**
-   * Deregisters every placeable row of the project that no wrapper entry claimed. Unplaceable rows
-   * ({@code FORK}, {@code SERVICE_TEMPLATE}) and the wrapper itself are left alone — they were never
-   * expected in the manifest.
+   * Reports every placeable row of the project that no wrapper entry claimed, and <b>changes
+   * nothing</b>. Unplaceable rows ({@code FORK}, {@code SERVICE_TEMPLATE}) and the wrapper itself
+   * are left out — they were never expected in the manifest.
    */
-  private List<EntryOutcome> deregisterUnmatched(Project project, Set<String> matchedRepoIds) {
-    List<Repository> strays =
-        repositoryRepository.find("project.id", project.id).list().stream()
-            .filter(repo -> !matchedRepoIds.contains(repo.id))
-            .filter(repo -> repo.archetype != null && repo.archetype.isPlaceable())
-            .toList();
-    List<EntryOutcome> outcomes = new ArrayList<>();
-    for (Repository stray : strays) {
-      String name = repositoryNameRepository.nameFor(stray).orElse(stray.id);
-      try {
-        repositoryService.deregisterRow(stray.id);
-        outcomes.add(
-            new EntryOutcome(
-                null,
-                name,
-                stray.id,
-                stray.archetype,
-                Outcome.DEREGISTERED,
-                "No wrapper entry names this repository, so it is not part of the project. Its"
-                    + " history on the git host is untouched — re-add the entry to bring it back."));
-      } catch (RuntimeException e) {
-        LOG.errorf(e, "Could not deregister repository %s", stray.id);
-        outcomes.add(
-            new EntryOutcome(
-                null, name, stray.id, stray.archetype, Outcome.SKIPPED, e.getMessage()));
-      }
-    }
-    return outcomes;
+  private List<EntryOutcome> reportUndeclared(Project project, Set<String> matchedRepoIds) {
+    return repositoryRepository.find("project.id", project.id).list().stream()
+        .filter(repo -> !matchedRepoIds.contains(repo.id))
+        .filter(repo -> repo.archetype != null && repo.archetype.isPlaceable())
+        .map(
+            stray ->
+                new EntryOutcome(
+                    null,
+                    repositoryNameRepository.nameFor(stray).orElse(stray.id),
+                    stray.id,
+                    stray.archetype,
+                    Outcome.UNDECLARED,
+                    "No wrapper entry names this repository, so it is not part of the project."
+                        + " Delete it from the project setup page, or add the entry back to the"
+                        + " wrapper."))
+        .toList();
   }
 
   /**

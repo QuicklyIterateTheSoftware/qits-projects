@@ -117,7 +117,10 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
 
   // --- the lifecycle verbs: PUT/GET /git/<repoId> -----------------------------------
 
-  /** {@code PUT}/{@code GET …/:repoId} — the same contract {@code HttpGitHostRepositories} speaks. */
+  /**
+   * {@code PUT}/{@code GET}/{@code DELETE …/:repoId} — the same contract {@code
+   * HttpGitHostRepositories} speaks.
+   */
   private void lifecycle(HttpExchange exchange, String repoId) throws IOException {
     Path bare = root.resolve(repoId + ".git");
     String method = exchange.getRequestMethod();
@@ -143,6 +146,15 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
         return;
       }
       respondRepository(exchange, 200, repoId, bare);
+      return;
+    }
+    if ("DELETE".equals(method)) {
+      if (!Files.isDirectory(bare)) {
+        respond(exchange, 404, null, new byte[0]);
+        return;
+      }
+      deleteRecursively(bare);
+      respond(exchange, 204, null, new byte[0]);
       return;
     }
     respond(exchange, 405, null, new byte[0]);

@@ -19,8 +19,8 @@ import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * The shipped {@link GitHostRepositories}: {@code PUT}/{@code GET} against qits-githost's
- * {@code /git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §3.2).
+ * The shipped {@link GitHostRepositories}: {@code PUT}/{@code GET}/{@code DELETE} against
+ * qits-githost's {@code /git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §3.2).
  *
  * <p>The url is {@link GitHostAddress#fetchUrl}: the same {@code
  * <qits.githost.url>/git/<repoId>} the mirror's clone, fetch and {@code ls-remote} use,
@@ -123,6 +123,27 @@ public class HttpGitHostRepositories implements GitHostRepositories {
       throw new GitHostException(
           "Could not read qits-githost's answer for " + repoId + " at " + url, e);
     }
+  }
+
+  @Override
+  public boolean delete(String repoId) {
+    String url = gitHost.fetchUrl(repoId);
+    HttpResponse<String> response = send(request(url).DELETE().build(), "deleting");
+    if (response.statusCode() == 204) {
+      return true;
+    }
+    if (response.statusCode() == 404) {
+      return false;
+    }
+    throw new GitHostException(
+        "qits-githost answered "
+            + response.statusCode()
+            + " deleting "
+            + repoId
+            + " at "
+            + url
+            + ": "
+            + response.body());
   }
 
   private HttpResponse<String> send(HttpRequest request, String verbing) {

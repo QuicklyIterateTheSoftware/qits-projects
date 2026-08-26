@@ -8,7 +8,9 @@ extracted from the monorepo with its history (see `migration-plan.md` §3.1 ther
 A **project is its wrapper repository.** It starts as a single repository and grows into a
 polyrepository, and the wrapper's `.gitmodules` is the project's configuration: every component is a
 submodule under a directory that names its type, and a repository the wrapper does not name is not
-part of the project. Importing a wrapper url restores the whole project. Submodule urls are
+part of the project — the reconcile reports such a row `UNDECLARED` and the listing marks it
+`declared: false`, but nothing deletes it on its own, because deleting a repository now deletes it on
+the git host too. Importing a wrapper url restores the whole project. Submodule urls are
 **relative** (`../<name>.git`), so the same wrapper resolves its siblings at a forge and on this
 platform's name-addressed git route with nothing to rewrite in between.
 

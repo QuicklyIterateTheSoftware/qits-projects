@@ -189,11 +189,12 @@ public class WrapperReconcileServiceTest {
 
   /**
    * The sharp end of the model: a placeable repository the wrapper does not declare is not part of
-   * the project. Its row goes; its history does not, so re-adding the entry re-adopts it.
+   * the project. The reconcile says so and stops there — a delete would take the repository off the
+   * git host, and one file edit is not consent to that, so a person decides.
    */
   @Test
-  public void aPlaceableRowNoEntryNamesIsDeregisteredButItsHistorySurvives() throws Exception {
-    Project project = projectWithManifest("Reconcile Deregister");
+  public void aPlaceableRowNoEntryNamesIsReportedUndeclaredAndKept() throws Exception {
+    Project project = projectWithManifest("Reconcile Undeclared");
     Repository stray =
         projectService.createRepositoryUnderProject(
             project.id, fixture("submodule-cycle-a.git"), RepositoryArchetype.SERVICE);
@@ -201,18 +202,17 @@ public class WrapperReconcileServiceTest {
     var outcomes = outcomesByName(reconcileService.reconcile(project.id));
 
     assertEquals(
-        WrapperReconcileService.Outcome.DEREGISTERED,
-        outcomes.get("submodule-cycle-a").outcome());
+        WrapperReconcileService.Outcome.UNDECLARED, outcomes.get("submodule-cycle-a").outcome());
     // A count query rather than a find: this test shares the persistence context that loaded the
     // row, and a find would hand back its cached copy.
-    assertEquals(0, repositoryRepository.count("id = ?1", stray.id));
+    assertEquals(1, repositoryRepository.count("id = ?1", stray.id), "the row stays");
     assertTrue(
         Files.isDirectory(Path.of(gitHost.fetchUrl(stray.id))),
-        "the git host's repository is untouched — deregistering is about membership only");
+        "and so does its repository on the git host");
   }
 
   @Test
-  public void anUnplaceableRowIsNeverExpectedInTheWrapperAndNeverDeregistered() throws Exception {
+  public void anUnplaceableRowIsNeverExpectedInTheWrapperAndNeverReported() throws Exception {
     Project project = projectWithManifest("Reconcile Fork");
     Repository fork =
         projectService.createRepositoryUnderProject(
@@ -224,12 +224,12 @@ public class WrapperReconcileServiceTest {
   }
 
   /**
-   * An empty manifest is not a manifest. Deregistering every component of a project whose wrapper
-   * has not started declaring them would delete its contents on the strength of a file that is not
-   * there.
+   * An empty manifest is not a manifest. Calling every component of a project undeclared because its
+   * wrapper has not started declaring them would report the whole project as strays on the strength
+   * of a file that is not there.
    */
   @Test
-  public void aWrapperWithNoSubmodulesRegistersNothingAndDeregistersNothing() throws Exception {
+  public void aWrapperWithNoSubmodulesRegistersNothingAndReportsNothing() throws Exception {
     Project project = projectService.create("Reconcile Empty", "empty-manifest", null);
     Repository repo =
         projectService.createRepositoryUnderProject(
@@ -240,7 +240,7 @@ public class WrapperReconcileServiceTest {
     assertEquals(1, reconciliation.entries().size());
     assertEquals(
         WrapperReconcileService.Outcome.SKIPPED, reconciliation.entries().get(0).outcome());
-    assertEquals(1, repositoryRepository.count("id = ?1", repo.id), "nothing was deregistered");
+    assertEquals(1, repositoryRepository.count("id = ?1", repo.id), "nothing was reported");
   }
 
   @Test

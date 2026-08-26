@@ -2284,9 +2284,10 @@ public class RepositoryService {
   }
 
   /**
-   * Deletes a repository, <b>refusing the project's wrapper</b>: the wrapper is the project root
-   * and goes with the project, not on its own. {@code ProjectService.delete} tears it down through
-   * {@link #deleteInternal}.
+   * Deletes a repository — its row, its workspaces, its mirror and <b>its repository on the git
+   * host</b> — <b>refusing the project's wrapper</b>: the wrapper is the project root and goes with
+   * the project, not on its own. {@code ProjectService.delete} tears it down through {@link
+   * #deleteInternal}.
    *
    * <p>A member of the wrapper leaves the wrapper first, in its own commit and push. That ordering
    * is the point: a {@code .gitmodules} entry pointing at a repository nobody serves any more breaks
@@ -2334,38 +2335,17 @@ public class RepositoryService {
   }
 
   /**
-   * Drops the row for a repository the wrapper no longer declares, and <b>nothing more</b> — the
-   * reconcile's deregistration.
-   *
-   * <p>Deliberately lighter than {@link #deleteInternal}: the workspaces go, because a workspace on
-   * a repository the project has no record of is a container nobody can reach, but the git host's
-   * repository and this service's mirror both stay. Deregistering is a statement about membership,
-   * not about the history — put the entry back in the wrapper and the next reconcile adopts the very
-   * same repository again, with everything still there.
-   */
-  @Transactional
-  public void deregisterRow(String repoId) {
-    Repository repo = get(repoId);
-    if (!workspaceLifecycle.isUnsatisfied()) {
-      try {
-        workspaceLifecycle.get().releaseRepository(repoId);
-      } catch (RuntimeException e) {
-        LOG.warnf(
-            "Workspace teardown failed while deregistering repository %s: %s",
-            repoId, e.getMessage());
-      }
-    }
-    repositoryRepository.delete(repo);
-  }
-
-  /**
    * {@link #delete} without the wrapper guard — the path a project deletion takes.
    *
-   * <p><b>The git host's copy is not touched (⚖2).</b> There is no delete verb on the host — see
-   * {@code GitHostRepositories}' javadoc — so this removes the row, the repository's workspaces and
-   * its local mirror cache, and leaves the history the host holds exactly where it is. A repository
-   * deleted here and re-created (or re-adopted) at the same id finds that history still there; a
-   * mirror is a cache and deleting it costs nothing worse than a re-clone on next use.
+   * <p><b>The git host's repository goes too (2026-08-26, overruling ⚖2).</b> A delete here is the
+   * whole footprint: the workspaces, the repository on qits-githost, this service's mirror cache and
+   * the row. There is no tombstone and no retention — the history is gone, and re-creating the same
+   * id gives a new empty repository.
+   *
+   * <p>The host call runs <b>inside this transaction and before the row goes</b>, so a host that
+   * fails fails the delete and the row survives: the two sides can be gone together or present
+   * together, never one without the other. A host that answers "no such repository" is not a
+   * failure — already gone is the state this method is asking for — and the row still goes.
    */
   @Transactional
   public void deleteInternal(String repoId) {
@@ -2386,6 +2366,10 @@ public class RepositoryService {
         LOG.warnf("Workspace teardown failed while deleting repository %s: %s", repoId, e.getMessage());
       }
     }
+    // The host before the mirror and the row: this is the one step that cannot be undone by a
+    // rollback, so it is also the one whose failure has to keep the row. A false answer is the host
+    // saying it holds nothing under that id, which is where this delete was heading anyway.
+    gitHostRepositories.delete(repoId);
     // An adopted repository (see adoptExistingOrigin) never had a mirror cloned, so this is a no-op
     // for one — deleteRecursively already tolerates a path that does not exist.
     deleteRecursively(gitMirrors.of(repoId).gitDir());

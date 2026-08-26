@@ -26,9 +26,9 @@ import org.junit.jupiter.api.Test;
 /**
  * {@link HttpGitHostRepositories} against a local server standing in for qits-githost — plain
  * JUnit over a directly-constructed bean. What is under
- * test is the wire shape: the exact absolute url, method and body {@code ensure}/{@code find} send
- * (§2.3's {@code PUT}/{@code GET /git/<repoId>}), and which status codes become which
- * outcome.
+ * test is the wire shape: the exact absolute url, method and body {@code ensure}/{@code find}/{@code
+ * delete} send (§2.3's {@code PUT}/{@code GET}/{@code DELETE /git/<repoId>}), and which status
+ * codes become which outcome.
  */
 class HttpGitHostRepositoriesTest {
 
@@ -181,5 +181,40 @@ class HttpGitHostRepositoriesTest {
         assertThrows(
             GitHostException.class, () -> repositoriesAgainst("http://127.0.0.1:1").find("repo-1"));
     assertTrue(failure.getMessage().contains("unreachable"), "got: " + failure.getMessage());
+  }
+
+  // --- delete() ---------------------------------------------------------------------------------
+
+  @Test
+  void deleteSendsADeleteToTheExactGitUrlAndReportsThatTheHostHadIt() throws Exception {
+    String base = startServer();
+    status.set(204);
+
+    boolean deleted = repositoriesAgainst(base).delete("repo-1");
+
+    assertTrue(deleted, "204 is the host saying it deleted one");
+    assertEquals(1, received.size());
+    Received request = received.get(0);
+    assertEquals("DELETE", request.method());
+    assertEquals("/git/repo-1", request.path());
+    assertEquals("Bearer machine-token", request.authorization());
+  }
+
+  @Test
+  void deleteReports404AsNothingToDeleteRatherThanAFailure() throws Exception {
+    String base = startServer();
+    status.set(404);
+
+    assertFalse(repositoriesAgainst(base).delete("no-such-repo"), "already gone is not a failure");
+  }
+
+  @Test
+  void deleteThrowsOnAServerError() throws Exception {
+    String base = startServer();
+    status.set(500);
+
+    GitHostException failure =
+        assertThrows(GitHostException.class, () -> repositoriesAgainst(base).delete("repo-1"));
+    assertTrue(failure.getMessage().contains("500"), "got: " + failure.getMessage());
   }
 }

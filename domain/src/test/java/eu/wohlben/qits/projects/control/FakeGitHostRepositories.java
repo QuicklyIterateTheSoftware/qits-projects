@@ -6,13 +6,16 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The test-side {@link GitHostRepositories}: {@code git init --bare -b <branch>} at the address
- * {@link GitHostAddress} names, standing in for qits-githost's {@code PUT}/{@code GET
- * /git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §5).
+ * {@link GitHostAddress} names, standing in for qits-githost's {@code PUT}/{@code GET}/{@code
+ * DELETE /git/<repoId>} (projects-volume-decoupling-plan.md §2.3, §5).
  *
  * <p>The only implementation of this <b>mandatory</b> port on the {@code domain} test classpath —
  * {@code HttpGitHostRepositories} lives in {@code service/src/main} and is not visible here — so no
@@ -33,6 +36,8 @@ import java.util.Optional;
 public class FakeGitHostRepositories implements GitHostRepositories {
 
   @Inject GitHostAddress gitHost;
+
+  private final Set<String> failingDeletes = ConcurrentHashMap.newKeySet();
 
   @Override
   public boolean ensure(String repoId, String defaultBranch) {
@@ -58,6 +63,38 @@ public class FakeGitHostRepositories implements GitHostRepositories {
       return Optional.empty();
     }
     return Optional.of(new HostRepository(repoId, symbolicRef(bare)));
+  }
+
+  @Override
+  public boolean delete(String repoId) {
+    if (failingDeletes.contains(repoId)) {
+      throw new GitHostException("The fake git host was told to fail the delete of " + repoId);
+    }
+    Path bare = bareOf(repoId);
+    if (!Files.isDirectory(bare)) {
+      return false;
+    }
+    try (var paths = Files.walk(bare)) {
+      for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+        Files.delete(path);
+      }
+    } catch (IOException e) {
+      throw new GitHostException("Could not delete the fake host directory for " + repoId, e);
+    }
+    return true;
+  }
+
+  /**
+   * Makes {@link #delete} throw for {@code repoId} — the host-fails arm of a repository delete,
+   * which has to keep the row. Cleared by {@link #allowDeletes}; this bean outlives a test method.
+   */
+  public void failDeleteOf(String repoId) {
+    failingDeletes.add(repoId);
+  }
+
+  /** Undoes every {@link #failDeleteOf}. */
+  public void allowDeletes() {
+    failingDeletes.clear();
   }
 
   /**

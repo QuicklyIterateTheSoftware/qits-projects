@@ -264,11 +264,13 @@ names, with a relative url. Three rules follow, and every one of them is enforce
 - **The directory is the archetype.** `RepositoryArchetype.fromDirectory` is the derivation and the
   reconcile applies it — moving a submodule between directories is how a component changes kind.
 - **A repository the wrapper does not name is not part of the project.** Write paths refuse it
-  (`requireWrapperMembership`) and the reconcile deregisters its row, keeping its history on the git
-  host so re-adding the entry re-adopts it.
+  (`requireWrapperMembership`), the reconcile reports it `UNDECLARED` and the listing marks it
+  `declared: false`. **The reconcile deletes nothing** (2026-08-26): a delete now destroys the
+  repository on the git host, and an edit to one file is not consent to that, so a person decides in
+  the UI.
 - **An empty `.gitmodules` is not a manifest.** A wrapper declaring no submodules enforces nothing
-  and deregisters nothing. Without that, shipping either rule would have bricked every project that
-  had not adopted the model yet.
+  and reports nothing undeclared. Without that, shipping either rule would have bricked every
+  project that had not adopted the model yet.
 
 `WrapperSubmoduleWriter` is the only writer of that file and `WrapperGitmodules` the only editor —
 textual, one section at a time, every other byte where it was, because this is a file people review.
@@ -782,8 +784,9 @@ the push to the twin has already happened — the case `inNewTx` exists for) cal
 the module's existing idiom. Everything else in those two services reaches out of the database inside
 its transaction and a retry would do it a second time: `cloneRepository`, `cloneWrapperOrigin`,
 `createBlankRepository`, `initWrapperOrigin` and `adoptExistingOrigin` clone, push and call the git
-host over HTTP; `setMainBranch` and `deleteBranch` run `ls-remote` and a push; `deleteInternal`,
-`deregisterRow` and `ProjectService.delete` tear down workspaces and remove mirror directories;
+host over HTTP; `setMainBranch` and `deleteBranch` run `ls-remote` and a push; `deleteInternal` and
+`ProjectService.delete` tear down workspaces, call the git host's delete and remove mirror
+directories;
 `attachBackupRemote` is rows only but its sole caller `adoptWrapperRepository` is `@Transactional`,
 so a wrap there would nest. `RepositoryNameResolver` keeps its `DbRetry.call` around the race loop.
 Honest partial coverage, not a contorted wrap.

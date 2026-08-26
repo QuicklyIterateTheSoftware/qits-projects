@@ -174,6 +174,14 @@ public class RepositoryController {
 
   @DELETE
   @Path("/{repoId}")
+  @Operation(
+      summary = "Delete a repository, on the git host as well",
+      description =
+          "Deletes the row, the repository's workspaces, its local mirror, its entry in the"
+              + " project's wrapper if it is still there, and the repository itself on"
+              + " qits-githost. The history is gone: there is no tombstone and no retention, and"
+              + " a git host that fails the delete fails the whole request, leaving the row. The"
+              + " project's wrapper repository is refused — delete the project instead.")
   public DeleteRepositoryRequest.Response delete(@PathParam("repoId") String repoId) {
     repositoryService.delete(repoId);
     return new DeleteRepositoryRequest.Response(true);

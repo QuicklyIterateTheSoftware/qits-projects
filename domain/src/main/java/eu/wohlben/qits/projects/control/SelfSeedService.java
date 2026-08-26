@@ -45,7 +45,7 @@ import org.jboss.logging.Logger;
  *   <li>The project (named {@value #PROJECT_NAME}) is created if absent, matched by name otherwise.
  *   <li>The wrapper's row is asserted onto the manifest, then it goes through the adopt seam and is
  *       reconciled — which registers, adopts or re-archetypes every component it declares and
- *       deregisters every placeable row it does not.
+ *       reports every placeable row it does not.
  * </ul>
  *
  * <p>Per-item matching also makes partial failure self-healing: a boot that created the project but
@@ -89,8 +89,8 @@ public class SelfSeedService {
   // was one, so the platform has no reason to hold a row for it — a repository qits does not build,
   // deploy or provision from is one more thing in a list that is supposed to describe qits. A
   // straggler deployment still carrying the row needs no migration for it: the row is a placeable
-  // SERVICE the wrapper does not name, so the next reconcile deregisters it, keeping its history on
-  // the git host exactly where it is.
+  // SERVICE the wrapper does not name, so the next reconcile reports it undeclared and somebody
+  // deletes it from the project setup page.
   //
   // REMOVED earlier, and for a different reason: wohlben/qits-angular-integration, which the
   // platform's own git host serves as `qits-integrations-angular`. The wrapper names it, so the
@@ -216,10 +216,10 @@ public class SelfSeedService {
     }
     // Heal every manifest-owned row FIRST, in its own pass, before anything reads one. For the
     // wrapper that is what lets the adopt below succeed at all when its url has drifted. It is a
-    // separate pass rather than a step inside each entry because the wrapper's reconcile
-    // deregisters placeable rows it does not declare: a second entry healed after that ran would be
-    // corrected only after being swept away, which is how the seeded monolith once came to be one
-    // boot from deletion.
+    // separate pass rather than a step inside each entry because the wrapper's reconcile reports
+    // placeable rows it does not declare as undeclared: a second entry healed after that ran would
+    // be corrected only after being called a stray, which is how the seeded monolith once came to
+    // be one boot from deletion.
     for (SeedRepository entry : manifest()) {
       try {
         assertManifestOntoExistingRow(project, entry);
@@ -382,8 +382,8 @@ public class SelfSeedService {
    * first created is what it says forever". That is wrong for the two entries this manifest owns:
    * they are not user decisions to respect, they are what the seed asserts qits is made of. The
    * live case that forced this is {@code qits-backend}, seeded as a {@code SERVICE} before the
-   * archetype rework — placeable, and so about to be deregistered by the first wrapper reconcile
-   * for not being a submodule of a wrapper it was never meant to be in.
+   * archetype rework — placeable, and so about to be reported undeclared by the first wrapper
+   * reconcile for not being a submodule of a wrapper it was never meant to be in.
    *
    * <p>The wrapper is found by its <b>role</b> and everything else by its <b>url</b>, and that
    * asymmetry decides which drift can be healed: a non-wrapper entry's url is its own match key, so

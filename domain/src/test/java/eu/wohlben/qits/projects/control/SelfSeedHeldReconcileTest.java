@@ -92,9 +92,9 @@ public class SelfSeedHeldReconcileTest {
             + " submodule-grandchild never ran");
   }
 
-  /** Nor is anything deregistered: the sweep that drops rows no wrapper entry names is the walk. */
+  /** Nor is anything reported: the pass that names rows no wrapper entry declares is the walk. */
   @Test
-  public void aPlaceableRowIsNotDeregistered() {
+  public void aPlaceableRowIsNotReported() {
     Project project =
         projectService.create(
             "qits", "qits", "pre-existing", fixture(SelfSeedServiceTest.QITS_WRAPPER_FIXTURE));

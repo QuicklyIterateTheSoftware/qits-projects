@@ -343,6 +343,9 @@ components:
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
+        declared:
+          type: boolean
+          description: The wrapper's .gitmodules names this repository
     Entry4:
       type: object
       properties:
@@ -499,7 +502,7 @@ components:
       - KEPT
       - ARCHETYPE_UPDATED
       - SYNC_TARGET_UPDATED
-      - DEREGISTERED
+      - UNDECLARED
       - SKIPPED
     ProcessResponse:
       type: object
@@ -1885,9 +1888,10 @@ paths:
       description: "The wrapper repository is the project's configuration: every submodule\
         \ entry gets a repository (adopted when the git host already serves it, cloned\
         \ from the entry's backend otherwise), the directory an entry sits under decides\
-        \ its archetype, and a repository no entry names is deregistered — its row\
-        \ goes, its history on the git host stays. Idempotent, and the way a project\
-        \ imported from a wrapper url is materialized."
+        \ its archetype, and a repository no entry names is reported UNDECLARED and\
+        \ left alone. This never deletes: a deleted repository loses its history on\
+        \ the git host, so the answer names the strays and a person decides. Idempotent,\
+        \ and the way a project imported from a wrapper url is materialized."
       parameters:
       - name: projectId
         in: path
@@ -2601,6 +2605,13 @@ paths:
         - qits:admin
         - qits:system
     delete:
+      summary: "Delete a repository, on the git host as well"
+      description: "Deletes the row, the repository's workspaces, its local mirror,\
+        \ its entry in the project's wrapper if it is still there, and the repository\
+        \ itself on qits-githost. The history is gone: there is no tombstone and no\
+        \ retention, and a git host that fails the delete fails the whole request,\
+        \ leaving the row. The project's wrapper repository is refused — delete the\
+        \ project instead."
       parameters:
       - name: repoId
         in: path
@@ -2618,7 +2629,6 @@ paths:
           description: Not Authorized
         "403":
           description: Not Allowed
-      summary: Delete
       tags:
       - Repository Controller
       security:
@@ -3082,4 +3092,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.823.160937
+  version: 2026.825.143805

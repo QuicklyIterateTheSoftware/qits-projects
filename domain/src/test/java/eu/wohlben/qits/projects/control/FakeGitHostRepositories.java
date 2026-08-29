@@ -175,8 +175,32 @@ public class FakeGitHostRepositories implements GitHostRepositories {
     return Path.of(gitHost.fetchUrl(repoId));
   }
 
+  /**
+   * The bare's default branch, read off the {@code HEAD} file itself — deliberately NOT {@code git
+   * symbolic-ref}. Shelling git means repository DISCOVERY, and discovery validates {@code
+   * objects/} before it answers anything: the sabotage {@code
+   * requireMirrorReports500WhenTheHostIsUnreachable} performs (objects/ unreadable — "the host
+   * answers find, a clone still fails") makes git reject the bare and walk UP to whatever encloses
+   * it. Inside a CI step container that is the {@code /workspace} clone at a <em>detached</em> HEAD
+   * ({@code checkout: sha}), so the walked-up answer is {@code fatal: ref HEAD is not a symbolic
+   * ref} about a repository nobody asked — measured 2026-08-29 on qits-projects' first userflows
+   * run, reproducible on git 2.39. On a developer's branch checkout the same walk-up "succeeds"
+   * with the developer's own branch name, which is how this stayed green locally for months.
+   * Reading the file is also what {@code find}'s caller was promised all along ("reads only the
+   * sibling HEAD file"); every bare here is files-backend by construction ({@code git init -b}).
+   */
   private String symbolicRef(Path bare) {
-    return run(bare.toFile(), "git", "symbolic-ref", "--short", "HEAD").trim();
+    Path head = bare.resolve("HEAD");
+    try {
+      String content = Files.readString(head).trim();
+      String prefix = "ref: refs/heads/";
+      if (content.startsWith(prefix)) {
+        return content.substring(prefix.length());
+      }
+      throw new GitHostException("The fake host bare's HEAD is not a branch ref: " + content);
+    } catch (IOException unreadable) {
+      throw new GitHostException("Could not read the fake host bare's HEAD at " + head, unreadable);
+    }
   }
 
   /**

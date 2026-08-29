@@ -7,7 +7,7 @@
     <parent>
         <groupId>eu.wohlben.qits</groupId>
         <artifactId>qits-projects</artifactId>
-        <version>2026.827.152816</version>
+        <version>2026.829.90135</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -149,6 +149,15 @@
         <dependency>
             <groupId>io.zonky.test.postgres</groupId>
             <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- A fourth: the CI step containers are Alpine (musl). ci-event-userflows.yml runs
+                 `mvn verify` on the whole reactor in maven-base as `user: build`, so THIS module's
+                 suite starts its embedded postgres there too and zonky picks the -alpine binaries
+                 at run time. Missing, it fails mid-suite rather than during resolution. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

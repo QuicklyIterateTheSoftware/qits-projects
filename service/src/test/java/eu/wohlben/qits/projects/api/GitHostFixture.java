@@ -13,7 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -351,18 +350,42 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
     if (dir == null || !Files.exists(dir)) {
       return;
     }
-    try (var walk = Files.walk(dir)) {
-      walk.sorted(Comparator.reverseOrder())
-          .forEach(
-              p -> {
-                try {
-                  Files.deleteIfExists(p);
-                } catch (IOException ignored) {
-                  // best effort — a leftover entry only costs the next run a stale directory
-                }
-              });
+    // walkFileTree rather than Files.walk: the stream stats entries lazily, so a file a background
+    // `git maintenance` drops mid-walk (objects/maintenance.lock, measured in CI 2026-08-29) throws
+    // UncheckedIOException out of the ITERATOR, past any per-file catch. The visitor owns that arm.
+    try {
+      Files.walkFileTree(
+          dir,
+          new java.nio.file.SimpleFileVisitor<Path>() {
+            @Override
+            public java.nio.file.FileVisitResult visitFile(
+                Path p, java.nio.file.attribute.BasicFileAttributes attrs) {
+              deleteBestEffort(p);
+              return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFileFailed(Path p, IOException unstattable) {
+              // Vanished mid-walk — for a delete, success arriving early.
+              return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult postVisitDirectory(Path d, IOException failed) {
+              deleteBestEffort(d);
+              return java.nio.file.FileVisitResult.CONTINUE;
+            }
+          });
     } catch (IOException e) {
       throw new UncheckedIOException(e);
+    }
+  }
+
+  private static void deleteBestEffort(Path p) {
+    try {
+      Files.deleteIfExists(p);
+    } catch (IOException ignored) {
+      // best effort — a leftover entry only costs the next run a stale directory
     }
   }
 }

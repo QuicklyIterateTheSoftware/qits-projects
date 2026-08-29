@@ -3,9 +3,7 @@ package eu.wohlben.qits.projects.testsupport;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 
@@ -49,9 +47,31 @@ public class RepoDataDirReset implements BeforeAllCallback {
     if (!Files.exists(root)) {
       return;
     }
-    try (Stream<Path> walk = Files.walk(root)) {
-      walk.sorted(Comparator.reverseOrder()).forEach(RepoDataDirReset::deleteQuietly);
-    }
+    // walkFileTree rather than Files.walk: the stream stats entries lazily, so a file a background
+    // `git maintenance` drops mid-walk (objects/maintenance.lock, measured in CI 2026-08-29) throws
+    // UncheckedIOException out of the ITERATOR, past deleteQuietly. The visitor owns that arm.
+    Files.walkFileTree(
+        root,
+        new java.nio.file.SimpleFileVisitor<Path>() {
+          @Override
+          public java.nio.file.FileVisitResult visitFile(
+              Path p, java.nio.file.attribute.BasicFileAttributes attrs) {
+            deleteQuietly(p);
+            return java.nio.file.FileVisitResult.CONTINUE;
+          }
+
+          @Override
+          public java.nio.file.FileVisitResult visitFileFailed(Path p, IOException unstattable) {
+            // Vanished mid-walk — for a delete, success arriving early.
+            return java.nio.file.FileVisitResult.CONTINUE;
+          }
+
+          @Override
+          public java.nio.file.FileVisitResult postVisitDirectory(Path d, IOException failed) {
+            deleteQuietly(d);
+            return java.nio.file.FileVisitResult.CONTINUE;
+          }
+        });
   }
 
   private static void deleteQuietly(Path p) {

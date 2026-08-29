@@ -2382,22 +2382,50 @@ public class RepositoryService {
     repositoryRepository.delete(repo);
   }
 
-  /** Best-effort recursive delete — children before parents. */
+  /**
+   * Best-effort recursive delete — children before parents, and tolerant of the tree CHANGING
+   * underneath it. That tolerance cannot be bolted onto {@code Files.walk}: the stream stats
+   * entries lazily, so a file that vanishes between listing and visit — git's own background
+   * maintenance dropping {@code objects/maintenance.lock} is the measured case (first seen
+   * 2026-08-29, a userflows CI run, as an {@code UncheckedIOException} out of the walk that no
+   * per-file catch ever saw) — throws out of the iterator itself and takes the whole "best-effort"
+   * promise with it. A {@link java.nio.file.FileVisitor} owns that failure arm explicitly.
+   */
   private void deleteRecursively(Path dir) {
     if (!Files.exists(dir)) {
       return;
     }
-    try (var paths = Files.walk(dir)) {
-      paths
-          .sorted(Comparator.reverseOrder())
-          .forEach(
-              p -> {
-                try {
-                  Files.deleteIfExists(p);
-                } catch (IOException e) {
-                  LOG.warnf("Failed to delete %s: %s", p, e.getMessage());
-                }
-              });
+    try {
+      Files.walkFileTree(
+          dir,
+          new java.nio.file.SimpleFileVisitor<Path>() {
+            @Override
+            public java.nio.file.FileVisitResult visitFile(
+                Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+              delete(file);
+              return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFileFailed(Path file, IOException unstattable) {
+              // Vanished mid-walk — which for a delete is a success arriving early.
+              return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult postVisitDirectory(Path d, IOException failed) {
+              delete(d);
+              return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            private void delete(Path p) {
+              try {
+                Files.deleteIfExists(p);
+              } catch (IOException e) {
+                LOG.warnf("Failed to delete %s: %s", p, e.getMessage());
+              }
+            }
+          });
     } catch (IOException e) {
       LOG.warnf("Failed to remove directory %s: %s", dir, e.getMessage());
     }

@@ -1,5 +1,5 @@
 # The per-commit userflow run: `mvn verify` at the pushed commit — which regenerates
-# service/target/userstories/ through TokenValidationBootstrapIT — and the reports published as one
+# service/target/userstories/ through the story ITs named below — and the reports published as one
 # docs bundle, site @userflows/qits-projects, version = the bare commit sha, branch riding as
 # artifacts metadata for discovery.
 #
@@ -25,8 +25,22 @@
 # module back into ITs the way qits-githost does. `skipITs` is true in the root pom because
 # PackagedSurfaceIT is the module's other integration test and it is heavyweight — real git pushes
 # through a CGI fixture and a pseudo-terminal — so flipping the property would drag that into every
-# `mvn verify` anyone runs. Naming the class here keeps the opt-in to this pipeline and to this
-# story: `-DskipITs=false "-Dit.test=TokenValidationBootstrapIT"`.
+# `mvn verify` anyone runs. Naming the classes here keeps the opt-in to this pipeline and to these
+# stories.
+#
+# THE LIST IS NOT DERIVED AND HAS TO BE MAINTAINED. `-Dit.test` takes commas, and a story class that
+# is not on it is written and never run — there is no wildcard here on purpose, because `*IT` would
+# pull PackagedSurfaceIT back in. Every class shares ONE @TestProfile
+# (TokenValidationBootstrapIT.PackagedWithMockIdp), so the whole list is one launched process and
+# one embedded postgres rather than one per class. The order below is the order they run in anyway
+# (failsafe orders by FQCN within a profile group), and it is load-bearing: the bootstrap IT owns
+# the startup JWKS traffic. See AGENTS.md § Userflows.
+#
+#   -DskipITs=false -Dit.test=TokenValidationBootstrapIT,ProjectCatalogueIT,EpicPlanningIT,AccessRefusalIT,CatalogueReviewIT
+#
+# `-Dtest=SKIPNONE -Dsurefire.failIfNoSpecifiedTests=false` keeps the unit suites out of this run:
+# they are ci-post-receive.yml's business, this pipeline is about the stories, and running them
+# twice per push buys nothing.
 #
 # Loop review: this pipeline PUTs a docs bundle and pushes no commit — no cycle. Publish-if-absent:
 # events redeliver and docs versions are immutable, so 409 is success (the qits-spa-ui-components
@@ -51,7 +65,9 @@ steps:
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
         -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL" \
         -Dquarkus.quinoa=false \
-        -DskipITs=false "-Dit.test=TokenValidationBootstrapIT"
+        -Dtest=SKIPNONE -Dsurefire.failIfNoSpecifiedTests=false \
+        -DskipITs=false \
+        "-Dit.test=TokenValidationBootstrapIT,ProjectCatalogueIT,EpicPlanningIT,AccessRefusalIT,CatalogueReviewIT"
 
       # `-C … .` so the story directories are the bundle's roots — nesting one directory deep would
       # put it in every served URL.

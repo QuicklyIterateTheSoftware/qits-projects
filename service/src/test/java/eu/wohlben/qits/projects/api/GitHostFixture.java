@@ -45,11 +45,36 @@ import java.util.regex.Pattern;
  * needs it explicitly) and {@code receive.advertisePushOptions} (JGit advertises it in production;
  * a local {@code receive-pack} does not by default) so a real push — including one carrying {@code -o
  * qits.no-ci}, the imported-history path — is accepted the way it is in production.
+ *
+ * <p><b>Every answered request is appended to {@link #requestLog()}</b>, one {@code METHOD URI
+ * STATUS} line each. That file is the only place the outgoing half of a userflow's network diagram
+ * exists: the caller is a packaged process on the far side of a socket, so nothing in this JVM is on
+ * that path and the far side's own record of it is the evidence. It is a <b>file</b> rather than a
+ * static list because a {@code QuarkusTestResourceLifecycleManager} and a story method need not
+ * share a classloader, and it is never truncated — {@code stories.support.StoryGitHost} takes a
+ * floor at the line it finds when the first story class installs the tap, which is what keeps an
+ * earlier build's and the {@code @QuarkusTest} suites' lines out of every diagram.
  */
 public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
 
   private static final Pattern REPO_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,63}");
   private static final String BASE = "/git/";
+
+  /**
+   * Where the bares live. Absolute: passed both as a git argv path and as a {@link ProcessBuilder}
+   * working directory, and a relative one resolves twice against those two different bases —
+   * {@code root/root/<repoId>.git}. Public because a story that needs a repository this host
+   * <em>already serves</em> (the bootstrap's adopt door) seeds the bare straight onto this disk,
+   * which is a plane neither of a userflow's taps can see — and which is also the truth about a
+   * platform whose repositories are created on the git host before any row names them.
+   */
+  public static final Path ROOT = Path.of("target", "it-git-host-fixture").toAbsolutePath();
+
+  /** Deliberately OUTSIDE {@link #ROOT}: {@link #start()} wipes the bares, never the recording. */
+  private static final Path ACCESS_LOG =
+      Path.of("target", "it-git-host-fixture-access.log").toAbsolutePath();
+
+  private static final Object LOG_LOCK = new Object();
 
   private final ObjectMapper mapper = new ObjectMapper();
 
@@ -57,12 +82,15 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
   private ExecutorService executor;
   private Path root;
 
+  /** The append-only {@code METHOD URI STATUS} recording of every request this host answered. */
+  public static Path requestLog() {
+    return ACCESS_LOG;
+  }
+
   @Override
   public Map<String, String> start() {
     try {
-      // Absolute: passed both as a git argv path and as a ProcessBuilder working directory, and a
-      // relative one resolves twice against those two different bases — root/root/<repoId>.git.
-      root = Path.of("target", "it-git-host-fixture").toAbsolutePath();
+      root = ROOT;
       deleteRecursively(root);
       Files.createDirectories(root);
       server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -198,6 +226,7 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
 
   private void respond(HttpExchange exchange, int status, String contentType, byte[] body)
       throws IOException {
+    record(exchange, status);
     if (contentType != null) {
       exchange.getResponseHeaders().set("Content-Type", contentType);
     }
@@ -223,6 +252,7 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
     byte[] body = exchange.getRequestBody().readAllBytes();
     CgiResponse cgi =
         gitHttpBackend(method, "/" + repoId + ".git" + suffix, query, contentType, contentEncoding, body);
+    record(exchange, cgi.status());
     cgi.headers().forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
     exchange.sendResponseHeaders(cgi.status(), cgi.body().length == 0 ? -1 : cgi.body().length);
     if (cgi.body().length > 0) {
@@ -325,6 +355,44 @@ public class GitHostFixture implements QuarkusTestResourceLifecycleManager {
       }
     }
     return new CgiResponse(status, headers, java.util.Arrays.copyOfRange(raw, bodyAt, raw.length));
+  }
+
+  // --- the recording ----------------------------------------------------------------------------
+
+  /**
+   * Append one answered request as {@code METHOD URI STATUS}.
+   *
+   * <p>The query is kept: {@code ?service=git-upload-pack} versus {@code ?service=git-receive-pack}
+   * is the difference between this host being read and being written to, and a diagram that lost it
+   * would draw a fetch and a push as one arrow. Both values are authored constants of the git wire
+   * protocol, so the label stays template-shaped without any scrubbing.
+   *
+   * <p>Best effort and never fatal: this is a fixture's bookkeeping, and a story that cannot write
+   * its evidence should fail on the missing edge, not on an {@code IOException} thrown out of a
+   * response the client is still waiting for.
+   */
+  private static void record(HttpExchange exchange, int status) {
+    String query = exchange.getRequestURI().getRawQuery();
+    String line =
+        exchange.getRequestMethod()
+            + " "
+            + exchange.getRequestURI().getPath()
+            + (query == null || query.isBlank() ? "" : "?" + query)
+            + " "
+            + status
+            + "\n";
+    synchronized (LOG_LOCK) {
+      try {
+        Files.writeString(
+            ACCESS_LOG,
+            line,
+            StandardCharsets.UTF_8,
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.APPEND);
+      } catch (IOException unwritable) {
+        // Nothing to report to; the missing edge is what a story will fail on.
+      }
+    }
   }
 
   // --- plumbing ---------------------------------------------------------------------------------

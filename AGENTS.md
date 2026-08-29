@@ -923,16 +923,11 @@ reintroduce it: a rule that matches nothing anywhere else is still a typo worth 
   side is qits-service-mock's `MockIdp`, which serves a real JWKS for a generated keypair, mints
   tokens against it and **records what it answered**, so "the service fetched the keys at startup" is
   an assertion and not an inference.
-  <br>It is also this repo's first **userflow**: two `@UserStory` methods in category
-  `authentication`, browserless (an `Interactions` parameter and no `Flow`, so the transitive
-  Playwright launches nothing), emitting `service/target/userstories/` — the proof doubling as
-  documentation, sequence diagram included. `.config/qits/ci-event-userflows.yml` is the non-gating
-  per-commit pipeline that regenerates and publishes them as the docs bundle
-  `@userflows/qits-projects`.
-  <br>**`skipITs` stays `true` and this IT does not flip it**, unlike qits-githost's namesake:
+  <br>It is also this repo's **first userflow**, and the one every other story class is ordered
+  after — see **Userflows** below.
+  <br>**`skipITs` stays `true` and no IT flips it**, unlike qits-githost's namesake:
   `PackagedSurfaceIT` is heavyweight (real git pushes, a pseudo-terminal), so the opt-in is per-run
-  and per-class — `-DskipITs=false "-Dit.test=TokenValidationBootstrapIT"`, which is exactly what the
-  pipeline passes.
+  and per-class — `-DskipITs=false -Dit.test=<classes>`, which is exactly what the pipeline passes.
 - **Anything read off the classpath by walking is a native-image question.** `ProjectTemplate` is
   the one such reader — it serves both committed skeletons, `project-template/` (a wrapper's first
   commit) and `repository-template/` (a blank component's) — and it handles three URI schemes:
@@ -980,6 +975,125 @@ reintroduce it: a rule that matches nothing anywhere else is still a typo worth 
   "did this context ask?" rather than "did the other context's row appear". `RecordingWorkspaceLifecycle`
   exists for exactly that.
 - Integration tests (`*IT`) that need real docker default to skipped (`skipITs` in the parent pom).
+
+## Userflows
+
+`service/src/test/java/eu/wohlben/qits/projects/stories/` is this repository's **user-story
+catalogue**. Each `@UserStory` method is a browserless walk (an `Interactions` parameter and no
+`Flow`, so the transitive Playwright launches nothing) that emits
+`service/target/userstories/<category>/<story>/` — a `userflow.json` sidecar, a markdown rendering
+and a self-contained HTML page carrying the story's **network diagram**. The framework is
+`qits-userflows`, test scope, pinned on its own `qits.userflows.version` because it is released out
+of `libs/qits-userflows` and not out of the integrations reactor.
+
+**Every story is a `@QuarkusIntegrationTest` against the packaged artifact, and that is not a
+preference.** Inside a `@QuarkusTest` the shipped `%test` dev user holds all four platform roles and
+the OIDC tenant is off, so *every door in this service is open to a plain `given()`* — a refusal
+cannot be observed at all and a route assertion proves nothing about what deploys. A launched
+artifact runs in `NORMAL` mode with the tenant on and no dev user, which is the first moment
+`qits:admin` and `qits:system` mean different things. That is why `stories/refusals/` exists and why
+its three stories cannot move into the surefire suite.
+
+**One `@TestProfile` across every story class** — `TokenValidationBootstrapIT.PackagedWithMockIdp` —
+so the whole catalogue runs against **one** launched process and one embedded postgres. A second
+profile is a second boot and a second minute; every shared seam belongs in that one profile.
+
+**Class order is load-bearing, and it is FQCN-alphabetical within the profile group.** A cumulative
+capture source is attributed by a cursor, so traffic recorded before any story ran — the startup
+JWKS fetch — lands in whichever story drains *first*, which must be the story about it. Hence
+`…projects.api.TokenValidationBootstrapIT` (`api` sorts before `stories`) owns the boot, and the
+packages under `stories/` are named so that alphabetical order **is** the intended order:
+`catalogue` → `planning` → `refusals` → `review`, with the read-only review last because it reads
+what the first two put there. Each story also declares `@UserflowRunsAfter` for the same order, so a
+later package rename cannot silently reshuffle the diagrams. Every class is nonetheless runnable on
+its own (`-Dit.test=EpicPlanningIT`), because the fixture and both far-side floors are per-JVM
+idempotent rather than per-order — see below.
+
+**The diagram is observed, never narrated.** `Interactions` records notes; nothing draws an edge by
+hand. Three taps feed `NetworkCapture` and there is no fourth:
+
+| tap | what it draws | where it lives |
+| --- | --- | --- |
+| `NetworkTaps.restAssured("qits-projects")` | `<actor> -> qits-projects`, one edge per request a story makes, labelled `METHOD <scrubbed path> -> <status>` | the framework ships it; installed from each story class's `@BeforeAll`, idempotent per service |
+| `MockIdp.recordedRequests()` | `qits-projects -> qits-platform-idp` — the startup JWKS fetch | registered as a cumulative `NetworkCapture.source` in `TokenValidationBootstrapIT` |
+| `GitHostFixture`'s access log | `qits-projects -> qits-githost` — the lifecycle `PUT`/`GET`, the smart-HTTP advertisement and pack, and the mirror fetches | `stories/support/StoryGitHost` |
+
+The local `StoryNetworkFilter` this repo carried beside the IT is **deleted**: the framework ships
+that tap now (`qits-userflows` 2026.829.201516), and a per-repo copy is exactly the thing that goes
+out of step. The tap's default skip is any path with a `/q/` segment, which is right here —
+`quarkus.http.non-application-root-path` is `/projects/q`, so the readiness probe is out of every
+diagram and no route this service owns is.
+
+**The launched process needs a git-host credential, and that is a real finding rather than test
+plumbing.** `HttpGitHostRepositories` fails **closed**: every lifecycle call asks `IdpGitHostBearer`
+for a machine token and throws `No machine bearer is available for qits-githost` rather than sending
+one unauthenticated. The shipped default is `quarkus.oidc-client.githost.client-enabled=false`, so a
+packaged process with no idp configured **cannot create a repository at all** — which is correct in
+production and is why `PackagedWithMockIdp` now points that named client at the same `MockIdp` and
+stubs `POST /idp/token` on it.
+
+**One route is excluded from every diagram, and it is the cached-read exclusion.** That token fetch
+is `client_credentials`, cached by quarkus-oidc-client for the token's whole hour, so it happens
+exactly **once per run** — whichever story publishes first would draw an arrow the identical story
+would not draw if it ran second, and the `networkHash` would move with nothing having changed. The
+source filters `/idp/token` out and the dependency is stated here instead. The `GET /idp/jwks`
+startup fetch stays: it happens once too, but the story it lands in is *about* it.
+
+**The git-host tap is a file, and it has a floor.** `GitHostFixture` appends one
+`METHOD URI STATUS` line per answered request to `target/it-git-host-fixture-access.log` — outside
+the bare root, which `start()` wipes — because the caller is a packaged process on the far side of a
+socket and a `QuarkusTestResourceLifecycleManager` and a story method need not share a classloader.
+`StoryGitHost.install()` takes the current end of that file as its floor, and the supplier it
+registers is **cumulative and prefix-stable**: it returns every edge harvested so far, in arrival
+order, so a later story's slice can never shift an earlier one's. It excludes no line on merit —
+unlike qits-ci's namesake, which drops a cached listing — because the one throttled read this
+service makes is handled at the other end instead, by the story waiting the window out (see below).
+
+**Fixture setup must be invisible to both taps.** `stories/support/StoryPlatform` builds the one
+shared project and component with a plain `java.net.http.HttpClient` — the RestAssured tap is
+JVM-global once installed, so a fixture built through `given()` would draw arrows nobody walked —
+and it seeds the bootstrap's already-existing bare straight onto the fixture's disk with
+`git init --bare`, a plane neither tap can see. Its git-host traffic is bounded by **order**
+instead: `provision()` runs before `StoryGitHost.install()`, and install is what takes the floor.
+
+**Both of those go in `@BeforeEach`, not `@BeforeAll`.** `RestAssured.port` is set by the Quarkus
+integration-test extension's *beforeEach* callback and cleared back to `-1` in afterEach, so a
+`@BeforeAll` that builds a URL from it produces `http://localhost:-1`. Both calls are idempotent per
+JVM, so the fixture is built once, before the first story of whichever class runs first.
+
+**What the stories claim, and where the negatives are.** A presence check cannot say "and nothing
+else happened", which is most of what is worth knowing about this service:
+
+| category | story | the claim only a negative can make |
+| --- | --- | --- |
+| `authentication` | the startup JWKS fetch; a stranger's token refused | — |
+| `authorization` | a browser session at the two `qits:system` doors; a machine bearer at the planning surface; an anonymous caller | `assertNoEdgesTo(qits-githost)` — a refusal is decided at the door, so no work is done for a caller about to be refused |
+| `catalogue` | a project created and its wrapper published; a component joined; the bootstrap's adoption | `assertEdgeCount(3)` on the adoption — it asks the git host **once** and clones, pushes and mirrors nothing |
+| `planning` | a plan proposed and frozen; a task marked implemented | `assertOnlyEdgesFrom(<one person>)` — the whole planning surface is rows in this service's own `epics` database |
+| `operations` | an operator reviews the catalogue; opening a project's components | `assertEdgeCount(4)` + one initiator on the reads, against the **one** read that is not free: the component list refreshes the wrapper's mirror from the git host, because membership is a file rather than a column |
+
+That last pair is the finding worth carrying: **`GET /projects/{id}/repositories` is a git fetch.**
+It joins the project's rows to the wrapper's `.gitmodules`, which lives in a repository, so
+`WrapperReconcileService.view` → `WrapperSubmoduleWriter.readGitmodules` → `RepoMirror.refresh` →
+`git fetch` against the git host. It is throttled — `RepoMirror.refresh()` trusts a mirror fetched
+inside `qits.projects.git.mirror-freshness-ms` (5s) — so it is *at most* one fetch per wrapper per
+window, not one per request. That throttle is also why the story has to **wait the window out**
+before its read (`StoryPlatform.awaitMirrorFreshnessLapse`): without it, whether the arrow appears
+depends on how long the neighbouring story took, which is a `networkHash` that never settles.
+Anything that puts this route behind a poll faster than the window is polling the git host.
+
+**Running them:**
+
+    ./mvnw -pl service -am -DskipITs=false -Dquarkus.quinoa=false verify \
+      -Dtest=SKIPNONE -Dsurefire.failIfNoSpecifiedTests=false \
+      -Dit.test=TokenValidationBootstrapIT,ProjectCatalogueIT,EpicPlanningIT,AccessRefusalIT,CatalogueReviewIT
+
+`-Dit.test` takes commas; `-Dtest=SKIPNONE` keeps the unit suite out of an IT-only run (run it
+separately before committing — the story classes share `domain`'s fixtures). `skipITs` stays `true`
+in the root pom because `PackagedSurfaceIT` is heavyweight, so the opt-in is per-run and per-class.
+`.config/qits/ci-event-userflows.yml` is the non-gating per-commit pipeline that runs exactly this
+list and publishes the bundle as the docs site `@userflows/qits-projects`; **a new story class has
+to be added to that list**, or it is written and never run.
 
 ## What is deliberately absent
 

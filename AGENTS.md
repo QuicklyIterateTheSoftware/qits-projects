@@ -898,7 +898,7 @@ reintroduce it: a rule that matches nothing anywhere else is still a typo worth 
 
       java --enable-native-access=ALL-UNNAMED -jar service/target/quarkus-app/quarkus-run.jar
       ./mvnw package -Dnative && ./service/target/qits-projects
-- **`PackagedSurfaceIT` is the only test that runs against the artifact.** Every `@QuarkusTest`
+- **`PackagedSurfaceIT` is one of the two tests that run against the artifact.** Every `@QuarkusTest`
   augments in the build JVM, with the whole classpath present and reflection unrestricted — a native
   image has none of those, and three real defects here were invisible to all of them and fatal to
   the binary (H2's `AUTO_SERVER` on a shipped datasource default, the missing `project-template/`
@@ -912,6 +912,27 @@ reintroduce it: a rule that matches nothing anywhere else is still a typo worth 
   embedded postgres reaches that profile through a **system property**, because a
   `QuarkusTestProfile` is instantiated in two classloaders and a static field is not shared between
   them.
+- **`TokenValidationBootstrapIT` is the second, and it is the only place the OIDC tenant is ever
+  ON.** The shipped tenant is gated —
+  `quarkus.oidc.tenant-enabled=${qits.auth.machine.required:false}` — and every suite here leaves the
+  gate shut, so the block this service deploys with (auth-server-url + `jwks-path` against a real
+  listener, audience enforcement, the `groups` claim becoming roles) is exercised nowhere else. Its
+  `@TestProfile` **extends `PackagedSurfaceIT.PackagedResources`** rather than copying it — what a
+  launched qits-projects needs in order to boot is one answer — and adds only the gate, the mock
+  idp's address, and the three darkening keys (otel, the eventstream bus, the self-seed). The far
+  side is qits-service-mock's `MockIdp`, which serves a real JWKS for a generated keypair, mints
+  tokens against it and **records what it answered**, so "the service fetched the keys at startup" is
+  an assertion and not an inference.
+  <br>It is also this repo's first **userflow**: two `@UserStory` methods in category
+  `authentication`, browserless (an `Interactions` parameter and no `Flow`, so the transitive
+  Playwright launches nothing), emitting `service/target/userstories/` — the proof doubling as
+  documentation, sequence diagram included. `.config/qits/ci-event-userflows.yml` is the non-gating
+  per-commit pipeline that regenerates and publishes them as the docs bundle
+  `@userflows/qits-projects`.
+  <br>**`skipITs` stays `true` and this IT does not flip it**, unlike qits-githost's namesake:
+  `PackagedSurfaceIT` is heavyweight (real git pushes, a pseudo-terminal), so the opt-in is per-run
+  and per-class — `-DskipITs=false "-Dit.test=TokenValidationBootstrapIT"`, which is exactly what the
+  pipeline passes.
 - **Anything read off the classpath by walking is a native-image question.** `ProjectTemplate` is
   the one such reader — it serves both committed skeletons, `project-template/` (a wrapper's first
   commit) and `repository-template/` (a blank component's) — and it handles three URI schemes:

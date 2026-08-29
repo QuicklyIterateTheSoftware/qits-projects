@@ -119,6 +119,15 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- A fourth: the CI step containers are Alpine (musl). ci-event-userflows.yml runs
+                 `mvn verify` on the whole reactor in maven-base as `user: build`, so this module's
+                 own embedded postgres is started there and zonky picks the -alpine binaries at run
+                 time. Missing, it fails mid-suite rather than during resolution. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>io.zonky.test.postgres</groupId>
             <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
             <scope>test</scope>

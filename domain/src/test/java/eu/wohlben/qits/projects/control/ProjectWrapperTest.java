@@ -35,7 +35,14 @@ import org.junit.jupiter.api.Test;
 @QuarkusTest
 public class ProjectWrapperTest {
 
-  /** Every path the project template commits, in git's sort order. */
+  /**
+   * Every path the project template commits, in git's sort order.
+   *
+   * <p>One directory, and it is {@code components/} — the six archetype directories the skeleton
+   * used to seed went with the layout they belonged to. {@code RepositoryArchetypeTemplateSyncTest}
+   * is what holds the template to that; this list is what proves the seeded commit really carries
+   * it.
+   */
   private static final List<String> SKELETON =
       List.of(
           ".gitignore",
@@ -43,12 +50,7 @@ public class ProjectWrapperTest {
           "AGENTS.md",
           "CLAUDE.md",
           "README.md",
-          "cli/README.md",
-          "daemons/README.md",
-          "frontends/README.md",
-          "images/README.md",
-          "libs/README.md",
-          "services/README.md");
+          "components/README.md");
 
   @Inject ProjectService projectService;
   @Inject RepositoryService repositoryService;

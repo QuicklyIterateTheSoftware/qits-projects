@@ -14,9 +14,9 @@ repository:
 # needed when you want to be explicit or detection guesses wrong.
 # frameworks:
 #   - kind: java-quarkus
-#     root: services/my-service
+#     root: components/payments/payments-service
 #   - kind: ts-angular
-#     root: frontends/my-spa
+#     root: components/payments/payments-frontend
 
 # Long-running processes a workspace can start — dev servers, watchers. `web-view` makes one
 # viewable in the browser through qits' proxy.
@@ -24,7 +24,7 @@ repository:
 #   - name: dev server
 #     description: The application's dev server.
 #     command: ./run-dev.sh
-#     working-dir: services/my-service
+#     working-dir: components/payments/payments-service
 #     web-view:
 #       port: 8080
 #       entry: /

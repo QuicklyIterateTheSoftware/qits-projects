@@ -315,16 +315,9 @@ public class ProjectController {
   }
 
   /**
-   * Adds a component to the project — and to its wrapper repository, which is the same statement
-   * made twice.
-   *
-   * @param url an existing repository to attach, mirrored in and published to the platform's git
-   *     host. Exactly one of this and {@code name}.
-   * @param name a blank repository to create on the platform's git host, seeded with the repository
-   *     template. It becomes the component's addressable name, so it is what {@code ../<name>.git}
-   *     resolves to.
-   * @param archetype which kind of component this is — it decides the wrapper directory the
-   *     submodule is mounted under, so it must be a placeable one.
+   * The name-to-id resolution's request shape — see the route below. (A create-request javadoc used
+   * to sit here, describing fields this record does not have; it has moved onto {@link
+   * CreateProjectRepositoryRequest}, which is the record it was always about.)
    */
   public static record ResolveRepositoryNameRequest() {
     /**
@@ -396,6 +389,20 @@ public class ProjectController {
   }
 
   /**
+   * Adds a component to the project — and to its wrapper repository, which is the same statement
+   * made twice.
+   *
+   * @param url an existing repository to attach, mirrored in and published to the platform's git
+   *     host. Exactly one of this and {@code name}.
+   * @param name a blank repository to create on the platform's git host, seeded with the repository
+   *     template. It becomes the component's addressable name, so it is what {@code ../<name>.git}
+   *     resolves to.
+   * @param archetype which kind of component this is — <b>optional</b>. Absent, it is read off the
+   *     name's role suffix ({@code payments-daemon} is a {@code DAEMON}), which under the component
+   *     layout is where the kind lives; for the {@code url} arm the name read is the url's basename.
+   *     A request that states neither an archetype nor a name carrying a suffix is a 400, because a
+   *     guessed kind is the one thing nothing downstream could correct. Stating one is obeyed
+   *     unchanged, which is what the SPA's create form still does.
    * @param component the technical component to mount the entry under, or null to let the wrapper's
    *     own layout decide. Stating one places at {@code components/<component>/<name>}; a wrapper
    *     that has already flipped places there with or without it.
@@ -403,7 +410,7 @@ public class ProjectController {
   public static record CreateProjectRepositoryRequest(
       String url,
       String name,
-      @NotNull eu.wohlben.qits.projects.entity.RepositoryArchetype archetype,
+      eu.wohlben.qits.projects.entity.RepositoryArchetype archetype,
       String component) {
     /**
      * @param wrapperPath where the wrapper now mounts it, e.g. {@code services/checkout} or {@code
@@ -418,8 +425,9 @@ public class ProjectController {
   @APIResponse(
       responseCode = "400",
       description =
-          "Neither or both of url/name, an unplaceable archetype, a name already taken in the"
-              + " project, or a wrapper commit the git host refused")
+          "Neither or both of url/name, an unplaceable archetype, a name that carries no role"
+              + " suffix when no archetype is stated, a name already taken in the project, or a"
+              + " wrapper commit the git host refused")
   public CreateProjectRepositoryRequest.Response createRepository(
       @PathParam("projectId") String projectId, @Valid CreateProjectRepositoryRequest request) {
     var created =

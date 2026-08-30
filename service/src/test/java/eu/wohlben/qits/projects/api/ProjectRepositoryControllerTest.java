@@ -149,6 +149,74 @@ public class ProjectRepositoryControllerTest {
         .body("entries.repository.component", hasItem("payments"));
   }
 
+  // --- create: the archetype the name already states ---
+
+  /**
+   * The component layout's rule, applied at creation: the NAME says the kind, so a name carrying a
+   * role suffix needs no second statement of it. This is what lets the create form stop asking.
+   */
+  @Test
+  public void anAbsentArchetypeIsReadOffTheNamesRoleSuffix() {
+    String projectId = createProject("Derived Archetype");
+
+    postRepository(projectId, null, "payments-daemon", null)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.name", equalTo("payments-daemon"))
+        .body("repository.archetype", equalTo("DAEMON"))
+        .body("wrapperPath", equalTo("daemons/payments-daemon"));
+
+    postRepository(projectId, null, "payments-javalib", null)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.archetype", equalTo("LIBRARY"));
+  }
+
+  /** The attach arm derives from the url's basename, which is the name the row will answer to. */
+  @Test
+  public void theAttachArmDerivesTheArchetypeFromTheUrlsBasename() throws Exception {
+    String projectId = createProject("Derived From Url");
+    String suffixed = GitFixtures.path("testing-repo.git");
+
+    // The fixture's basename declares no role, so this one has to say what it is...
+    postRepository(projectId, suffixed, null, null)
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode())
+        .body("message", containsString("carries no role suffix"));
+    postRepository(projectId, suffixed, null, RepositoryArchetype.FRONTEND)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.archetype", equalTo("FRONTEND"));
+  }
+
+  /**
+   * A guessed kind is the one thing nothing downstream could correct — the same reasoning that makes
+   * the reconcile store a null archetype rather than invent one — so a request that states neither
+   * is refused, and the message says both ways out.
+   */
+  @Test
+  public void aNameWithNoRoleSuffixAndNoArchetypeIsRefused() {
+    String projectId = createProject("No Kind Stated");
+
+    postRepository(projectId, null, "checkout", null)
+        .then()
+        .statusCode(Response.Status.BAD_REQUEST.getStatusCode())
+        .body("message", containsString("carries no role suffix"))
+        .body("message", containsString("-service"));
+  }
+
+  /** An explicit archetype is obeyed unchanged, suffix or no suffix — the SPA still sends one. */
+  @Test
+  public void anExplicitArchetypeOutranksWhatTheNameWouldSay() {
+    String projectId = createProject("Explicit Archetype");
+
+    postRepository(projectId, null, "reports-frontend", RepositoryArchetype.SERVICE)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.archetype", equalTo("SERVICE"))
+        .body("wrapperPath", equalTo("services/reports-frontend"));
+  }
+
   // --- create: attach ---
 
   @Test
@@ -190,9 +258,8 @@ public class ProjectRepositoryControllerTest {
     postRepository(projectId, fixtureUrl, null, RepositoryArchetype.SERVICE_TEMPLATE)
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
-    postRepository(projectId, fixtureUrl, null, null)
-        .then()
-        .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+    // An ABSENT archetype is no longer this refusal: it is the derivation, and its own refusal when
+    // the name declares nothing either — see aNameWithNoRoleSuffixAndNoArchetypeIsRefused.
   }
 
   // --- reconcile ---

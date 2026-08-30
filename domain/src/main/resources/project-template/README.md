@@ -9,25 +9,24 @@ and re-attached in the same place as a submodule, without a big-bang migration.
 
 ## The layout
 
-Each top-level directory corresponds to one repository archetype. A directory's parent tells you
-what kind of repository extracting it will produce, and where a repository of that kind is mounted
-when it comes back as a submodule.
+Everything lives under `components/`, grouped by the component it belongs to and never by the role
+it plays:
 
-| Directory | Archetype | What belongs here |
-|---|---|---|
-| `services/` | `SERVICE` | Deployable components — the things that run in production. |
-| `daemons/` | `DAEMON` | Long-running background agents nobody calls. |
-| `libs/` | `LIBRARY` | Shared technical code consumed by the components. |
-| `frontends/` | `FRONTEND` | Anything served to a user at a URL. |
-| `cli/` | `CLI` | Command-line entry points. |
-| `images/` | `IMAGE` | Build definitions for published OCI images. |
+    components/<component>/<repository>
 
-The directory an entry sits under is **authoritative**: `.gitmodules` is this project's
-configuration, so moving a submodule between these directories is how you change what kind of
-component it is.
+A component is any cohesive unit of the product — it does not need a deployable. One component
+directory holds the service, its frontend and its daemon side by side, so the three or four things
+you change together are neighbours.
 
-Start by putting code directly in the directory that fits. Nothing has to become its own repository
-until it earns it — that decision is meant to be deferred, not made on day one.
+The **role** is carried by the repository's name rather than by its parent directory:
+`<component>[-<modifier>]-<role>[-<tech>]`, with `-service`, `-daemon`, `-frontend`, `-cli`, `-oci`
+and `-javalib`/`-jslib` as the roles. qits reads that suffix, so a name is enough to say what kind
+of thing a repository is.
+
+`components/README.md` is the whole grammar, and it travels with the project.
+
+Start by putting code directly in the component directory that fits. Nothing has to become its own
+repository until it earns it — that decision is meant to be deferred, not made on day one.
 
 ## Files
 

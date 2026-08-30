@@ -3,7 +3,7 @@
 # the pin this service starts those containers with
 # (qits.projects.refinement-image-version in service/src/main/resources/application.properties).
 #
-# The same maintenance-branch shape as ci-event-upstream-spa-projects.yml: rewrite the line, commit,
+# The same maintenance-branch shape as ci-event-upstream-frontend.yml: rewrite the line, commit,
 # force-push the branch; the branch build releases this service through the ordinary door, and the
 # new pin goes live with the next deploy. Containers already running are untouched — an image bump
 # is applied at the next wake, which is the one moment it can be applied without taking a container

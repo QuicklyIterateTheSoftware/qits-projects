@@ -261,8 +261,30 @@ A project's wrapper repository (`PROJECT` archetype, named `<slug>-<slug>`) carr
 configuration in its `.gitmodules`: one submodule per component, under the directory its archetype
 names, with a relative url. Three rules follow, and every one of them is enforced in code:
 
-- **The directory is the archetype.** `RepositoryArchetype.fromDirectory` is the derivation and the
-  reconcile applies it — moving a submodule between directories is how a component changes kind.
+- **The path says what the entry is, and there are two grammars.** `WrapperPath` is the single
+  reading of one, and the reconcile applies it:
+  - `<directory>/<name>` — the directory **is** the archetype (`RepositoryArchetype.fromDirectory`),
+    and moving a submodule between directories is how a component changes kind. The row's
+    `component` stays null.
+  - `components/<component>/<name>` — the second segment is the row's `component` (V6, an **open
+    set**: no enum, no check constraint). No directory says the kind here, so **an existing row
+    keeps the archetype it has** — the flip must not re-type a live platform's rows — and a row the
+    reconcile mints takes its archetype from the name's role suffix
+    (`RepositoryArchetype.fromRepositoryName`: `-service`, `-daemon`, `-frontend`, `-oci`, `-cli`,
+    `-javalib`/`-jslib`), or **null** when the name declares none. Null is deliberate and is the
+    least destructive answer: a null-archetype row is never reported `UNDECLARED`, so it is never
+    put in front of the delete that destroys the repository, while a guessed archetype would be a
+    wrong label nothing in this service can correct.
+
+  A **mixed** wrapper is the ordinary state on the way, not an edge case, and both grammars are read
+  in one pass. A relative url stays `../<name>.git` however deep the path is — git folds it against
+  the superproject's *remote*, never the gitlink's directory — so the backup twin a three-segment
+  entry derives is the same one a two-segment entry did.
+
+  Creation follows the wrapper rather than a preference (`WrapperSubmoduleWriter.addToWrapper`): a
+  stated component places under `components/<component>/<name>`, a wrapper that already mounts
+  anything under `components/` places a componentless create at `components/<name>/<name>`, and
+  everything else lands under the archetype's directory as before.
 - **A repository the wrapper does not name is not part of the project.** Write paths refuse it
   (`requireWrapperMembership`), the reconcile reports it `UNDECLARED` and the listing marks it
   `declared: false`. **The reconcile deletes nothing** (2026-08-26): a delete now destroys the

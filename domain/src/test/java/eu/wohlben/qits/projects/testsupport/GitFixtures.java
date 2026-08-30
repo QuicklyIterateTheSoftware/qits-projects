@@ -83,7 +83,7 @@ public final class GitFixtures {
    * fixture fails a test about the reconcile with a message about the reconcile. The stamp turns
    * that into a rebuild.
    */
-  private static final String STAMP = ".derived-v2";
+  private static final String STAMP = ".derived-v3";
 
   private static void buildDerived(Path dir) {
     Path work = dir.resolve(".build-testing-repo");
@@ -137,6 +137,13 @@ public final class GitFixtures {
     // and land on the sibling bares beside it — the same resolution a forge and the platform's
     // name-addressed git route both perform.
     wrapperBare(dir.resolve("qits-qits.git"));
+    // A backend for the component layout's name-derived archetype: the only fixture whose basename
+    // carries a role suffix of the campaign's name grammar.
+    pushBare(work, dir.resolve("sample-javalib.git"), "master");
+    // A WRAPPER upstream (project slug `comp`) whose manifest is MIXED: one entry moved to
+    // components/, two still under their archetype directory. The flip is gradual, so a mixed
+    // wrapper is not an edge case but the ordinary state on the way.
+    componentWrapperBare(dir.resolve("comp-comp.git"));
 
     deleteRecursively(work);
     write(dir.resolve(STAMP), "built by GitFixtures\n");
@@ -182,6 +189,54 @@ public final class GitFixtures {
         \tbranch = main
         """);
     write(work.resolve("README.md"), "# qits-qits — wrapper fixture\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "Declare the project's components");
+    git(work, "push", "-q", bare.toString(), "main:refs/heads/main");
+    git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+    deleteRecursively(work);
+  }
+
+  /**
+   * A bare wrapper repository on {@code main} whose {@code .gitmodules} is a <b>mixed</b> manifest:
+   * {@code submodule-shared} moved to {@code components/shared-things/}, {@code sample-javalib}
+   * declared straight into {@code components/samples/} (a name whose role suffix is the only thing
+   * that can say what kind it is), and {@code submodule-grandchild} still under {@code services/}.
+   *
+   * <p>Every url stays relative and one level deep — {@code ../<name>.git} — because git folds a
+   * relative submodule url against the superproject's <em>remote</em>, never against the gitlink's
+   * directory. A three-segment path must therefore resolve to exactly the same sibling, which is
+   * what the backup-twin derivation depends on.
+   */
+  private static void componentWrapperBare(Path bare) {
+    deleteRecursively(bare);
+    git(bare.getParent(), "init", "-q", "--bare", bare.getFileName().toString());
+    Path work = bare.getParent().resolve(".build-component-wrapper");
+    deleteRecursively(work);
+    try {
+      Files.createDirectories(work);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    git(work, "init", "-q", "-b", "main", ".");
+    git(work, "config", "user.email", "fixtures@qits.local");
+    git(work, "config", "user.name", "qits fixtures");
+    write(
+        work.resolve(".gitmodules"),
+        """
+        [submodule "submodule-shared"]
+        \tpath = components/shared-things/submodule-shared
+        \turl = ../submodule-shared.git
+        \tbranch = main
+        [submodule "sample-javalib"]
+        \tpath = components/samples/sample-javalib
+        \turl = ../sample-javalib.git
+        \tbranch = main
+        [submodule "submodule-grandchild"]
+        \tpath = services/submodule-grandchild
+        \turl = ../submodule-grandchild.git
+        \tbranch = main
+        """);
+    write(work.resolve("README.md"), "# comp-comp — component-layout wrapper fixture\n");
     git(work, "add", "-A");
     git(work, "commit", "-q", "-m", "Declare the project's components");
     git(work, "push", "-q", bare.toString(), "main:refs/heads/main");

@@ -1,0 +1,19 @@
+-- The technical component a repository belongs to.
+--
+-- The wrapper is moving from the archetype layout (services/, daemons/, libs/, frontends/, cli/,
+-- images/) to one directory per component: `components/<component>/<repo>`. This column is the
+-- second segment of that path, reconciled from `.gitmodules` exactly as `archetype` is reconciled
+-- from the first segment today. NULL for an entry still mounted under an archetype directory, so a
+-- mixed wrapper — some entries moved, some not — reads correctly while the flip is in progress.
+--
+-- NULLABLE, no default, NO CHECK CONSTRAINT. Component names are an OPEN set the wrapper decides,
+-- which is the opposite of `archetype`: its closed nine-value taxonomy is exactly why
+-- CK_repository_archetype earns its place (see the note in V1). A second copy of an open set in DDL
+-- would refuse the next component somebody adds.
+--
+-- CK_repository_archetype is deliberately untouched. `archetype` stays a row fact under both
+-- layouts — the edge's detail slots and the child-app filtering are keyed on it — only its
+-- derivation changes: the directory decides it under the archetype layout, the row keeps what it
+-- has under the component layout, and a brand-new row takes it from the repository name's role
+-- suffix, or NULL when the name declares none.
+alter table Repository add column component varchar(255);

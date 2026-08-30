@@ -23,8 +23,24 @@ import org.jboss.logging.Logger;
  *
  * <p>The wrapper <b>is</b> the project's configuration, and this is what makes that true of the
  * database too: every entry gets a row, every placeable row without an entry is reported as
- * undeclared, and the directory an entry sits under decides the row's archetype. Importing a wrapper
- * url and running this is how a whole project is restored.
+ * undeclared, and where an entry sits decides what kind of component it is. Importing a wrapper url
+ * and running this is how a whole project is restored.
+ *
+ * <p><b>Two wrapper layouts, both read here</b> ({@link WrapperPath}), because the flip from one to
+ * the other is gradual and a mixed wrapper has to reconcile correctly on the way:
+ *
+ * <ul>
+ *   <li>{@code <directory>/<name>} — the directory is the archetype, exactly as before, and the row's
+ *       {@code component} stays null.
+ *   <li>{@code components/<component>/<name>} — the second segment is the row's {@code component}.
+ *       The directory declares no archetype here, so <b>an existing row keeps the archetype it
+ *       has</b>: a submodule that only moved must not be re-typed, and must certainly not be nulled.
+ *       A row this reconcile <em>mints</em> takes its archetype from the name's role suffix ({@link
+ *       eu.wohlben.qits.projects.entity.RepositoryArchetype#fromRepositoryName}), and null when the
+ *       name declares none — which is the honest answer and the least destructive one, since a null
+ *       archetype is never reported undeclared and so is never offered for the delete that would
+ *       destroy the repository, while a guessed one would be a wrong label nothing here can correct.
+ * </ul>
  *
  * <p>It replaces the recursive submodule import, which had the relationship backwards: it walked
  * whatever a repository happened to reference, at any depth, and registered all of it as siblings
@@ -70,6 +86,11 @@ public class WrapperReconcileService {
     /** A row already matched; the wrapper's directory changed what kind of component it is. */
     ARCHETYPE_UPDATED,
     /**
+     * A row already matched and kept its kind; the wrapper moved it to a different <b>component</b>
+     * — which is what every row reports the first time a wrapper flips to the component layout.
+     */
+    COMPONENT_UPDATED,
+    /**
      * A row already matched and agreed about its archetype; its <b>backup target</b> was wrong or
      * missing and now names the forge twin the wrapper implies.
      */
@@ -98,8 +119,11 @@ public class WrapperReconcileService {
    * @param path the wrapper path this is about, or null when the line is not about an entry
    * @param name the addressable name, which is what {@code ../<name>.git} resolves to
    * @param repositoryId the repository the entry now maps to, or null when there is none
-   * @param archetype the archetype the entry's directory decided, or the row's own when the line is
-   *     about a row the wrapper does not name
+   * @param archetype the archetype the row now carries — decided by the entry's directory under the
+   *     archetype layout, preserved from the row under the component layout, and the row's own when
+   *     the line is about a row the wrapper does not name
+   * @param component the component the entry's path names, or null for an entry still mounted under
+   *     an archetype directory
    * @param warning why an outcome is what it is, when the outcome does not say it; else null
    */
   public record EntryOutcome(
@@ -107,6 +131,7 @@ public class WrapperReconcileService {
       String name,
       String repositoryId,
       RepositoryArchetype archetype,
+      String component,
       Outcome outcome,
       String warning) {}
 
@@ -168,7 +193,7 @@ public class WrapperReconcileService {
         LOG.errorf(e, "Reconcile of wrapper entry '%s' failed", entry.path());
         outcomes.add(
             new EntryOutcome(
-                entry.path(), entry.name(), null, null, Outcome.SKIPPED, e.getMessage()));
+                entry.path(), entry.name(), null, null, null, Outcome.SKIPPED, e.getMessage()));
       }
     }
 
@@ -182,6 +207,7 @@ public class WrapperReconcileService {
               null,
               null,
               wrapper.id,
+              null,
               null,
               Outcome.SKIPPED,
               "The wrapper declares no submodules, so nothing was registered and nothing was"
@@ -200,38 +226,51 @@ public class WrapperReconcileService {
   private EntryOutcome reconcileEntry(
       Project project, WrapperGitmodules.Entry entry, Set<String> matchedRepoIds) {
     String path = entry.path();
-    if (path == null || path.isBlank() || !path.contains("/")) {
+    WrapperPath parsed = WrapperPath.parse(path);
+    if (parsed == null) {
       return new EntryOutcome(
           path,
           entry.name(),
           null,
           null,
+          null,
           Outcome.SKIPPED,
-          "A component's path must be <directory>/<name>; '" + path + "' is not.");
+          "A component's path must be <directory>/<name> or components/<component>/<name>; '"
+              + path
+              + "' is not.");
     }
-    String directory = path.substring(0, path.lastIndexOf('/'));
-    String name = path.substring(path.lastIndexOf('/') + 1);
-    RepositoryArchetype archetype = RepositoryArchetype.fromDirectory(directory);
-    if (archetype == null) {
+    String name = parsed.name();
+    String component = parsed.component();
+    if (!parsed.isComponentLayout() && parsed.directoryArchetype() == null) {
       return new EntryOutcome(
           path,
           name,
           null,
           null,
+          null,
           Outcome.SKIPPED,
           "'"
-              + directory
+              + parsed.directory()
               + "' is not one of this project's component directories "
               + RepositoryArchetype.skeletonDirectories()
-              + ", so there is no archetype to give it.");
+              + " and is not '"
+              + WrapperPath.COMPONENTS_DIRECTORY
+              + "/<component>', so there is no archetype to give it.");
     }
 
     SyncTarget syncTarget = syncTargetFor(project, entry);
     Repository existing = match(project, entry, name);
     if (existing != null) {
       matchedRepoIds.add(existing.id);
-      return adjustExisting(project, existing, path, name, archetype, syncTarget);
+      return adjustExisting(project, existing, parsed, syncTarget);
     }
+
+    // A row nothing matched is one this reconcile is about to mint, and only for one of those is
+    // the name allowed to decide the kind — see the class doc.
+    RepositoryArchetype archetype =
+        parsed.isComponentLayout()
+            ? RepositoryArchetype.fromRepositoryName(name)
+            : parsed.directoryArchetype();
 
     // The host already serves it under the entry name as its storage id — a host seeded before this
     // service existed, where the two coordinates happen to coincide (a name is a valid opaque id).
@@ -244,6 +283,10 @@ public class WrapperReconcileService {
           QuarkusTransaction.requiringNew()
               .call(
                   () -> {
+                    // Adoption is idempotent on the storage id and answers a pre-existing row
+                    // untouched, so whether the row is this call's to write has to be asked first —
+                    // otherwise a null archetype meant for a fresh row would clear a real one.
+                    boolean minted = repositoryRepository.findByIdOptional(name).isEmpty();
                     // With the derived backup target, not null: an adopted row that never learns
                     // where its forge twin is is a repository nothing backs up, and the derivation
                     // is the same one every other row's target comes from.
@@ -251,11 +294,18 @@ public class WrapperReconcileService {
                         repositoryService.adoptExistingOrigin(
                             project, name, name, syncTarget.url(), archetype);
                     repositoryNameRepository.ensureAlias(project, name, repo);
+                    repo.component = component;
+                    if (minted) {
+                      // RepositoryService defaults an absent archetype to SERVICE, which is right
+                      // for a caller that simply did not say — and wrong here, where "the name
+                      // declares no role" is the answer. Write it back as the null it is.
+                      repo.archetype = archetype;
+                    }
                     return repo;
                   });
       matchedRepoIds.add(adopted.id);
       return new EntryOutcome(
-          path, name, adopted.id, archetype, Outcome.ADOPTED, syncTarget.warning());
+          path, name, adopted.id, archetype, component, Outcome.ADOPTED, syncTarget.warning());
     }
 
     // Nothing here yet: clone the backend the entry names. This is the restore path — a wrapper url
@@ -267,6 +317,7 @@ public class WrapperReconcileService {
           name,
           null,
           archetype,
+          component,
           Outcome.SKIPPED,
           "Nothing is served as '"
               + name
@@ -285,10 +336,14 @@ public class WrapperReconcileService {
                   Repository repo =
                       repositoryService.cloneRepository(backend.get(), archetype, project, name);
                   repositoryNameRepository.ensureAlias(project, name, repo);
+                  repo.component = component;
+                  // A clone always mints its row, so the archetype is unconditionally this call's
+                  // to state — null included. See the adopt arm for why that matters.
+                  repo.archetype = archetype;
                   return repo;
                 });
     matchedRepoIds.add(created.id);
-    return new EntryOutcome(path, name, created.id, archetype, Outcome.CREATED, null);
+    return new EntryOutcome(path, name, created.id, archetype, component, Outcome.CREATED, null);
   }
 
   /**
@@ -312,22 +367,25 @@ public class WrapperReconcileService {
   }
 
   /**
-   * The row kept, with the wrapper having the last word on two things: what kind of component it is
-   * (the directory) and where it is backed up to (the entry's url, folded against the wrapper's
-   * own). Its alias is re-asserted so {@code ../<name>.git} resolves.
+   * The row kept, with the wrapper having the last word on where it is backed up to (the entry's
+   * url, folded against the wrapper's own), on which component it belongs to, and — under the
+   * archetype layout only — on what kind of component it is. Its alias is re-asserted so {@code
+   * ../<name>.git} resolves.
    *
-   * <p>A row can need both corrections at once. Both are applied; the outcome reports the archetype
-   * flip, because that is the bigger statement about the repository and a client showing one label
-   * per row should show that one.
+   * <p><b>Under the component layout the archetype is not touched at all.</b> The directory says
+   * nothing about kind there, so re-deriving one would rewrite a fact the wrapper no longer states —
+   * which is exactly what the flip must not do to a live platform's rows.
+   *
+   * <p>A row can need several corrections at once. All are applied; the outcome reports the biggest
+   * statement about the repository, because a client shows one label per row: an archetype flip
+   * outranks a component move, which outranks a retarget.
    */
   private EntryOutcome adjustExisting(
-      Project project,
-      Repository existing,
-      String path,
-      String name,
-      RepositoryArchetype archetype,
-      SyncTarget syncTarget) {
+      Project project, Repository existing, WrapperPath parsed, SyncTarget syncTarget) {
+    String name = parsed.name();
     RepositoryArchetype before = existing.archetype;
+    String beforeComponent = existing.component;
+    RepositoryArchetype[] after = new RepositoryArchetype[1];
     boolean[] retargeted = new boolean[1];
     String warning =
         QuarkusTransaction.requiringNew()
@@ -335,9 +393,11 @@ public class WrapperReconcileService {
                 () -> {
                   Repository repo = repositoryService.get(existing.id);
                   repositoryNameRepository.ensureAlias(project, name, repo);
-                  if (repo.archetype != archetype) {
-                    repo.archetype = archetype;
+                  if (!parsed.isComponentLayout()
+                      && repo.archetype != parsed.directoryArchetype()) {
+                    repo.archetype = parsed.directoryArchetype();
                   }
+                  repo.component = parsed.component();
                   if (syncTarget.url() != null && !syncTarget.url().equals(repo.url)) {
                     LOG.infof(
                         "Reconcile: %s backs up to %s but the wrapper implies %s — repointing it.",
@@ -345,14 +405,23 @@ public class WrapperReconcileService {
                     repo.url = syncTarget.url();
                     retargeted[0] = true;
                   }
-                  return recordConfigDisagreement(repo, archetype);
+                  after[0] = repo.archetype;
+                  return recordConfigDisagreement(repo, parsed, repo.archetype);
                 });
     Outcome outcome =
-        before != archetype
+        before != after[0]
             ? Outcome.ARCHETYPE_UPDATED
-            : retargeted[0] ? Outcome.SYNC_TARGET_UPDATED : Outcome.KEPT;
+            : !java.util.Objects.equals(beforeComponent, parsed.component())
+                ? Outcome.COMPONENT_UPDATED
+                : retargeted[0] ? Outcome.SYNC_TARGET_UPDATED : Outcome.KEPT;
     return new EntryOutcome(
-        path, name, existing.id, archetype, outcome, join(warning, syncTarget.warning()));
+        parsed.path(),
+        name,
+        existing.id,
+        after[0],
+        parsed.component(),
+        outcome,
+        join(warning, syncTarget.warning()));
   }
 
   /** Both reasons a row can be worth a note, in one field. */
@@ -365,14 +434,22 @@ public class WrapperReconcileService {
 
   /**
    * Records — never applies — a committed {@code repository.yml} archetype that disagrees with the
-   * directory the wrapper mounts this repository under.
+   * archetype the row actually carries.
    *
-   * <p>The wrapper is the project's configuration, so the directory wins; but a repository whose own
+   * <p>The wrapper is the project's configuration, so the wrapper wins; but a repository whose own
    * committed config says something else is telling its author two different things, and that
    * belongs in the {@code config_warning} column where every other ingestion problem already goes.
    * Best effort: a mirror that is not there yet simply has nothing to read.
+   *
+   * <p>A row with <b>no</b> archetype has nothing to disagree with, so nothing is recorded and
+   * nothing is cleared — that is a component-layout row whose name declares no role, and the
+   * committed value is the only statement anyone has made about it.
    */
-  private String recordConfigDisagreement(Repository repo, RepositoryArchetype archetype) {
+  private String recordConfigDisagreement(
+      Repository repo, WrapperPath parsed, RepositoryArchetype archetype) {
+    if (archetype == null) {
+      return null;
+    }
     RepositoryArchetype committed;
     try {
       java.nio.file.Path gitDir = gitMirrors.of(repo.id).gitDir();
@@ -390,12 +467,21 @@ public class WrapperReconcileService {
       return null;
     }
     String warning =
-        "The committed repository config declares archetype "
-            + committed
-            + ", but the wrapper mounts this repository under '"
-            + archetype.directory()
-            + "'. The wrapper wins; move the submodule to change the archetype, or drop the"
-            + " committed value.";
+        parsed.isComponentLayout()
+            ? "The committed repository config declares archetype "
+                + committed
+                + ", but this repository is registered as "
+                + archetype
+                + " and the wrapper mounts it at '"
+                + parsed.path()
+                + "', which states a component rather than a kind. The row wins; drop the committed"
+                + " value, or rename the repository to carry the role suffix it means."
+            : "The committed repository config declares archetype "
+                + committed
+                + ", but the wrapper mounts this repository under '"
+                + archetype.directory()
+                + "'. The wrapper wins; move the submodule to change the archetype, or drop the"
+                + " committed value.";
     repo.configWarning = warning;
     return warning;
   }
@@ -481,6 +567,11 @@ public class WrapperReconcileService {
    * Reports every placeable row of the project that no wrapper entry claimed, and <b>changes
    * nothing</b>. Unplaceable rows ({@code FORK}, {@code SERVICE_TEMPLATE}) and the wrapper itself
    * are left out — they were never expected in the manifest.
+   *
+   * <p>A row with <b>no</b> archetype is left out too, and that is the whole reason the component
+   * layout stores null rather than a guess: an UNDECLARED line is what offers a person the delete
+   * that destroys the repository on the git host, and a row nobody has said the kind of must never
+   * be put in front of that decision on the strength of a guess.
    */
   private List<EntryOutcome> reportUndeclared(Project project, Set<String> matchedRepoIds) {
     return repositoryRepository.find("project.id", project.id).list().stream()
@@ -493,6 +584,7 @@ public class WrapperReconcileService {
                     repositoryNameRepository.nameFor(stray).orElse(stray.id),
                     stray.id,
                     stray.archetype,
+                    stray.component,
                     Outcome.UNDECLARED,
                     "No wrapper entry names this repository, so it is not part of the project."
                         + " Delete it from the project setup page, or add the entry back to the"

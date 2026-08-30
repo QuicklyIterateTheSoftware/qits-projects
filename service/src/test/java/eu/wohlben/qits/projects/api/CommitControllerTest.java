@@ -36,7 +36,7 @@ public class CommitControllerTest {
         .contentType(ContentType.JSON)
         .body(
             new eu.wohlben.qits.projects.api.ProjectController.CreateProjectRepositoryRequest(
-                fixtureUrl, null, eu.wohlben.qits.projects.entity.RepositoryArchetype.SERVICE))
+                fixtureUrl, null, eu.wohlben.qits.projects.entity.RepositoryArchetype.SERVICE, null))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()

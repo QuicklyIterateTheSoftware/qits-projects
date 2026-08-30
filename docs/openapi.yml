@@ -213,6 +213,8 @@ components:
           type: string
         archetype:
           $ref: "#/components/schemas/RepositoryArchetype"
+        component:
+          type: string
     CreateProjectRequest:
       type: object
       required:
@@ -371,6 +373,8 @@ components:
           type: string
         archetype:
           $ref: "#/components/schemas/RepositoryArchetype"
+        component:
+          type: string
         outcome:
           $ref: "#/components/schemas/Outcome"
         warning:
@@ -501,6 +505,7 @@ components:
       - ADOPTED
       - KEPT
       - ARCHETYPE_UPDATED
+      - COMPONENT_UPDATED
       - SYNC_TARGET_UPDATED
       - UNDECLARED
       - SKIPPED
@@ -632,6 +637,8 @@ components:
           type: string
         archetype:
           $ref: "#/components/schemas/RepositoryArchetype"
+        component:
+          type: string
         projectId:
           type: string
         lastBackup:
@@ -3092,4 +3099,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.825.143805
+  version: 2026.829.220728

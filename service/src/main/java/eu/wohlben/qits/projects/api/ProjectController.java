@@ -395,12 +395,19 @@ public class ProjectController {
                     "No repository named '" + name + "' in project " + projectId));
   }
 
+  /**
+   * @param component the technical component to mount the entry under, or null to let the wrapper's
+   *     own layout decide. Stating one places at {@code components/<component>/<name>}; a wrapper
+   *     that has already flipped places there with or without it.
+   */
   public static record CreateProjectRepositoryRequest(
       String url,
       String name,
-      @NotNull eu.wohlben.qits.projects.entity.RepositoryArchetype archetype) {
+      @NotNull eu.wohlben.qits.projects.entity.RepositoryArchetype archetype,
+      String component) {
     /**
-     * @param wrapperPath where the wrapper now mounts it, e.g. {@code services/checkout}
+     * @param wrapperPath where the wrapper now mounts it, e.g. {@code services/checkout} or {@code
+     *     components/checkout/checkout}
      */
     public record Response(RepositoryDto repository, String projectId, String wrapperPath) {}
   }
@@ -417,7 +424,11 @@ public class ProjectController {
       @PathParam("projectId") String projectId, @Valid CreateProjectRepositoryRequest request) {
     var created =
         projectService.createRepository(
-            projectId, request.url(), request.name(), request.archetype());
+            projectId,
+            request.url(),
+            request.name(),
+            request.archetype(),
+            request.component());
     return new CreateProjectRepositoryRequest.Response(
         repositoryMapper.toDto(created.repository()), projectId, created.wrapperPath());
   }

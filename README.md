@@ -1,4 +1,4 @@
-# qits-projects
+# qits-projects-service
 
 The **project, repository and planning** context of [qits](https://github.com/QuicklyIterateTheSoftware),
 extracted from the monorepo with its history (see `migration-plan.md` §3.1 there).
@@ -7,8 +7,8 @@ extracted from the monorepo with its history (see `migration-plan.md` §3.1 ther
 
 A **project is its wrapper repository.** It starts as a single repository and grows into a
 polyrepository, and the wrapper's `.gitmodules` is the project's configuration: every component is a
-submodule under a directory that names its type, and a repository the wrapper does not name is not
-part of the project — the reconcile reports such a row `UNDECLARED` and the listing marks it
+submodule under `components/<component>/`, its own name saying the role it plays, and a repository
+the wrapper does not name is not part of the project — the reconcile reports such a row `UNDECLARED` and the listing marks it
 `declared: false`, but nothing deletes it on its own, because deleting a repository now deletes it on
 the git host too. Importing a wrapper url restores the whole project. Submodule urls are
 **relative** (`../<name>.git`), so the same wrapper resolves its siblings at a forge and on this
@@ -36,11 +36,11 @@ Concretely:
 
 Anything workspace-shaped: the `Workspace` entity, containers, in-container file access, framework
 detection, prompt drafts, workspace history. That is
-[qits-workspaces](https://github.com/QuicklyIterateTheSoftware/qits-workspaces). Anything that runs
-*inside* a workspace container — commands, terminals, agents — is
+[qits-workspaces-service](https://github.com/QuicklyIterateTheSoftware/qits-workspaces-service).
+Anything that runs *inside* a workspace container — commands, terminals, agents — is
 [qits-workspace-daemon](https://github.com/QuicklyIterateTheSoftware/qits-workspace-daemon). The git
 smart-HTTP host that serves these bare origins over the wire is
-[qits-githost](https://github.com/QuicklyIterateTheSoftware/qits-githost).
+[qits-githost-service](https://github.com/QuicklyIterateTheSoftware/qits-githost-service).
 
 ## Layout
 
@@ -99,8 +99,8 @@ nothing of `/projects/mcp`, which is how `/projects/mcp/typo` once answered `200
 It was extracted as a library jar, on the reasoning that packaging it would need an auth variant, a
 webui and a main class. All three have lapsed: authentication terminates at `qits-gateway` and this
 service reads a header, Quarkus supplies the main class, and the webui is now
-[qits-spa-projects](https://github.com/QuicklyIterateTheSoftware/qits-spa-projects) — a repository of
-its own, checked out as a submodule at `service/src/main/webui` and built into this process by
+[qits-projects-frontend](https://github.com/QuicklyIterateTheSoftware/qits-projects-frontend) —
+a repository of its own, checked out as a submodule at `service/src/main/webui` and built into this process by
 Quinoa.
 
 Coordinates are namespaced (`eu.wohlben.qits:qits-projects-*`) because the directories are the
@@ -144,12 +144,12 @@ per project, through a `ProjectEnvironmentNotifier` port. qits-cd owns environme
 deliberate tiers (`dev`, and later `preprod`/`prod`) created over qits-cd's own REST surface, one per
 tier and not one per project. Nothing here creates, names or reconciles one.
 
-Reached the other way: qits-workspaces' `RepositoryLookup` and `RepositoryAddressResolver`, and
-qits-githost's `githost.RepositoryNameResolver`, are ports **those** repos declare and this one
-satisfies. This jar does not implement them — the assembling application does, by adapting
+Reached the other way: qits-workspaces-service's `RepositoryLookup` and `RepositoryAddressResolver`,
+and qits-githost-service's `githost.RepositoryNameResolver`, are ports **those** repos declare and
+this one satisfies. This jar does not implement them — the assembling application does, by adapting
 `RepositoryRepository` / `RepositoryNameRepository` (which live here) to their interfaces, or, for
 a service that runs apart, by calling the by-name route in the table above. Note the name collision:
-qits-githost's `githost.RepositoryNameResolver` (a port) and this context's
+qits-githost-service's `githost.RepositoryNameResolver` (a port) and this context's
 `control.RepositoryNameResolver` (the alias resolver) are unrelated types.
 
 ## The startup self-seed

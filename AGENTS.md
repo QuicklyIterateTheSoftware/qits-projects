@@ -1,4 +1,4 @@
-# qits-projects — working notes
+# qits-projects-service — working notes
 
 Read `README.md` first: it defines the boundary and lists the ports. This file is the working
 conventions on top of it.
@@ -60,7 +60,7 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
   `java.net.http.HttpClient` as an instance field). There is **no `notify` package any more**: its
   one class implemented `ProjectDomainRegistrar` against qits-platform-dns, that service is gone from
   the platform, and the port is an unimplemented hook now — so this repo implements no creation port
-  at all. Bring the package name back (qits-ci's `ci.notify` idiom) if a fire-and-forget notifier
+  at all. Bring the package name back (qits-ci-service's `ci.notify` idiom) if a fire-and-forget notifier
   ever returns; `wiring` is deliberately not it, because a repository create is waited on and can
   fail the caller's request.
 - `service/…/containershost/` — the orchestrator client: the `ContainerRuntime` implementation, the
@@ -194,8 +194,8 @@ HTTP server they never wanted, because vertx-http rides in with the jar. That is
 
 Don't. Declare a port in `domain/…/projects/control/`, inject it as `Instance<T>`, and make absent a
 supported configuration with a documented behaviour — see the table in the README. Every port here
-is optional; if you ever add a mandatory one, say why in its javadoc, the way qits-workspaces'
-`RepositoryLookup` does.
+is optional; if you ever add a mandatory one, say why in its javadoc, the way
+qits-workspaces-service's `RepositoryLookup` does.
 
 **`qits-containers-client` is the exception that shows where the rule's real boundary is.** It is a
 *client*, so it has to be read against this rule rather than waved past it — and the answer is the
@@ -243,7 +243,7 @@ repository id to go on).
 
 **`POST /projects/{projectId}/repositories/adopt` is `qits:system` alone**, like the by-name
 resolution and for the same reason: its caller supplies a git-host STORAGE id, which only the
-machine that created the bare holds. That caller is qits-cli-bootstrap, which creates every platform
+machine that created the bare holds. That caller is qits-bootstrap-cli, which creates every platform
 repository on the git host before this service exists to be asked. A person has no storage id to
 supply and `POST /projects/{projectId}/repositories` is their route.
 
@@ -272,7 +272,7 @@ also how the bug ran unseen: this repo shipped `SecurityIdentity` with no mechan
 `changed_by` was null on every row, and an annotation that fabricates an identity would have gone on
 passing the whole time.
 
-Do not lift `projects/security` into a shared `libs/qits-auth`. Every repo builds from a clone of
+Do not lift `projects/security` into a shared qits-auth javalib. Every repo builds from a clone of
 itself alone, so ~115 lines duplicated per service is cheaper than a jar that has to travel to all of
 them; the duplication is the decision, not an oversight.
 
@@ -417,11 +417,11 @@ one would name the same branch. `Project.slug` is unique too (V6), with the whol
 scope, so the same suffixing runs there; the difference is what a *supplied* slug means, and it is
 in **Project slugs** below.
 
-**Open, in another repo:** qits-workspaces' `CaptureService` mints capture branches named
+**Open, in another repo:** qits-workspaces-service's `CaptureService` mints capture branches named
 `feature/<timestamp>`. Directory-wise that collides with `feature/<epic>/<feature>` — a capture
 branch is a *file* at `refs/heads/feature/<timestamp>` while a feature branch needs
 `refs/heads/feature/<epic>/` to be a directory, so the first of the two to be created blocks the
-other. Renaming the capture prefix is a qits-workspaces workstream; do not change it from here.
+other. Renaming the capture prefix is a qits-workspaces-service workstream; do not change it from here.
 
 ## Epic lifecycle
 
@@ -457,8 +457,8 @@ One container per project, holding a clone of that project's wrapper repository 
 `qits-projects-daemon` over it, so a refinement agent can read and build the project it is drafting
 epics for. The host side is `service/…/agenthost/`; the container's process is its own repository
 (`qits-projects-daemon`), and that repo's `AGENTS.md` is the source of truth for every value below.
-The whole shape is qits-workspaces' daemon harness — registry, tunnels, proxy — adapted rather than
-reinvented, so read that repo before changing anything structural here.
+The whole shape is qits-workspaces-service's daemon harness — registry, tunnels, proxy — adapted
+rather than reinvented, so read that repo before changing anything structural here.
 
 **Two path contracts, and both are append-only.** They are baked into every container as env at
 creation, and only a container recreate re-injects them:
@@ -729,7 +729,7 @@ Five things bite.
   exited non-zero), and reading "we could not ask" as "there is nothing there" is what would send the
   ladder to provision a second container. Do not add a fifth outcome by catching something.
 - **A bring-up holds through 401, 403 and nothing answering, and through nothing else.**
-  `ContainersAgentRuntime.holdThrough` is qits-ci's classifier copied verbatim, and the measurement
+  `ContainersAgentRuntime.holdThrough` is qits-ci-service's classifier copied verbatim, and the measurement
   behind it is that repository's: across a qits-platform-idp cutover those three are statements about
   the moment rather than about the request, and each attempt asks the `TokenSource` again, which is
   the only way a post-cutover token is ever picked up. Retrying is safe because `ensure` is a PUT per
@@ -746,7 +746,7 @@ Five things bite.
   service had no start verb, its `RESTART` step fell through to a second `docker run` under a name
   docker already held, and a stopped place asked for again settled `MISSING` behind a **200**. The
   workaround here was an env stamp that differed per call, so the spec was never "unchanged" and the
-  recreate step ran instead. qits-containers 354fd7f fixed it — a bounded `start` on its driver seam,
+  recreate step ran instead. qits-containers-service 354fd7f fixed it — a bounded `start` on its driver seam,
   a real-daemon test that stop-then-ensure returns the same docker id — and the stamp is gone with
   it. Do not reintroduce a per-call value into this spec: a request that differs every time is a
   request that can never be started in place.
@@ -1013,7 +1013,7 @@ reintroduce it: a rule that matches nothing anywhere else is still a typo worth 
   an assertion and not an inference.
   <br>It is also this repo's **first userflow**, and the one every other story class is ordered
   after — see **Userflows** below.
-  <br>**`skipITs` stays `true` and no IT flips it**, unlike qits-githost's namesake:
+  <br>**`skipITs` stays `true` and no IT flips it**, unlike qits-githost-service's namesake:
   `PackagedSurfaceIT` is heavyweight (real git pushes, a pseudo-terminal), so the opt-in is per-run
   and per-class — `-DskipITs=false -Dit.test=<classes>`, which is exactly what the pipeline passes.
 - **Anything read off the classpath by walking is a native-image question.** `ProjectTemplate` is
@@ -1072,7 +1072,7 @@ catalogue**. Each `@UserStory` method is a browserless walk (an `Interactions` p
 `service/target/userstories/<category>/<story>/` — a `userflow.json` sidecar, a markdown rendering
 and a self-contained HTML page carrying the story's **network diagram**. The framework is
 `qits-userflows`, test scope, pinned on its own `qits.userflows.version` because it is released out
-of `libs/qits-userflows` and not out of the integrations reactor.
+of `components/qits-userflows/qits-userflows-javalib` and not out of the integrations reactor.
 
 **Every story is a `@QuarkusIntegrationTest` against the packaged artifact, and that is not a
 preference.** Inside a `@QuarkusTest` the shipped `%test` dev user holds all four platform roles and
@@ -1134,7 +1134,7 @@ socket and a `QuarkusTestResourceLifecycleManager` and a story method need not s
 `StoryGitHost.install()` takes the current end of that file as its floor, and the supplier it
 registers is **cumulative and prefix-stable**: it returns every edge harvested so far, in arrival
 order, so a later story's slice can never shift an earlier one's. It excludes no line on merit —
-unlike qits-ci's namesake, which drops a cached listing — because the one throttled read this
+unlike qits-ci-service's namesake, which drops a cached listing — because the one throttled read this
 service makes is handled at the other end instead, by the story waiting the window out (see below).
 
 **Fixture setup must be invisible to both taps.** `stories/support/StoryPlatform` builds the one

@@ -46,9 +46,18 @@ public class ProjectRepositoryControllerTest {
 
   private io.restassured.response.Response postRepository(
       String projectId, String url, String name, RepositoryArchetype archetype) {
+    return postRepository(projectId, url, name, archetype, null);
+  }
+
+  private io.restassured.response.Response postRepository(
+      String projectId,
+      String url,
+      String name,
+      RepositoryArchetype archetype,
+      String component) {
     return given()
         .contentType(ContentType.JSON)
-        .body(new ProjectController.CreateProjectRepositoryRequest(url, name, archetype))
+        .body(new ProjectController.CreateProjectRepositoryRequest(url, name, archetype, component))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories");
   }
@@ -68,6 +77,9 @@ public class ProjectRepositoryControllerTest {
         .body("repository.backupUrl", nullValue())
         .body("repository.mainBranch", equalTo("main"))
         .body("repository.archetype", equalTo("SERVICE"))
+        // An archetype-layout wrapper states no component, so the row carries none — and the field
+        // is on the wire either way, because the chrome reads it per row.
+        .body("repository.component", nullValue())
         .body("projectId", equalTo(projectId))
         .body("wrapperPath", equalTo("services/checkout"));
 
@@ -102,6 +114,39 @@ public class ProjectRepositoryControllerTest {
     postRepository(projectId, null, "-dashfirst", RepositoryArchetype.LIBRARY)
         .then()
         .statusCode(Response.Status.BAD_REQUEST.getStatusCode());
+  }
+
+  /**
+   * Stating a component places the entry the component way — which is also how an archetype-layout
+   * wrapper starts its flip, since the wrapper's own layout is what decides for every later create.
+   */
+  @Test
+  public void statingAComponentMountsTheEntryUnderIt() {
+    String projectId = createProject("Component Create");
+
+    postRepository(projectId, null, "checkout", RepositoryArchetype.SERVICE, "payments")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.name", equalTo("checkout"))
+        .body("repository.archetype", equalTo("SERVICE"))
+        .body("repository.component", equalTo("payments"))
+        .body("wrapperPath", equalTo("components/payments/checkout"));
+
+    // And the next create needs no component at all: the wrapper has flipped, so a lone repository
+    // becomes a component of its own name rather than landing back under an archetype directory.
+    postRepository(projectId, null, "ledger", RepositoryArchetype.DAEMON)
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repository.component", equalTo("ledger"))
+        .body("wrapperPath", equalTo("components/ledger/ledger"));
+
+    given()
+        .when()
+        .get("/projects/api/projects/" + projectId + "/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("wrapper.entries.path", hasItem("components/payments/checkout"))
+        .body("entries.repository.component", hasItem("payments"));
   }
 
   // --- create: attach ---

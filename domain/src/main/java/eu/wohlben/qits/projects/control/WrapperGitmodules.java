@@ -27,9 +27,14 @@ import java.util.Map;
  * </pre>
  *
  * <p>The <b>relative</b> url is what makes one wrapper resolve its siblings both at the forge and on
- * the platform git host's name-addressed route, with nothing to rewrite in between. The directory is
- * the archetype ({@link eu.wohlben.qits.projects.entity.RepositoryArchetype#directory()}), so moving
- * an entry between directories is how a component changes kind.
+ * the platform git host's name-addressed route, with nothing to rewrite in between. It stays {@code
+ * ../<name>.git} however deep the path is: git folds a relative submodule url against the
+ * superproject's <em>remote</em>, never against the gitlink's own directory, so a two-segment
+ * directory changes nothing about where the sibling resolves.
+ *
+ * <p>{@code <directory>} is one segment or two, and which one it is says what the wrapper is
+ * declaring — {@code services} is an archetype, {@code components/qits-ci} a component. See {@link
+ * WrapperPath}, which is the single reading of a path; this class only ever splices the text.
  *
  * <p>Pure and static: no CDI, no git, no IO — which is what lets its whole contract be tested
  * against strings.

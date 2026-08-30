@@ -28,7 +28,8 @@ import org.jboss.logging.Logger;
  *
  * <ul>
  *   <li>the amended {@code .gitmodules} blob ({@link WrapperGitmodules}), and
- *   <li>a {@code 160000} gitlink at {@code <directory>/<name>} pinned to the child's main-branch
+ *   <li>a {@code 160000} gitlink at the entry's path — {@code <directory>/<name>} or {@code
+ *       components/<component>/<name>}, see {@link WrapperPath} — pinned to the child's main-branch
  *       head <em>as it is at add time</em>. Nothing here follows the child afterwards; a gitlink
  *       bump is an ordinary commit somebody makes later.
  * </ul>
@@ -68,16 +69,42 @@ public class WrapperSubmoduleWriter {
   @Inject GitIdentity gitIdentity;
 
   /**
-   * Adds {@code name} to {@code wrapper}'s {@code .gitmodules} under {@code archetype}'s directory,
-   * pinned to {@code childMainHeadSha}, and pushes the commit.
+   * Adds {@code name} to {@code wrapper}'s {@code .gitmodules} under {@code archetype}'s directory —
+   * the archetype-layout form, kept for callers that state no component.
+   */
+  public String addToWrapper(
+      Repository wrapper, String name, RepositoryArchetype archetype, String childMainHeadSha) {
+    return addToWrapper(wrapper, name, archetype, null, childMainHeadSha);
+  }
+
+  /**
+   * Adds {@code name} to {@code wrapper}'s {@code .gitmodules}, pinned to {@code childMainHeadSha},
+   * and pushes the commit.
+   *
+   * <p><b>The wrapper decides where the entry lands, not this service's preference</b> — which is
+   * what lets a project flip layouts without its create button breaking:
+   *
+   * <ul>
+   *   <li>a stated {@code component} always places at {@code components/<component>/<name>}, so
+   *       stating one is also how an archetype-layout wrapper starts its flip;
+   *   <li>with no component stated, a wrapper that already mounts anything under {@code components/}
+   *       places at {@code components/<name>/<name>} — the one-repository component the campaign's
+   *       own map is full of;
+   *   <li>otherwise the archetype's directory, exactly as before.
+   * </ul>
    *
    * <p>Idempotent: an entry that is already exactly this one leaves the wrapper untouched and
    * returns the path, so a retry after a failed request is a no-op rather than a second commit.
    *
+   * @param component the component to mount under, or null to let the wrapper's own layout decide
    * @return the path the entry is mounted at
    */
   public String addToWrapper(
-      Repository wrapper, String name, RepositoryArchetype archetype, String childMainHeadSha) {
+      Repository wrapper,
+      String name,
+      RepositoryArchetype archetype,
+      String component,
+      String childMainHeadSha) {
     if (archetype == null || !archetype.isPlaceable()) {
       throw new BadRequestException(
           "Archetype " + archetype + " has no directory in the wrapper, so it cannot be a member.");
@@ -86,14 +113,28 @@ public class WrapperSubmoduleWriter {
       throw new InternalServerErrorException(
           "Cannot add '" + name + "' to the wrapper: it has no published head to pin the gitlink to.");
     }
-    String path = archetype.directory() + "/" + name;
+    String directory = directoryFor(wrapper, name, archetype, component);
+    String path = directory + "/" + name;
     commit(
         wrapper,
-        content -> WrapperGitmodules.addEntry(content, name, archetype.directory()),
+        content -> WrapperGitmodules.addEntry(content, name, directory),
         List.of(new RepoMirror.Gitlink(path, childMainHeadSha)),
         List.of(),
         "Add " + path + " to the project");
     return path;
+  }
+
+  /** See {@link #addToWrapper(Repository, String, RepositoryArchetype, String, String)}. */
+  private String directoryFor(
+      Repository wrapper, String name, RepositoryArchetype archetype, String component) {
+    String stated = component == null || component.isBlank() ? null : component.trim();
+    if (stated != null) {
+      return WrapperPath.componentDirectory(stated);
+    }
+    if (WrapperPath.usesComponentLayout(WrapperGitmodules.entries(readGitmodules(wrapper)))) {
+      return WrapperPath.componentDirectory(name);
+    }
+    return archetype.directory();
   }
 
   /**

@@ -69,7 +69,7 @@ public class RepositoryNameCutoverTest {
         .contentType(ContentType.JSON)
         .body(
             new ProjectController.CreateProjectRepositoryRequest(
-                null, name, RepositoryArchetype.SERVICE))
+                null, name, RepositoryArchetype.SERVICE, null))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()

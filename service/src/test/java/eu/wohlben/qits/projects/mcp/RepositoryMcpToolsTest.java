@@ -62,7 +62,7 @@ public class RepositoryMcpToolsTest {
     return authenticated()
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRepositoryRequest(
-                fixtureUrl, null, RepositoryArchetype.SERVICE))
+                fixtureUrl, null, RepositoryArchetype.SERVICE, null))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()
@@ -80,7 +80,7 @@ public class RepositoryMcpToolsTest {
     return authenticated()
         .contentType(ContentType.JSON)
         .body(new ProjectController.CreateProjectRepositoryRequest(
-                null, name, RepositoryArchetype.SERVICE))
+                null, name, RepositoryArchetype.SERVICE, null))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()

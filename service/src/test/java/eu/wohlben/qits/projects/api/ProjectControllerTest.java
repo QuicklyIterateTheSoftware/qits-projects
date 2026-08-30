@@ -144,7 +144,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRepositoryRequest(
-                    fixtureUrl, null, RepositoryArchetype.SERVICE))
+                    fixtureUrl, null, RepositoryArchetype.SERVICE, null))
             .when()
             .post("/projects/api/projects/" + projectId + "/repositories")
             .then()
@@ -199,7 +199,7 @@ public class ProjectControllerTest {
         given()
             .contentType(ContentType.JSON)
             .body(new ProjectController.CreateProjectRepositoryRequest(
-                    fixtureUrl, null, RepositoryArchetype.SERVICE))
+                    fixtureUrl, null, RepositoryArchetype.SERVICE, null))
             .when()
             .post("/projects/api/projects/" + projectId + "/repositories")
             .then()
@@ -342,7 +342,7 @@ public class ProjectControllerTest {
         .contentType(ContentType.JSON)
         .body(
             new ProjectController.CreateProjectRepositoryRequest(
-                fixtureUrl, null, RepositoryArchetype.PROJECT))
+                fixtureUrl, null, RepositoryArchetype.PROJECT, null))
         .when()
         .post("/projects/api/projects/" + projectId + "/repositories")
         .then()

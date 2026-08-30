@@ -2,6 +2,7 @@ package eu.wohlben.qits.projects.entity;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -15,9 +16,17 @@ import java.util.Set;
  * rather than being derived from the name, because it doesn't derive mechanically ({@code libs} !=
  * {@code LIBRARY}, {@code frontends} != {@code FRONTEND}).
  *
- * <p>Directory is now <b>authoritative</b>: the wrapper's {@code .gitmodules} is the project's
- * configuration, so the directory an entry sits under decides the row's archetype — see {@link
- * #fromDirectory}, which is the reconcile's derivation.
+ * <p>Directory is authoritative <b>under the archetype layout</b>: the wrapper's {@code .gitmodules}
+ * is the project's configuration, so the directory an entry sits under decides the row's archetype —
+ * see {@link #fromDirectory}, which is the reconcile's derivation there.
+ *
+ * <p><b>Under the component layout it is the name that says the kind</b>, because the first path
+ * segment is the literal {@code components} and the second is the component. {@link
+ * #fromRepositoryName} is that derivation, over the role suffix of the campaign's name grammar
+ * ({@code <component>[-<modifier>]-<role>[-<tech>]}). It answers null for a name carrying no role
+ * suffix, which is the state every repository is in until the renames land — and null is what the
+ * reconcile stores rather than a guess, since nothing in this service can correct a wrong archetype
+ * afterwards.
  *
  * <p>{@link #SERVICE_TEMPLATE} and {@link #FORK} are deliberately unplaceable: neither is a
  * component of <em>this</em> application (one is scaffolding a component is generated from, the
@@ -85,6 +94,47 @@ public enum RepositoryArchetype {
     for (RepositoryArchetype archetype : values()) {
       if (trimmed.equals(archetype.directory)) {
         return archetype;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The role suffixes of the name grammar, mapped to the archetype each one declares. Insertion
+   * order is the matching order; no suffix is a suffix of another, so the order is documentation
+   * rather than precedence.
+   */
+  private static final Map<String, RepositoryArchetype> ROLE_SUFFIXES =
+      Map.of(
+          "-service", SERVICE,
+          "-daemon", DAEMON,
+          "-frontend", FRONTEND,
+          "-oci", IMAGE,
+          "-cli", CLI,
+          "-javalib", LIBRARY,
+          "-jslib", LIBRARY);
+
+  /**
+   * The archetype a repository <em>name</em> declares through its role suffix, or null when it
+   * declares none.
+   *
+   * <p>This is the component layout's derivation: {@code qits-ci-service} is a {@link #SERVICE},
+   * {@code qits-eventstream-javalib} a {@link #LIBRARY}, {@code qits-workspace-oci} an {@link
+   * #IMAGE}. A tier modifier sits <em>before</em> the role ({@code
+   * qits-deployments-platform-service}), so the suffix still decides.
+   *
+   * <p><b>Null is the answer for every name the renames have not reached</b> — {@code qits-ci},
+   * {@code qits-spa-ci} — and it is a real answer, not a failure: the reconcile only ever asks this
+   * for a row it is creating, and it stores the null rather than inventing a kind.
+   */
+  public static RepositoryArchetype fromRepositoryName(String name) {
+    if (name == null || name.isBlank()) {
+      return null;
+    }
+    String trimmed = name.trim().toLowerCase(java.util.Locale.ROOT);
+    for (Map.Entry<String, RepositoryArchetype> role : ROLE_SUFFIXES.entrySet()) {
+      if (trimmed.endsWith(role.getKey()) && trimmed.length() > role.getKey().length()) {
+        return role.getValue();
       }
     }
     return null;

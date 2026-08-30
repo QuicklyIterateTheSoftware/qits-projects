@@ -187,7 +187,8 @@ public class ProjectServiceTest {
    */
   @Test
   public void aSuppliedReservedSlugIsRefused() {
-    for (String reserved : new String[] {"projects", "services", "api", "q", "main-navigation"}) {
+    for (String reserved :
+        new String[] {"projects", "services", "components", "api", "q", "main-navigation"}) {
       var refusal =
           assertThrows(
               BadRequestException.class,

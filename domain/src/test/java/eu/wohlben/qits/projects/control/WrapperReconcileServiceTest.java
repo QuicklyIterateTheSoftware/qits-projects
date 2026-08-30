@@ -58,10 +58,11 @@ public class WrapperReconcileServiceTest {
     // has to equal <slug>-<slug> — so every case here wants the same slug and the previous case's
     // project has to give it up first. Same idiom as SelfSeedServiceTest's clean().
     projectService.list().stream()
-        .filter(p -> "qits".equals(p.slug))
+        .filter(p -> "qits".equals(p.slug) || "comp".equals(p.slug))
         .toList()
         .forEach(p -> projectService.delete(p.id));
-    for (String name : List.of("submodule-shared", "submodule-grandchild", "self-hosted")) {
+    for (String name :
+        List.of("submodule-shared", "submodule-grandchild", "self-hosted", "sample-javalib")) {
       Path bare = Path.of(gitHost.fetchUrl(name));
       if (!Files.isDirectory(bare)) {
         continue;
@@ -77,6 +78,15 @@ public class WrapperReconcileServiceTest {
   /** A project whose wrapper is the fixture manifest. The slug must be {@code qits} for it. */
   private Project projectWithManifest(String name) throws Exception {
     return projectService.create(name, "qits", null, fixture("qits-qits.git"));
+  }
+
+  /**
+   * A project whose wrapper is the MIXED manifest: two entries under {@code components/}, one still
+   * under {@code services/}. The slug must be {@code comp} for it — a wrapper is only adoptable from
+   * a url whose basename is {@code <slug>-<slug>}.
+   */
+  private Project projectWithComponentManifest(String name) throws Exception {
+    return projectService.create(name, "comp", null, fixture("comp-comp.git"));
   }
 
   private Map<String, WrapperReconcileService.EntryOutcome> outcomesByName(
@@ -378,6 +388,127 @@ public class WrapperReconcileServiceTest {
         1,
         repositoryRepository.count("id = ?1 and url = ?2", repo.id, twin.toString()),
         "the row kept the twin it had — a qits-host url is never written");
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // the component layout: components/<component>/<name>
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * The flip's whole point read off one reconcile: the second path segment becomes the row's
+   * component, the entry still under {@code services/} keeps working beside it, and a row minted
+   * under {@code components/} takes its archetype from the name's role suffix — or nothing at all,
+   * because no directory says the kind any more.
+   */
+  @Test
+  public void theComponentLayoutRecordsTheComponentAndReadsTheKindOffTheName() throws Exception {
+    Project project = projectWithComponentManifest("Reconcile Components");
+
+    var outcomes = outcomesByName(reconcileService.reconcile(project.id));
+
+    assertEquals(
+        WrapperReconcileService.Outcome.CREATED, outcomes.get("submodule-shared").outcome());
+    assertEquals(
+        "components/shared-things/submodule-shared", outcomes.get("submodule-shared").path());
+    assertEquals("shared-things", outcomes.get("submodule-shared").component());
+    assertEquals(
+        "shared-things",
+        byName(project.id, "submodule-shared").component,
+        "the second path segment is the row's component");
+    assertEquals(
+        null,
+        byName(project.id, "submodule-shared").archetype,
+        "'submodule-shared' carries no role suffix, so nothing declares a kind — and null is what"
+            + " that is stored as, never a guess this service could not correct afterwards");
+
+    assertEquals("samples", byName(project.id, "sample-javalib").component);
+    assertEquals(
+        RepositoryArchetype.LIBRARY,
+        byName(project.id, "sample-javalib").archetype,
+        "'-javalib' is the name grammar's role suffix for a library");
+
+    // The mixed half: an entry the flip has not reached is reconciled exactly as before.
+    assertEquals(
+        RepositoryArchetype.SERVICE, byName(project.id, "submodule-grandchild").archetype);
+    assertEquals(
+        null,
+        byName(project.id, "submodule-grandchild").component,
+        "an archetype-directory entry states no component, so the row carries none");
+  }
+
+  /**
+   * The rule the live flip depends on: a submodule that only <b>moved</b> keeps the kind it already
+   * had. The directory no longer states one, so re-deriving would rewrite — or null — a fact about
+   * every repository on the platform on the strength of a path change.
+   */
+  @Test
+  public void aRowMovedIntoAComponentKeepsTheArchetypeItAlreadyHad() throws Exception {
+    Project project = projectWithComponentManifest("Reconcile Preserve");
+    Repository repo =
+        projectService.createRepositoryUnderProject(
+            project.id, fixture("submodule-shared.git"), RepositoryArchetype.SERVICE);
+
+    var outcomes = outcomesByName(reconcileService.reconcile(project.id));
+
+    assertEquals(
+        WrapperReconcileService.Outcome.COMPONENT_UPDATED,
+        outcomes.get("submodule-shared").outcome(),
+        "the move is what changed, and it is what the line reports");
+    assertEquals(RepositoryArchetype.SERVICE, outcomes.get("submodule-shared").archetype());
+    // A count query rather than a field read: this test's persistence context still holds the
+    // instance it created, and reading its field would answer from that copy rather than the row.
+    assertEquals(
+        1,
+        repositoryRepository.count(
+            "id = ?1 and archetype = ?2 and component = ?3",
+            repo.id,
+            RepositoryArchetype.SERVICE,
+            "shared-things"),
+        "the row kept its kind and gained its component");
+  }
+
+  /**
+   * A relative submodule url folds against the superproject's <b>remote</b>, never against the
+   * gitlink's own directory, so a three-segment path must derive exactly the backup twin a
+   * two-segment one did. Nothing about the flip may move where a repository is backed up to.
+   */
+  @Test
+  public void aDeeperPathDerivesTheSameBackupTwin() throws Exception {
+    Project project = projectWithComponentManifest("Reconcile Components Twin");
+
+    reconcileService.reconcile(project.id);
+
+    assertEquals(
+        1,
+        repositoryRepository.count(
+            "id = ?1 and url = ?2",
+            byName(project.id, "submodule-shared").id,
+            fixture("submodule-shared.git")),
+        "components/shared-things/submodule-shared with url ../submodule-shared.git still resolves"
+            + " to the sibling beside the wrapper");
+  }
+
+  /**
+   * The reason null is the honest answer rather than a lossy one: an UNDECLARED line is what puts a
+   * repository in front of the delete that destroys it on the git host, and a row nobody has said
+   * the kind of is never put there.
+   */
+  @Test
+  public void aRowWithNoArchetypeIsNeverReportedUndeclared() throws Exception {
+    Project project = projectWithManifest("Reconcile Unknown Kind");
+    Repository stray =
+        projectService.createRepositoryUnderProject(
+            project.id, fixture("submodule-cycle-a.git"), RepositoryArchetype.SERVICE);
+    io.quarkus.narayana.jta.QuarkusTransaction.requiringNew()
+        .run(() -> repositoryService.get(stray.id).archetype = null);
+
+    var outcomes = outcomesByName(reconcileService.reconcile(project.id));
+
+    assertEquals(
+        null,
+        outcomes.get("submodule-cycle-a"),
+        "no line at all — the same silence an unplaceable row gets");
+    assertEquals(1, repositoryRepository.count("id = ?1", stray.id), "and the row stays");
   }
 
   /** A throwaway copy of a bare fixture: a second url under the same basename. */

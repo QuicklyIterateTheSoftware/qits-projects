@@ -57,6 +57,17 @@ public class Repository extends PanacheEntityBase implements CausedRow {
   public RepositoryArchetype archetype;
 
   /**
+   * The technical component this repository is part of — the second segment of its wrapper path
+   * under the component layout ({@code components/<component>/<repo>}), and null for an entry still
+   * mounted under one of the six archetype directories.
+   *
+   * <p>An <b>open set</b>, unlike {@link #archetype}: the wrapper names components and this column
+   * records what it named, so there is no enum and no check constraint (V6). Null is a real state
+   * and stays one for as long as a wrapper has entries the flip has not reached.
+   */
+  public String component;
+
+  /**
    * The last committed-configuration problem, or null when there is none. Config ingestion degrades
    * loudly and never blocks, so a disagreement lands here rather than changing the row: the wrapper
    * directory is what decides {@link #archetype}, and a {@code repository.yml} that says otherwise

@@ -54,8 +54,10 @@ public class ProjectService {
    * <p>Three families, one list because they are one rule:
    *
    * <ul>
-   *   <li>the six repository categories — segment two of the repository form, so a slug spelling
-   *       one would make {@code /services/daemons/x} unreadable;
+   *   <li>the six repository categories and the {@code components} marker — segment two of the
+   *       repository form, so a slug spelling one would make {@code /services/daemons/x}
+   *       unreadable. The six stay reserved while the wrapper flip is in progress; {@code
+   *       components} joins them because it is what segment two becomes;
    *   <li>{@code api}, {@code q} and {@code main-navigation} — served under every host;
    *   <li>every application segment the platform routes.
    * </ul>
@@ -71,6 +73,7 @@ public class ProjectService {
           "frontends",
           "cli",
           "images",
+          "components",
           "api",
           "q",
           "main-navigation",
@@ -527,6 +530,21 @@ public class ProjectService {
    */
   public CreatedRepository createRepository(
       String projectId, String url, String name, RepositoryArchetype archetype) {
+    return createRepository(projectId, url, name, archetype, null);
+  }
+
+  /**
+   * The create flow, with the component the caller wants the entry mounted under — see {@link
+   * #createRepository(String, String, String, RepositoryArchetype)} for everything else.
+   *
+   * <p>{@code component} is optional and the wrapper still has the last word on the placement
+   * ({@link WrapperSubmoduleWriter#addToWrapper}): stating one places under {@code
+   * components/<component>/<name>}, and stating none lets a wrapper that has already flipped place
+   * there anyway. The row's {@code component} is then read back off the path the wrapper commit
+   * actually used, so the row and the file cannot disagree about it.
+   */
+  public CreatedRepository createRepository(
+      String projectId, String url, String name, RepositoryArchetype archetype, String component) {
     Project project = get(projectId);
     String trimmedUrl = url == null || url.isBlank() ? null : url.trim();
     String trimmedName = name == null || name.isBlank() ? null : name.trim();
@@ -588,7 +606,18 @@ public class ProjectService {
                             + "' branch for "
                             + memberName
                             + " yet, so there is no commit for the wrapper's gitlink to pin."));
-    String wrapperPath = wrapperSubmoduleWriter.addToWrapper(wrapper, memberName, archetype, head);
+    String wrapperPath =
+        wrapperSubmoduleWriter.addToWrapper(wrapper, memberName, archetype, component, head);
+    // The path the wrapper commit used is the fact, not the request: it is what the reconcile will
+    // read back, so recording anything else here would give the row a component its own manifest
+    // does not name.
+    WrapperPath placed = WrapperPath.parse(wrapperPath);
+    String placedComponent = placed == null ? null : placed.component();
+    if (placedComponent != null) {
+      QuarkusTransaction.requiringNew()
+          .run(() -> repositoryService.get(repo.id).component = placedComponent);
+      repo.component = placedComponent;
+    }
     return new CreatedRepository(repo, wrapperPath);
   }
 

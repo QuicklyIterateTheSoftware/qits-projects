@@ -14,6 +14,12 @@ import eu.wohlben.qits.projects.entity.RepositoryArchetype;
  *     always. Derived from the project's wrapper and the component's name, so it is the
  *     same value a relative {@code ../<name>.git} resolves to at the forge. Null when the
  *     repository has no twin yet, which is a normal state and not an error.
+ * @param archetype what kind of component this is — the closed taxonomy the archetype-keyed child
+ *     apps are still selected by
+ * @param component the technical component this repository is part of, read from its wrapper path
+ *     ({@code components/<component>/<name>}). An <b>open set</b>, and null for an entry still
+ *     mounted under an archetype directory — the chrome groups by it and falls back to the
+ *     archetype grouping for a null.
  * @param lastBackup how the last backup onto that twin went, or null when there has never been one
  */
 public record RepositoryDto(
@@ -22,5 +28,6 @@ public record RepositoryDto(
     String backupUrl,
     String mainBranch,
     RepositoryArchetype archetype,
+    String component,
     String projectId,
     LastBackupDto lastBackup) {}

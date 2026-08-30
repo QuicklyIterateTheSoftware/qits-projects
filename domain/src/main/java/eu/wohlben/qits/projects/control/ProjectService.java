@@ -542,6 +542,14 @@ public class ProjectService {
    * components/<component>/<name>}, and stating none lets a wrapper that has already flipped place
    * there anyway. The row's {@code component} is then read back off the path the wrapper commit
    * actually used, so the row and the file cannot disagree about it.
+   *
+   * <p><b>{@code archetype} is optional too, and the name is what fills it in.</b> Under the
+   * component layout the name is what says the kind, so {@code payments-daemon} needs no second
+   * statement of it ({@link RepositoryArchetype#fromRepositoryName}) — and for the attach arm the
+   * name derived is the url's basename, which is exactly the name the repository will answer to. A
+   * caller that states one is obeyed unchanged, which is what keeps the SPA's create form working.
+   * A request that states neither an archetype nor a name carrying a role suffix is refused, because
+   * guessing a kind is the one thing nothing downstream could correct.
    */
   public CreatedRepository createRepository(
       String projectId, String url, String name, RepositoryArchetype archetype, String component) {
@@ -554,7 +562,21 @@ public class ProjectService {
               + " on the platform's git host).");
     }
     if (archetype == null) {
-      throw new BadRequestException("archetype is required");
+      // The name the repository will be addressable by: the stated one, or — for the attach arm —
+      // the url's basename, which is what cloneRepository registers as its alias.
+      String addressable =
+          trimmedName != null ? trimmedName : RepositoryNameRepository.basename(trimmedUrl);
+      archetype = RepositoryArchetype.fromRepositoryName(addressable);
+      if (archetype == null) {
+        throw new BadRequestException(
+            "'"
+                + addressable
+                + "' carries no role suffix, so there is nothing to read the kind of component out"
+                + " of. Either name it after one of "
+                + RepositoryArchetype.roleSuffixes()
+                + " — the component layout's grammar, <component>[-<modifier>]-<role> — or state an"
+                + " archetype outright.");
+      }
     }
     if (archetype == RepositoryArchetype.PROJECT) {
       throw new BadRequestException(
@@ -567,7 +589,7 @@ public class ProjectService {
               + archetype
               + " has no directory in the wrapper, so a repository cannot be created under a project"
               + " with it. Placeable archetypes: "
-              + RepositoryArchetype.skeletonDirectories());
+              + RepositoryArchetype.placeableDirectories());
     }
     Repository wrapper =
         findWrapper(projectId)

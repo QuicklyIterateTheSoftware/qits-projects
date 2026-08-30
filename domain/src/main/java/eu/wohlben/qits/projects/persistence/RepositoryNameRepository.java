@@ -95,6 +95,19 @@ public class RepositoryNameRepository implements PanacheRepositoryBase<Repositor
   }
 
   /**
+   * Drops <b>every</b> name {@code repository} answers to, and answers how many went.
+   *
+   * <p>Only the rename uses it, and only as the first half of one statement: the repository answers
+   * to exactly the new name afterwards. Dropping the old rows is the whole of what makes a rename a
+   * rename — an alias left behind keeps {@code /git/<project>/<oldName>} resolving, keeps the old
+   * name taken against every other repository in the project, and leaves {@link #nameFor} free to
+   * answer either one.
+   */
+  public long forgetNames(Repository repository) {
+    return delete("repository.id", repository.id);
+  }
+
+  /**
    * Guarantee {@code repository} owns at least one addressable name and return it — the name its
    * workspace container clones itself under. Prefers the url basename (so relative submodule
    * resolution from this repo-as-superproject stays natural); if that basename is already owned by

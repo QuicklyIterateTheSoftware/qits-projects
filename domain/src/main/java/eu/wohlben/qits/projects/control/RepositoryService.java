@@ -99,6 +99,13 @@ public class RepositoryService {
   @Inject WrapperSubmoduleWriter wrapperWriter;
 
   /**
+   * SEAM: telling the platform a repository answers to a new name is an event, and events leave over
+   * a bus this module does not know about. Optional like every port here — absent, a rename renames
+   * and announces nothing. See {@link RepositoryAnnouncer}.
+   */
+  @Inject Instance<RepositoryAnnouncer> repositoryAnnouncer;
+
+  /**
    * SEAM (migration-plan.md §6): the technical-process framework is a port here (see {@link
    * TechnicalProcessRegistry}) and is optional. With no implementation the pull/push/sync still run
    * — on the same worker thread, against the same bare origins — but unnarrated, and the begin*
@@ -349,6 +356,19 @@ public class RepositoryService {
    * project-scoped alias removed.
    */
   private String requireCreatableName(Project project, String name) {
+    return requireCreatableName(project, name, null);
+  }
+
+  /**
+   * {@link #requireCreatableName(Project, String)} with one repository allowed to already hold the
+   * name — the rename's form, where a name this very repository answers to is not "taken" by
+   * anybody else and refusing it would make a rename that changes only the letter case impossible
+   * to express.
+   *
+   * @param heldBy the id of the repository whose own claim on the name is not a collision, or null
+   *     when any claim at all is one
+   */
+  private String requireCreatableName(Project project, String name, String heldBy) {
     if (name == null || !ADOPTABLE_ID.matcher(name).matches()) {
       throw new BadRequestException(
           "Invalid repository name '"
@@ -358,6 +378,7 @@ public class RepositoryService {
     }
     repositoryNameRepository
         .findRepositoryByProjectAndName(project.id, name)
+        .filter(owner -> !owner.id.equals(heldBy))
         .ifPresent(
             owner -> {
               throw new BadRequestException(
@@ -1901,6 +1922,112 @@ public class RepositoryService {
     }
     repo.mainBranch = branch;
     return repo;
+  }
+
+  /**
+   * What a rename came to — plain strings and no entity, deliberately: the write owns its own
+   * transaction, so anything handed back across it would be a detached row with lazy relations the
+   * caller cannot follow. A caller that wants the row re-reads it by id.
+   *
+   * @param previousName null for a row that answered to nothing, which is a real state — a
+   *     repository with no alias is addressable by nothing
+   * @param changed false when the rename was a no-op, which is what an already-correct name is
+   */
+  public record Renamed(
+      String repositoryId, String projectId, String previousName, String name, boolean changed) {}
+
+  /**
+   * Gives a repository a new public name — the phase-2 prerequisite, and the whole of what a rename
+   * is on this platform.
+   *
+   * <p><b>Nothing moves on the git host.</b> A bare is keyed by the row's opaque id (the 2026-08-21
+   * identity ruling), and every name-addressed read resolves through this service's alias table, so
+   * {@code /git/<project>/<newName>} serves the same bare the moment this commits and {@code
+   * GitHostRepositories} — whose three verbs all take a repoId — is not called at all.
+   *
+   * <p><b>The repository answers to exactly the new name afterwards, and every old alias goes.</b>
+   * That is the decision worth stating, because keeping the old one is the tempting alternative: an
+   * alias left behind would keep {@code /git/<project>/<oldName>} resolving, which is precisely what
+   * a rename must stop; it would keep the old name taken against every other repository in the
+   * project; and it would leave {@code nameFor} — which is what the DTO's {@code name} is — free to
+   * answer either one, so the row would have no name a client could rely on.
+   *
+   * <p><b>The archetype is re-derived from the new name</b>, because under the component layout the
+   * name is what says the kind ({@link RepositoryArchetype#fromRepositoryName}). A rename to a
+   * suffixed name restamps the row; a rename to a name that declares no role leaves the stored
+   * archetype exactly as it was, since "the new name says nothing" is not the same statement as
+   * "this repository is nothing", and nothing here could correct a nulled archetype afterwards.
+   *
+   * <p><b>What is refused:</b> the project's wrapper (its name is derived from the project's slug,
+   * which is immutable — {@code <slug>-<slug>} — so renaming it would leave the wrapper addressable
+   * under a name the project does not derive), a name that is not a legal addressable segment, and a
+   * name another repository in the project already answers to. All three are {@code
+   * BadRequestException}.
+   *
+   * <p><b>Renaming does not touch the wrapper's {@code .gitmodules}.</b> That is step 3 of the
+   * per-repo runbook and a push to another service, deliberately not folded in here — but it is why
+   * a renamed repository reads as {@code UNDECLARED} until the wrapper entry follows it, and the
+   * caller is told so rather than left to discover it. Its <b>backup twin</b> ({@code Repository.url})
+   * is not rewritten either, and that one genuinely self-heals: the twin is derived, never stored as
+   * a decision — the reconcile folds {@code ../<name>.git} from the wrapper entry against the
+   * wrapper's own forge url, so the first reconcile after the entry is renamed repoints it and
+   * reports {@code SYNC_TARGET_UPDATED}.
+   *
+   * <p>The write is rows and nothing else, which is why it is {@code DbRetry.inNewTx} rather than
+   * {@code @Transactional} — the module's existing idiom for exactly that ({@code
+   * ProjectService.update}) — with the flush last so a severed connection is a certain no-commit and
+   * therefore retryable. The <b>announcement is made after that transaction, never inside it</b>:
+   * the body re-runs on a retry, and an announcement in it would be made twice.
+   */
+  public Renamed rename(String repoId, String newName) {
+    Renamed renamed =
+        DbRetry.inNewTx(
+            "repository rename",
+            () -> {
+              Repository repo = get(repoId);
+              if (repo.archetype == RepositoryArchetype.PROJECT) {
+                throw new BadRequestException(
+                    "This is the project's wrapper repository — the project root — and its name is"
+                        + " derived from the project's slug, which cannot change. Rename the"
+                        + " project instead; its wrapper keeps the name it has.");
+              }
+              String trimmed = newName == null ? null : newName.trim();
+              String projectId = repo.project.id;
+              String previous = repositoryNameRepository.nameFor(repo).orElse(null);
+              requireCreatableName(repo.project, trimmed, repo.id);
+              if (trimmed.equals(previous)
+                  && repositoryNameRepository.namesFor(repo).size() == 1) {
+                // Already the only name it answers to: nothing happened, so nothing is announced.
+                return new Renamed(repo.id, projectId, previous, trimmed, false);
+              }
+
+              repositoryNameRepository.forgetNames(repo);
+              repositoryNameRepository.ensureAlias(repo.project, trimmed, repo);
+
+              RepositoryArchetype declared = RepositoryArchetype.fromRepositoryName(trimmed);
+              if (declared != null) {
+                repo.archetype = declared;
+              }
+
+              // Flush last: Hibernate would otherwise put these writes in the commit phase, which
+              // is the one round trip inNewTx cannot place and therefore never retries.
+              repositoryRepository.getEntityManager().flush();
+              LOG.infof(
+                  "Repository %s renamed '%s' -> '%s' (archetype %s)",
+                  repo.id, previous, trimmed, repo.archetype);
+              return new Renamed(repo.id, projectId, previous, trimmed, true);
+            });
+    if (renamed.changed() && !repositoryAnnouncer.isUnsatisfied()) {
+      repositoryAnnouncer
+          .get()
+          .onRepositoryRenamed(
+              renamed.projectId(),
+              renamed.repositoryId(),
+              renamed.previousName(),
+              renamed.name(),
+              java.time.Instant.now());
+    }
+    return renamed;
   }
 
   /**

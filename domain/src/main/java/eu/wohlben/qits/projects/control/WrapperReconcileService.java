@@ -252,7 +252,7 @@ public class WrapperReconcileService {
           "'"
               + parsed.directory()
               + "' is not one of this project's component directories "
-              + RepositoryArchetype.skeletonDirectories()
+              + RepositoryArchetype.placeableDirectories()
               + " and is not '"
               + WrapperPath.COMPONENTS_DIRECTORY
               + "/<component>', so there is no archetype to give it.");

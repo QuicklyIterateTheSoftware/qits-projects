@@ -9,12 +9,18 @@ import java.util.Set;
  * What kind of part of its project a repository is.
  *
  * <p>The six <b>placeable</b> archetypes ({@link #SERVICE}, {@link #DAEMON}, {@link #LIBRARY},
- * {@link #FRONTEND}, {@link #CLI}, {@link #IMAGE}) are exactly the directories of the project
- * template skeleton every {@link #PROJECT} wrapper is seeded with — directory <em>is</em> archetype,
- * in both directions: a directory extracted out of {@code libs/} into a sibling repository becomes a
- * {@code LIBRARY}, and a {@code LIBRARY} is mounted back under {@code libs/}. The mapping lives here
- * rather than being derived from the name, because it doesn't derive mechanically ({@code libs} !=
- * {@code LIBRARY}, {@code frontends} != {@code FRONTEND}).
+ * {@link #FRONTEND}, {@link #CLI}, {@link #IMAGE}) each name a directory of the <b>archetype
+ * layout</b> — directory <em>is</em> archetype there, in both directions: a directory extracted out
+ * of {@code libs/} into a sibling repository becomes a {@code LIBRARY}, and a {@code LIBRARY} is
+ * mounted back under {@code libs/}. The mapping lives here rather than being derived from the name,
+ * because it doesn't derive mechanically ({@code libs} != {@code LIBRARY}, {@code frontends} !=
+ * {@code FRONTEND}).
+ *
+ * <p><b>The project template no longer seeds those six directories</b>, and that is the one thing to
+ * know before reading {@link #placeableDirectories} as "the skeleton". A new wrapper is seeded with
+ * a single {@code components/} directory, because the component layout is what a project grows into
+ * now; the six live on as the reading of wrappers that predate the flip, which is why {@link
+ * #fromDirectory} stays and stays complete.
  *
  * <p>Directory is authoritative <b>under the archetype layout</b>: the wrapper's {@code .gitmodules}
  * is the project's configuration, so the directory an entry sits under decides the row's archetype —
@@ -69,7 +75,7 @@ public enum RepositoryArchetype {
   }
 
   /**
-   * The wrapper skeleton directory a repository of this archetype is mounted under, or {@code null}
+   * The archetype-layout directory a repository of this archetype is mounted under, or {@code null}
    * when the archetype is unplaceable.
    */
   public String directory() {
@@ -115,6 +121,17 @@ public enum RepositoryArchetype {
           "-jslib", LIBRARY);
 
   /**
+   * Every role suffix {@link #fromRepositoryName} reads, in no particular order — the set the
+   * project template's {@code components/README.md} teaches, and which {@code
+   * RepositoryArchetypeTemplateSyncTest} holds against that file in both directions. It is also what
+   * the create flow's refusal names when neither the request nor the name says what kind of
+   * component it is.
+   */
+  public static Set<String> roleSuffixes() {
+    return ROLE_SUFFIXES.keySet();
+  }
+
+  /**
    * The archetype a repository <em>name</em> declares through its role suffix, or null when it
    * declares none.
    *
@@ -141,10 +158,15 @@ public enum RepositoryArchetype {
   }
 
   /**
-   * Every skeleton directory, in declaration order — the set the project template must contain
-   * exactly, which {@code RepositoryArchetypeTemplateSyncTest} asserts in both directions.
+   * Every archetype-layout directory, in declaration order — the exact inverse of {@link
+   * #fromDirectory}, which {@code RepositoryArchetypeTemplateSyncTest} asserts in both directions.
+   *
+   * <p>It was called {@code skeletonDirectories} while the project template seeded these six; the
+   * template seeds {@code components/} alone now, so the name would have been a claim about the
+   * skeleton that is no longer true. What the set is still for is the two error messages that have
+   * to say which directories a legacy wrapper may mount an entry under.
    */
-  public static Set<String> skeletonDirectories() {
+  public static Set<String> placeableDirectories() {
     return Arrays.stream(values())
         .map(RepositoryArchetype::directory)
         .filter(d -> d != null)

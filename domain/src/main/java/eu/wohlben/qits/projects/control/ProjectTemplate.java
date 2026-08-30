@@ -30,8 +30,11 @@ import java.util.stream.Stream;
  * <ul>
  *   <li><b>{@code project-template/}</b> — every wrapper repository's first commit: the empty
  *       polyrepo layout the project will grow into, so a wrapper's {@code main} is never unborn and
- *       the archetype taxonomy is visible on disk from the first clone. Checked against {@link
- *       eu.wohlben.qits.projects.entity.RepositoryArchetype#skeletonDirectories()} by a test.
+ *       the layout is visible on disk from the first clone. It seeds <b>one</b> directory, {@code
+ *       components/}, carrying the README that teaches the grammar; the six archetype directories
+ *       it used to seed are gone with the layout they belonged to, and only {@code
+ *       RepositoryArchetype.fromDirectory} still reads them, for the wrappers that predate the
+ *       flip. {@code RepositoryArchetypeTemplateSyncTest} holds both halves of that.
  *   <li><b>{@code repository-template/}</b> — a blank component repository's first commit. Far
  *       smaller, and deliberately so: what a component contains is the author's business, and all
  *       this has to do is give {@code main} a commit for the wrapper's gitlink to pin and a

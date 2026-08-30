@@ -204,8 +204,6 @@ components:
           type: string
     CreateProjectRepositoryRequest:
       type: object
-      required:
-      - archetype
       properties:
         url:
           type: string
@@ -601,6 +599,14 @@ components:
         title:
           type: string
           pattern: \S
+    RenameRepositoryRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          pattern: \S
     RepositoryArchetype:
       type: string
       enum:
@@ -812,8 +818,12 @@ components:
     Response31:
       type: object
       properties:
-        technicalProcessId:
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
+        previousName:
           type: string
+        changed:
+          type: boolean
     Response32:
       type: object
       properties:
@@ -822,20 +832,20 @@ components:
     Response33:
       type: object
       properties:
+        technicalProcessId:
+          type: string
+    Response34:
+      type: object
+      properties:
         repositories:
           type: array
           items:
             $ref: "#/components/schemas/RepositoryCoordinatesDto"
-    Response34:
+    Response35:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response35:
-      type: object
-      properties:
-        success:
-          type: boolean
     Response36:
       type: object
       properties:
@@ -844,27 +854,32 @@ components:
     Response37:
       type: object
       properties:
+        success:
+          type: boolean
+    Response38:
+      type: object
+      properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response38:
+    Response39:
       type: object
       properties:
         repositoryId:
           type: string
         scheduled:
           type: boolean
-    Response39:
-      type: object
-      properties:
-        technicalProcessId:
-          type: string
     Response4:
       type: object
       properties:
         success:
           type: boolean
+    Response40:
+      type: object
+      properties:
+        technicalProcessId:
+          type: string
     Response5:
       type: object
       properties:
@@ -1771,7 +1786,8 @@ paths:
                 $ref: "#/components/schemas/Response25"
         "400":
           description: "Neither or both of url/name, an unplaceable archetype, a name\
-            \ already taken in the project, or a wrapper commit the git host refused"
+            \ that carries no role suffix when no archetype is stated, a name already\
+            \ taken in the project, or a wrapper commit the git host refused"
         "401":
           description: Not Authorized
         "403":
@@ -2574,7 +2590,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response33"
+                $ref: "#/components/schemas/Response34"
         "401":
           description: Not Authorized
         "403":
@@ -2586,6 +2602,50 @@ paths:
         - qits:admin
         - qits:system
   /projects/api/repositories/{repoId}:
+    patch:
+      summary: Rename a repository
+      description: "Gives the repository a new project-scoped addressable name. Nothing\
+        \ moves on the git host — a bare is keyed by the repository's id — so /git/<project>/<newName>\
+        \ serves it immediately and the old name stops resolving. The archetype is\
+        \ re-derived from the new name's role suffix (-service, -daemon, -frontend,\
+        \ -cli, -oci, -javalib, -jslib) and left as it was when the new name declares\
+        \ none. The project's wrapper is NOT rewritten: update the .gitmodules entry\
+        \ to the new name and push, or the repository reads as UNDECLARED until you\
+        \ do. The backup twin self-heals from the wrapper on the next reconcile."
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameRepositoryRequest"
+        required: true
+      responses:
+        "200":
+          description: The repository answers to the new name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response31"
+        "400":
+          description: "An invalid name, a name another repository in this project\
+            \ already answers to, or the project's wrapper repository (whose name\
+            \ is derived from the immutable slug)"
+        "404":
+          description: No such repository
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
     get:
       parameters:
       - name: repoId
@@ -2599,7 +2659,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response34"
+                $ref: "#/components/schemas/Response35"
         "401":
           description: Not Authorized
         "403":
@@ -2631,7 +2691,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response36"
+                $ref: "#/components/schemas/Response37"
         "401":
           description: Not Authorized
         "403":
@@ -2655,7 +2715,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response39"
+                $ref: "#/components/schemas/Response40"
         "401":
           description: Not Authorized
         "403":
@@ -2684,7 +2744,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response38"
+                $ref: "#/components/schemas/Response39"
         "404":
           description: No such repository
         "401":
@@ -2716,7 +2776,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response35"
+                $ref: "#/components/schemas/Response36"
         "401":
           description: Not Authorized
         "403":
@@ -2740,7 +2800,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response37"
+                $ref: "#/components/schemas/Response38"
         "401":
           description: Not Authorized
         "403":
@@ -2903,7 +2963,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response32"
+                $ref: "#/components/schemas/Response33"
         "401":
           description: Not Authorized
         "403":
@@ -2928,7 +2988,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response31"
+                $ref: "#/components/schemas/Response32"
         "401":
           description: Not Authorized
         "403":
@@ -3099,4 +3159,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.829.220728
+  version: 2026.830.92115

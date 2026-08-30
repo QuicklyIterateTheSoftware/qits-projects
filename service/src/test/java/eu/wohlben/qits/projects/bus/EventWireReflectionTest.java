@@ -45,6 +45,12 @@ public class EventWireReflectionTest {
 
   @Inject @Any Instance<QitsDurableEventListener> listeners;
 
+  /**
+   * By its OWN type, past its {@code @DefaultBean}: the port's injection point is won by the
+   * suite's recording fake, so asking for the port here would prove nothing about what ships.
+   */
+  @Inject Instance<RepositoryRenamedAnnouncer> shippedAnnouncer;
+
   @Test
   public void theRegisteredTargetsAreExactlyTheTypesThatCrossTheWire() {
     RegisterForReflection registration =
@@ -56,11 +62,37 @@ public class EventWireReflectionTest {
             SCMPublishTag.class,
             SCMDeleteBranch.class,
             SCMDeleteTag.class,
+            RepositoryRenamed.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records in, the PUT body out, the frame — a seventh wire type means a line"
-            + " here");
+        "the four SCM records in, RepositoryRenamed out, the PUT body, the frame — an eighth wire"
+            + " type means a line here");
+  }
+
+  /**
+   * The publishing half of the same rule. A consumed type is named by a listener's {@code
+   * signatures()} and the test below reads it off the bean; a <em>published</em> one has no such
+   * declaration to read, so the announcer's own event class is asserted by name — and it is the one
+   * whose absence fails inside {@code CanonicalJson}, before an envelope exists, losing the event
+   * rather than delaying it.
+   */
+  @Test
+  public void thePublishedEventTypeIsRegistered() {
+    assertTrue(
+        Set.of(EventWireReflection.class.getAnnotation(RegisterForReflection.class).targets())
+            .contains(RepositoryRenamed.class),
+        "RepositoryRenamedAnnouncer publishes this; an unregistered payload is a lost announcement");
+  }
+
+  /**
+   * The announcer is a BEAN, which is the whole of how {@code RepositoryService} finds it — an
+   * {@code Instance<RepositoryAnnouncer>} that is unsatisfied announces nothing and says nothing
+   * about it, which is correct as a configuration and wrong as an accident.
+   */
+  @Test
+  public void theRenameAnnouncerShipsAsABean() {
+    assertTrue(!shippedAnnouncer.isUnsatisfied(), "an unsatisfied port is a silent one");
   }
 
   /**

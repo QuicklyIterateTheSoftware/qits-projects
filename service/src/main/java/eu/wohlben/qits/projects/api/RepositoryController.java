@@ -288,6 +288,65 @@ public class RepositoryController {
             : technicalProcesses.get().activeForRepository(repoId).orElse(null));
   }
 
+  /**
+   * @param name the new project-scoped addressable name — what {@code /git/<projectId>/<name>} will
+   *     serve and what a committed {@code ../<name>.git} will resolve to. Same shape rule as
+   *     creation: 1-64 characters of letters, digits and inner dashes.
+   */
+  public static record RenameRepositoryRequest(@NotBlank String name) {
+    /**
+     * @param previousName what it answered to before — null for a row that answered to nothing, and
+     *     equal to the repository's current name when the rename was a no-op
+     * @param changed false when the repository already answered to exactly this name and nothing
+     *     was written or announced
+     */
+    public record Response(RepositoryDto repository, String previousName, boolean changed) {}
+  }
+
+  /**
+   * Renames a repository — the only operation on this platform that changes a repository's public
+   * identity, and the phase-2 prerequisite the rename campaign is ordered after.
+   *
+   * <p><b>PATCH and not PUT</b>, because the body is one field of the repository rather than a
+   * replacement for it: {@code PUT /{repoId}/main-branch} is a sub-resource whose whole state is the
+   * branch, and there is no such sub-resource for a name — the name is the row's own coordinate, so
+   * the verb belongs on the row.
+   *
+   * <p><b>Nothing is asked of the git host.</b> A bare is keyed by the row's opaque id, so the same
+   * bare answers under the new name the moment this returns; see {@code RepositoryService#rename}
+   * for what that costs and what it does not.
+   */
+  @jakarta.ws.rs.PATCH
+  @Path("/{repoId}")
+  @Operation(
+      summary = "Rename a repository",
+      description =
+          "Gives the repository a new project-scoped addressable name. Nothing moves on the git"
+              + " host — a bare is keyed by the repository's id — so /git/<project>/<newName>"
+              + " serves it immediately and the old name stops resolving. The archetype is"
+              + " re-derived from the new name's role suffix (-service, -daemon, -frontend, -cli,"
+              + " -oci, -javalib, -jslib) and left as it was when the new name declares none. The"
+              + " project's wrapper is NOT rewritten: update the .gitmodules entry to the new name"
+              + " and push, or the repository reads as UNDECLARED until you do. The backup twin"
+              + " self-heals from the wrapper on the next reconcile.")
+  @APIResponse(responseCode = "200", description = "The repository answers to the new name")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "An invalid name, a name another repository in this project already answers to, or the"
+              + " project's wrapper repository (whose name is derived from the immutable slug)")
+  @APIResponse(responseCode = "404", description = "No such repository")
+  public RenameRepositoryRequest.Response rename(
+      @PathParam("repoId") String repoId, @Valid RenameRepositoryRequest request) {
+    var renamed = repositoryService.rename(repoId, request.name());
+    // Re-read rather than mapping what the rename handed back: that write owns its own transaction,
+    // so the row it saw is detached by now and the mapper follows a relation off it.
+    return new RenameRepositoryRequest.Response(
+        repositoryMapper.toDto(repositoryService.get(repoId)),
+        renamed.previousName(),
+        renamed.changed());
+  }
+
   public static record SetMainBranchRequest(@NotBlank String branch) {
     public record Response(RepositoryDto repository) {}
   }

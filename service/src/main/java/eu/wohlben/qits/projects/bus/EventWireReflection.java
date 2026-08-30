@@ -30,12 +30,17 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * behaviour.
  *
  * <p><b>Why these types.</b> {@link EventFrame} is what arrives on {@code /events/stream} and what
- * the catch-up sweep reads out of the log; {@link EventEnvelope} is the PUT body, and it is here even
- * though this service publishes nothing today, because an absent registration fails at the moment
- * something first does. The four SCM records are what {@link ScmBackupTriggerListener} subscribes
- * to. That listener reads its one field with {@code readTree} rather than binding, so it would
- * survive without them — but the registration is about the <em>types on the wire</em>, not about
- * this consumer's technique, and the technique is free to change.
+ * the catch-up sweep reads out of the log; {@link EventEnvelope} is the PUT body. The four SCM
+ * records are what {@link ScmBackupTriggerListener} subscribes to. That listener reads its one field
+ * with {@code readTree} rather than binding, so it would survive without them — but the registration
+ * is about the <em>types on the wire</em>, not about this consumer's technique, and the technique is
+ * free to change.
+ *
+ * <p>{@link RepositoryRenamed} is the seventh, and the first one this service <em>publishes</em>.
+ * The envelope was already here for the day something did; the payload record is what turns "an
+ * absent registration fails at the moment something first does" from a prediction into a line. This
+ * is exactly qits-ci's measured failure — every publish dying inside {@code CanonicalJson} with "no
+ * serializer found", green JVM suite and all — written down here before it can happen again.
  *
  * <p><b>And why a mix-in by name.</b> {@code CanonicalJson$QitsEventMixin} keeps {@code QitsEvent}'s
  * declared methods — {@code eventId} above all — out of a payload, and Jackson finds its {@code
@@ -54,6 +59,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       SCMPublishTag.class,
       SCMDeleteBranch.class,
       SCMDeleteTag.class,
+      RepositoryRenamed.class,
       EventEnvelope.class,
       EventFrame.class
     },

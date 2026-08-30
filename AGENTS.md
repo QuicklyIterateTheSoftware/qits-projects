@@ -110,10 +110,31 @@ wrapper.
 
 ## The event bus
 
-`service/…/bus/` is the whole of the bus's **SEAMS**, and they are **consume-only**: this service
-publishes nothing. The machinery is the published `qits-eventstream` jar; the vocabulary is
-`qits-githost-events`, the git host's four records. Its rules live in that library's own repository
-and are not restated here.
+`service/…/bus/` is the whole of the bus's **SEAMS**. The machinery is the published
+`qits-eventstream` jar; the consumed vocabulary is `qits-githost-events`, the git host's four
+records. Its rules live in that library's own repository and are not restated here.
+
+**This service publishes exactly one event, and it stopped being consume-only for it.**
+`RepositoryRenamed` — projectId, repositoryId, oldName, newName, occurredAt — announced by
+`bus/RepositoryRenamedAnnouncer` over the `control/RepositoryAnnouncer` port, from
+`RepositoryService.rename`. It publishes because a rename is the one thing this service knows that
+nothing else can derive: the bare does not move (it is keyed by the row's id), so a consumer holding
+a stale `(projectId, repoName)` pair has no way to notice. Four things travel with that and each is
+a rule rather than a detail:
+
+- **The event class lives in `service/…/bus/`, not in a published vocabulary module.** Nothing
+  consumes it yet, and a jar this platform's Maven registry does not serve is a build that resolves
+  from a developer's `~/.m2` and fails in a release pipeline's step container. A consumer decodes it
+  with `CanonicalJson.payloadTo` into a local record of its own, which is the platform's standing
+  answer. Publishing it as a jar is a decision to make when a second repo needs the type.
+- **It is registered in `EventWireReflection`.** The envelope was already there for the day
+  something first published; the payload record is what turns that prediction into a line, and its
+  absence is qits-ci's measured failure — every publish dying inside `CanonicalJson` with "no
+  serializer found", the JVM suite green throughout.
+- **The announcement is made AFTER the rename's transaction, never inside it.** That write is
+  `DbRetry.inNewTx` and its body re-runs on a retry; an announcement in it would be made twice.
+- **The port is optional and the adapter is `@DefaultBean`**, so the suite's
+  `RecordingRepositoryAnnouncer` wins the injection and no test reaches the bus.
 
 **The word is SEAMS now, not "the bus", and the narrowing was deliberate (2026-08-10).** The
 eventstream jar also carries the platform's causation *persistence vocabulary* — `CausedRow`,
@@ -285,6 +306,15 @@ names, with a relative url. Three rules follow, and every one of them is enforce
   stated component places under `components/<component>/<name>`, a wrapper that already mounts
   anything under `components/` places a componentless create at `components/<name>/<name>`, and
   everything else lands under the archetype's directory as before.
+
+  **The template seeds `components/` and nothing else now.** `project-template/` used to carry the
+  six archetype directories, each with a README teaching its role; it carries one
+  `components/README.md` teaching the component grammar instead. `fromDirectory` and
+  `placeableDirectories` (which was called `skeletonDirectories` while that claim was true) are
+  **kept in full** — legacy wrappers still mount entries under the six and the reconcile still has
+  to read them. `RepositoryArchetypeTemplateSyncTest` holds both halves: the template seeds exactly
+  `components/`, and the role suffixes that README teaches are exactly the ones
+  `fromRepositoryName` reads.
 - **A repository the wrapper does not name is not part of the project.** Write paths refuse it
   (`requireWrapperMembership`), the reconcile reports it `UNDECLARED` and the listing marks it
   `declared: false`. **The reconcile deletes nothing** (2026-08-26): a delete now destroys the
@@ -296,6 +326,42 @@ names, with a relative url. Three rules follow, and every one of them is enforce
 
 `WrapperSubmoduleWriter` is the only writer of that file and `WrapperGitmodules` the only editor —
 textual, one section at a time, every other byte where it was, because this is a file people review.
+
+## Renaming a repository
+
+`PATCH /projects/api/repositories/{repoId}` with `{"name": "<new>"}` — the platform's only operation
+that changes a repository's public identity, and phase 2 of the wrapper reorganisation is ordered
+after it. `RepositoryService.rename` is the whole of it. Five things about it:
+
+- **Nothing is asked of the git host.** A bare is keyed by the row's opaque id (the 2026-08-21
+  identity ruling) and `GitHostRepositories`' three verbs all take a repoId, so there is no rename
+  to make there: `/git/<project>/<newName>` serves the same bare the moment the row commits, because
+  that path resolves through `GET …/repositories/by-name/{repoName}` and the alias table.
+- **The repository answers to exactly the new name afterwards, and every old alias goes.** Keeping
+  the old one is the tempting alternative and it is wrong in three ways at once: it would keep
+  `/git/<project>/<oldName>` resolving, which is what a rename must stop; it would keep the old name
+  taken against every other repository in the project; and `nameFor` — which *is* the DTO's `name` —
+  would be free to answer either one.
+- **The archetype is re-derived from the new name** (`fromRepositoryName`), because under the
+  component layout the name is what says the kind. A suffix-less new name leaves the stored archetype
+  alone: "the new name says nothing" is not "this repository is nothing", and a nulled archetype is
+  one nothing here could correct.
+- **Refused:** the wrapper (its name is `<slug>-<slug>` and the slug is immutable), an illegal
+  name, and a name another repository in the project answers to. Renaming to the name it already has
+  is a 200 that writes nothing and announces nothing (`changed: false`).
+- **The wrapper is NOT rewritten, and the backup twin is not either.** That is step 3 of the per-repo
+  runbook — update the `.gitmodules` entry and push — and until it happens the row reads
+  `declared: false` and the reconcile reports it `UNDECLARED`. `Repository.url` genuinely self-heals:
+  the twin is derived, never stored as a decision, so the first reconcile after the entry is renamed
+  folds `../<newName>.git` against the wrapper's forge url and reports `SYNC_TARGET_UPDATED`.
+  `RepositoryRenameTest` asserts the lag rather than leaving it documented, so a future change that
+  quietly started writing the wrapper shows up there.
+
+**Archetype is optional at creation for the same reason**: `POST …/repositories` reads it off the
+name's role suffix when none is stated (the url's basename for the attach arm), and refuses when
+neither the request nor the name says anything — a guessed kind is the one thing nothing downstream
+could correct. An explicit archetype is obeyed unchanged, which is what keeps the SPA's create form
+working.
 
 ## Project slugs
 

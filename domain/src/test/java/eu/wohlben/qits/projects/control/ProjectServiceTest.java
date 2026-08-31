@@ -200,6 +200,23 @@ public class ProjectServiceTest {
   }
 
   /**
+   * The shipped configuration: {@code qits.projects.reserved-slugs} unset, so the reservation is
+   * the static routing set and nothing else. A word that a deployment's environment list would
+   * reserve — "dev" — is an ordinary slug here, which is what makes the key a real switch rather
+   * than a second spelling of the constant. The configured half is {@link ReservedSlugsTest}.
+   */
+  @Test
+  public void withNoConfiguredEnvironmentsOnlyTheRoutingSetIsReserved() {
+    var project = projectService.create("Dev", "dev", null);
+
+    assertEquals("dev", project.slug);
+    assertThrows(
+        BadRequestException.class,
+        () -> projectService.create("Api", "api", null),
+        "the static family is unaffected by the key being unset");
+  }
+
+  /**
    * A derived slug says nothing about the value, so a reserved one suffixes like any other
    * collision — the reservation must not make an ordinary display name uncreatable.
    */

@@ -64,8 +64,13 @@ public class ProjectService {
    *
    * <p><b>A new service segment belongs here on the day it is routed</b>, before a project can take
    * it — see {@code docs/project-setup-quinoa-angular.md} in the superproject.
+   *
+   * <p>This is <b>not</b> the whole reserved set. The platform's environment names are reserved
+   * too, for an unrelated reason and from configuration rather than from here — see {@link
+   * ReservedSlugs}, which is what every check in this class actually asks. The two families are a
+   * union and each keeps its own refusal message.
    */
-  private static final Set<String> RESERVED_SLUGS =
+  static final Set<String> RESERVED_SLUGS =
       Set.of(
           "services",
           "daemons",
@@ -105,6 +110,10 @@ public class ProjectService {
   @Inject RepositoryService repositoryService;
 
   @Inject WrapperSubmoduleWriter wrapperSubmoduleWriter;
+
+  // The union of RESERVED_SLUGS and the configured environment names, and the reason a given word
+  // is in it. Every reservation check below goes through this bean and none reads the constant.
+  @Inject ReservedSlugs reservedSlugs;
 
   // Fired by #announce after a creation commits. Optional, like every port here — see the
   // interface's javadoc for what absent means and why it is a supported configuration.
@@ -290,23 +299,21 @@ public class ProjectService {
    * <slug>-<slug>}), so a silent rename would create a project whose wrapper does not match the
    * upstream the caller meant, and nothing would say so until a push failed.
    *
-   * <p><b>A {@linkplain #RESERVED_SLUGS reserved} slug is a 400 either way.</b> Supplied, it is
-   * refused loudly, because the caller named a value the platform cannot address. Derived, it takes
-   * the next free suffix like any other collision — the name says nothing about the slug, so
-   * "Docs" becoming {@code docs-2} is the same answer a second project called "Docs" would get.
+   * <p><b>A {@linkplain ReservedSlugs reserved} slug is a 400 when supplied</b> — refused loudly,
+   * with the message naming the word and which of the two reservations it walked into, because the
+   * caller named a value the platform cannot address. <b>Derived, it takes the next free suffix</b>
+   * like any other collision — the name says nothing about the slug, so "Docs" becoming {@code
+   * docs-2} is the same answer a second project called "Docs" would get, and a project named after
+   * an environment still creates.
    */
   private String resolveSlug(String name, String slug, String projectId) {
     if (slug == null || slug.isBlank()) {
       return nextFreeSlug(slugify(name, projectId));
     }
     String trimmed = slug.trim();
-    if (RESERVED_SLUGS.contains(trimmed)) {
-      throw new BadRequestException(
-          "The slug '"
-              + trimmed
-              + "' is reserved. A slug is the first path segment of every address on every"
-              + " application host, and that segment already routes something else — a repository"
-              + " category, a platform path, or an application's own segment. Choose another.");
+    Optional<String> reserved = reservedSlugs.refusal(trimmed);
+    if (reserved.isPresent()) {
+      throw new BadRequestException(reserved.get());
     }
     if (!ProjectSlugValidator.matches(trimmed)) {
       throw new BadRequestException(
@@ -340,9 +347,9 @@ public class ProjectService {
    * it and the second then fails the unique constraint as a 500. Accepted, as it is in epics:
    * project creation is hand-driven and a retry succeeds.
    *
-   * <p>A {@linkplain #RESERVED_SLUGS reserved} slug counts as taken, so a project called "Docs"
-   * derives {@code docs-2} rather than failing. The suffixing is what keeps the reservation from
-   * making an ordinary display name uncreatable.
+   * <p>A {@linkplain ReservedSlugs reserved} slug counts as taken, so a project called "Docs"
+   * derives {@code docs-2} rather than failing, and so does one called after an environment. The
+   * suffixing is what keeps either reservation from making an ordinary display name uncreatable.
    */
   private String nextFreeSlug(String base) {
     if (isFree(base)) {
@@ -361,9 +368,12 @@ public class ProjectService {
     }
   }
 
-  /** Neither reserved by the platform's routing nor already another project's. */
+  /**
+   * Neither reserved — by the platform's routing or by an environment's name — nor already another
+   * project's.
+   */
   private boolean isFree(String slug) {
-    return !RESERVED_SLUGS.contains(slug) && projectRepository.findBySlug(slug).isEmpty();
+    return !reservedSlugs.isReserved(slug) && projectRepository.findBySlug(slug).isEmpty();
   }
 
   /**

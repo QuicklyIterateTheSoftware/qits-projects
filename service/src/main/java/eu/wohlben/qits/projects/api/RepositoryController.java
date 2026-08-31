@@ -1,10 +1,12 @@
 package eu.wohlben.qits.projects.api;
 
 import eu.wohlben.qits.projects.control.BackupPushService;
+import eu.wohlben.qits.projects.control.BuildStatusLedger;
 import eu.wohlben.qits.projects.control.CommitService;
 import eu.wohlben.qits.projects.control.TechnicalProcessRegistry;
 import eu.wohlben.qits.projects.control.RepositoryService;
 import eu.wohlben.qits.projects.dto.BranchDto;
+import eu.wohlben.qits.projects.dto.CommitBuildStatusDto;
 import eu.wohlben.qits.projects.dto.CommitChangesDto;
 import eu.wohlben.qits.projects.dto.CommitFileDiffDto;
 import eu.wohlben.qits.projects.dto.CommitLogDto;
@@ -45,6 +47,9 @@ public class RepositoryController {
   @Inject BackupPushService backupPushService;
 
   @Inject CommitService commitService;
+
+  /** The per-commit build-status ledger the bus keeps — see {@code bus/BuildStatusListener}. */
+  @Inject BuildStatusLedger buildStatusLedger;
 
   @Inject RepositoryMapper repositoryMapper;
 
@@ -144,6 +149,35 @@ public class RepositoryController {
       @QueryParam("parent") String parent,
       @QueryParam("path") @NotBlank String path) {
     return commitService.getFileDiff(repoId, commitHash, parent, path);
+  }
+
+  public static record ListCommitBuildsRequest() {
+    /**
+     * @param builds every CI run's terminal verdict about this commit, newest first, from the
+     *     ledger the bus keeps. Empty means "no verdict recorded", which covers both a commit
+     *     nothing built and a run still queued or running — only terminal runs announce.
+     */
+    public record Response(List<CommitBuildStatusDto> builds) {}
+  }
+
+  /**
+   * The per-commit build-status ledger's read — <b>two callers, two roles</b>: a browser session
+   * reading a commit's verdicts, and the machine peers the release-quality-gates work brings (the
+   * release flow asking "is this sha green"). A method-level {@code @RolesAllowed} <b>replaces</b>
+   * the class-level {@code qits:admin}, so both are spelled.
+   */
+  @GET
+  @Path("/{repoId}/commits/{commitHash}/builds")
+  @jakarta.annotation.security.RolesAllowed({"qits:admin", "qits:system"})
+  @Operation(
+      summary = "Every CI verdict recorded for one commit",
+      description =
+          "One entry per terminal CI run of this commit, newest first, fed from qits-ci's build"
+              + " events. Queued and running builds do not appear; an empty list means no verdict"
+              + " yet, never that the commit is fine.")
+  public ListCommitBuildsRequest.Response commitBuilds(
+      @PathParam("repoId") String repoId, @PathParam("commitHash") String commitHash) {
+    return new ListCommitBuildsRequest.Response(buildStatusLedger.verdictsOf(repoId, commitHash));
   }
 
   // SEAM (migration-plan.md §6, repository <-> workspace). Two routes stood here —

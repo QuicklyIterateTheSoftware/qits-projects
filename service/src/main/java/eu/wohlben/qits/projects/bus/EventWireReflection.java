@@ -42,6 +42,12 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * is exactly qits-ci's measured failure — every publish dying inside {@code CanonicalJson} with "no
  * serializer found", green JVM suite and all — written down here before it can happen again.
  *
+ * <p>{@link BuildStatusListener.BuildVerdictPayload} is the eighth and the one <em>bound</em>
+ * consumption: {@code BuildStatusListener} reads qits-ci's {@code BuildSuccessful}/{@code
+ * BuildFailed} through {@code CanonicalJson.payloadTo} rather than {@code readTree}, so the record
+ * it binds is on the wire path exactly the way the qits-deployments subscriber's payload record is
+ * in that service's own registration.
+ *
  * <p><b>And why a mix-in by name.</b> {@code CanonicalJson$QitsEventMixin} keeps {@code QitsEvent}'s
  * declared methods — {@code eventId} above all — out of a payload, and Jackson finds its {@code
  * @JsonIgnore}s by calling {@code getDeclaredMethods()} on it, which is reflection like any other.
@@ -60,6 +66,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       SCMDeleteBranch.class,
       SCMDeleteTag.class,
       RepositoryRenamed.class,
+      BuildStatusListener.BuildVerdictPayload.class,
       EventEnvelope.class,
       EventFrame.class
     },

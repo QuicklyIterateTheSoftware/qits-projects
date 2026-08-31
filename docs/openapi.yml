@@ -110,6 +110,17 @@ components:
         behind:
           type: integer
           format: int32
+    CommitBuildStatusDto:
+      type: object
+      properties:
+        runId:
+          type: string
+        status:
+          type: string
+        branch:
+          type: string
+        finishedAt:
+          $ref: "#/components/schemas/Instant"
     CommitChangesDto:
       type: object
       properties:
@@ -859,23 +870,30 @@ components:
     Response38:
       type: object
       properties:
+        builds:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommitBuildStatusDto"
+    Response39:
+      type: object
+      properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response39:
-      type: object
-      properties:
-        repositoryId:
-          type: string
-        scheduled:
-          type: boolean
     Response4:
       type: object
       properties:
         success:
           type: boolean
     Response40:
+      type: object
+      properties:
+        repositoryId:
+          type: string
+        scheduled:
+          type: boolean
+    Response41:
       type: object
       properties:
         technicalProcessId:
@@ -2715,7 +2733,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response40"
+                $ref: "#/components/schemas/Response41"
         "401":
           description: Not Authorized
         "403":
@@ -2744,7 +2762,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response39"
+                $ref: "#/components/schemas/Response40"
         "404":
           description: No such repository
         "401":
@@ -2800,7 +2818,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response38"
+                $ref: "#/components/schemas/Response39"
         "401":
           description: Not Authorized
         "403":
@@ -2842,6 +2860,40 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+  /projects/api/repositories/{repoId}/commits/{commitHash}/builds:
+    get:
+      summary: Every CI verdict recorded for one commit
+      description: "One entry per terminal CI run of this commit, newest first, fed\
+        \ from qits-ci's build events. Queued and running builds do not appear; an\
+        \ empty list means no verdict yet, never that the commit is fine."
+      parameters:
+      - name: commitHash
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response38"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Repository Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
   /projects/api/repositories/{repoId}/commits/{commitHash}/changes:
     get:
       parameters:
@@ -3159,4 +3211,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.830.92115
+  version: 2026.830.143234

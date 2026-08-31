@@ -13,5 +13,12 @@ node_modules/
 .idea/
 .vscode/
 
+# The web editor's own state. The wrapper checkout IS the editor's home directory —
+# openvscode-server keeps settings and extension-host state in .openvscode-server/, and the
+# tooling it hosts writes .cache/ — and the /workspace volume is what makes that state survive
+# a container replacement. Ignored so the editor never dirties the tree it exists to edit.
+.openvscode-server/
+.cache/
+
 # Logs
 *.log

@@ -4,6 +4,7 @@ import eu.wohlben.qits.eventstream.QitsDurableEventListener;
 import eu.wohlben.qits.eventstream.control.CanonicalJson;
 import eu.wohlben.qits.eventstream.control.EventFrame;
 import eu.wohlben.qits.projects.control.BuildStatusLedger;
+import eu.wohlben.qits.projects.control.ReleaseRequests;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.Set;
@@ -56,9 +57,11 @@ public class BuildStatusListener implements QitsDurableEventListener {
 
   /**
    * The fields this ledger stores. {@code outcome} exists only on {@code BuildFailed}; {@code
-   * finishedAt} is deliberately not bound — it is the envelope's {@code occurredAt}, the log's own
-   * ordering key, read off the frame. Unknown fields are ignored by the library's mapper, which is
-   * what lets qits-ci add one.
+   * gating} is <b>null-means-true</b> on the wire (a gating build's payload predates the field
+   * byte-for-byte, and only the non-gating pipelines write {@code false}); {@code finishedAt} is
+   * deliberately not bound — it is the envelope's {@code occurredAt}, the log's own ordering key,
+   * read off the frame. Unknown fields are ignored by the library's mapper, which is what lets
+   * qits-ci add one.
    */
   public record BuildVerdictPayload(
       String runId,
@@ -67,9 +70,12 @@ public class BuildStatusListener implements QitsDurableEventListener {
       String repoName,
       String branch,
       String commitSha,
+      Boolean gating,
       String outcome) {}
 
   @Inject BuildStatusLedger ledger;
+
+  @Inject ReleaseRequests releaseRequests;
 
   @Override
   public String consumerId() {
@@ -104,8 +110,14 @@ public class BuildStatusListener implements QitsDurableEventListener {
             build.branch(),
             build.commitSha(),
             statusOf(frame, build),
+            build.gating() == null || build.gating(),
             frame.occurredAt(),
             causeOf(frame)));
+    // The other half of the reason the ledger lives in this service: the verdict that was just
+    // recorded resolves whatever release request was waiting on it. The evaluation brackets its
+    // own transactions and hands any execution to its own worker, so the claim never spans this
+    // datasource and never waits on a door.
+    releaseRequests.onVerdict(build.repoId(), build.commitSha());
   }
 
   /**

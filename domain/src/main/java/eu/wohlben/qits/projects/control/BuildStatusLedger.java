@@ -42,6 +42,7 @@ public class BuildStatusLedger {
       String branch,
       String commitSha,
       String status,
+      boolean gating,
       Instant finishedAt,
       UUID causationId) {}
 
@@ -58,6 +59,7 @@ public class BuildStatusLedger {
               row.branch = verdict.branch();
               row.commitSha = verdict.commitSha();
               row.status = verdict.status();
+              row.gating = verdict.gating();
               row.finishedAt = verdict.finishedAt();
               row.causationId = verdict.causationId();
               statuses.put(row);
@@ -67,7 +69,10 @@ public class BuildStatusLedger {
   /** Every verdict for one commit, newest run first. Empty means "no verdict yet", not "no run". */
   public List<CommitBuildStatusDto> verdictsOf(String repoId, String commitSha) {
     return statuses.findByCommit(repoId, commitSha).stream()
-        .map(row -> new CommitBuildStatusDto(row.runId, row.status, row.branch, row.finishedAt))
+        .map(
+            row ->
+                new CommitBuildStatusDto(
+                    row.runId, row.status, row.branch, row.gating, row.finishedAt))
         .toList();
   }
 }

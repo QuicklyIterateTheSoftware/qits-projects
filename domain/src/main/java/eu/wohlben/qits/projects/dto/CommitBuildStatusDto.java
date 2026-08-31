@@ -8,4 +8,5 @@ import java.time.Instant;
  * CONFIG_ERROR} today; the vocabulary is the publisher's and may grow. Runs still queued or running
  * do not appear: only terminal runs announce, so absence means "no verdict yet", never "no run".
  */
-public record CommitBuildStatusDto(String runId, String status, String branch, Instant finishedAt) {}
+public record CommitBuildStatusDto(
+    String runId, String status, String branch, boolean gating, Instant finishedAt) {}

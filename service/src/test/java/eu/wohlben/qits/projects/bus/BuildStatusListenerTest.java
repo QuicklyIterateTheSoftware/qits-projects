@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.eventstream.control.EventFrame;
 import eu.wohlben.qits.projects.control.BuildStatusLedger;
+import eu.wohlben.qits.projects.control.ReleaseRequests;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +29,7 @@ class BuildStatusListenerTest {
 
   private BuildStatusListener listener;
   private RecordingLedger ledger;
+  private RecordingRequests requests;
 
   private static final class RecordingLedger extends BuildStatusLedger {
     final List<Verdict> recorded = new ArrayList<>();
@@ -38,11 +40,22 @@ class BuildStatusListenerTest {
     }
   }
 
+  private static final class RecordingRequests extends ReleaseRequests {
+    final List<String> resolved = new ArrayList<>();
+
+    @Override
+    public void onVerdict(String repoId, String commitSha) {
+      resolved.add(repoId + "@" + commitSha);
+    }
+  }
+
   @BeforeEach
   void setUp() {
     listener = new BuildStatusListener();
     ledger = new RecordingLedger();
+    requests = new RecordingRequests();
     listener.ledger = ledger;
+    listener.releaseRequests = requests;
   }
 
   private static EventFrame frame(String name, String payload) {
@@ -82,8 +95,24 @@ class BuildStatusListenerTest {
     assertEquals("main", verdict.branch());
     assertEquals("abc123", verdict.commitSha());
     assertEquals("SUCCESS", verdict.status());
+    assertTrue(verdict.gating(), "absent on the wire means gating");
     assertEquals(green.occurredAt(), verdict.finishedAt());
     assertEquals(UUID.fromString(green.id()), verdict.causationId());
+    assertEquals(
+        List.of("repo-1@abc123"),
+        requests.resolved,
+        "the verdict that was just recorded resolves whatever request was waiting on it");
+  }
+
+  @Test
+  void aNonGatingVerdictIsRecordedAsSuch() {
+    listener.onFrame(
+        frame(
+            "BuildFailed",
+            "{\"commitSha\":\"abc123\",\"gating\":false,\"outcome\":\"FAILED\","
+                + "\"repoId\":\"repo-1\",\"runId\":\"run-uf\"}"));
+
+    assertEquals(false, ledger.recorded.get(0).gating());
   }
 
   @Test

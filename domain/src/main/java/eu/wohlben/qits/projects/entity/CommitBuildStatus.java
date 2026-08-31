@@ -66,6 +66,14 @@ public class CommitBuildStatus extends PanacheEntityBase implements CausedRow {
   @Column(name = "status", nullable = false)
   public String status;
 
+  /**
+   * Whether a red verdict of this run should stand in the way of releasing the commit — qits-ci's
+   * own flag, absent on the wire meaning true. The userflow pipelines are the ones that say false;
+   * the build gate ignores their redness and every reader still sees the verdict.
+   */
+  @Column(name = "gating", nullable = false)
+  public boolean gating = true;
+
   /** When the run finished — the event's {@code occurredAt}, never this row's write time. */
   @Column(name = "finished_at", nullable = false)
   public Instant finishedAt;

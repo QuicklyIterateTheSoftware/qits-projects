@@ -19,6 +19,9 @@ node_modules/
 # a container replacement. Ignored so the editor never dirties the tree it exists to edit.
 .openvscode-server/
 .cache/
+.m2/
+.npm/
+.redhat/
 
 # Logs
 *.log

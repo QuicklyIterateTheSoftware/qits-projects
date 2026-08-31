@@ -374,13 +374,39 @@ V1's column comment said the opposite and an applied file is checksummed — but
 restarted both lineages, so the constraint now sits in `V1__init.sql` beside a comment that agrees
 with it.
 
-**A set of slugs is RESERVED** (`ProjectService.RESERVED_SLUGS`): the six repository categories,
-`api`, `q`, `main-navigation`, and every application segment the platform routes. A slug is the
-first path segment of every address on every application host, and those hosts path-route every
-application's segment too — so a project called `projects` would be shadowed by this service's own
-API with nothing to say so. A supplied reserved slug is a **400**; a derived one suffixes like any
-other collision, so "Docs" still creates, as `docs-2`. **A new service segment belongs in that list
-on the day it is routed.**
+**A set of slugs is RESERVED, and it has two families with two different reasons.**
+`ReservedSlugs` is the union and the only thing anything asks; each family keeps its own refusal
+message, because "reserved" without the reason leaves a caller guessing which of two unrelated
+mechanisms they walked into. A supplied reserved slug is a **400** naming the word and the reason; a
+derived one suffixes like any other collision, so "Docs" still creates, as `docs-2`, and so does
+"Dev".
+
+- **Routing segments** — `ProjectService.RESERVED_SLUGS`, static: the six repository categories,
+  `components`, `api`, `q`, `main-navigation`, and every application segment the platform routes. A
+  slug is the first path segment of every address on every application host, and those hosts
+  path-route every application's segment too — so a project called `projects` would be shadowed by
+  this service's own API with nothing to say so. **A new service segment belongs in that list on the
+  day it is routed.**
+- **Platform environment names** — `qits.projects.reserved-slugs` (comma-separated, unset shipped,
+  arriving as `QITS_PROJECTS_RESERVED_SLUGS`), seeded by the bootstrap. Configured rather than
+  compiled in, because environments are created and removed on a running platform. The reason is a
+  **host** reading and not a path one: the web editor is served at `editor.<project>.<domain>` while
+  every application is served at `<app>.<environment>.<domain>`, and the edge tells the two apart by
+  reading the first two host labels — so a project slugged `dev` makes `editor.dev.<domain>` parse
+  as the application `editor` in the environment `dev`, and the project label does not survive the
+  reading. An **application** name colliding with a slug is harmless (the first label is `editor`,
+  never the slug) and is deliberately not guarded.
+
+The configured list can grow past a project that already exists, and a slug is immutable, so
+`startup/ReservedSlugAudit` reports at boot — one `ERROR` per colliding project, never failing or
+blocking boot (a virtual thread, the way `StartupSelfSeed` runs). It carries no launch-mode gate,
+unlike its two neighbours in that package: it reads one table and reaches no network, and a gate
+would mean the check runs nowhere but production. Today it finds nothing — the sole project is
+`qits-qits`, slugged `qits`.
+
+**There is no rename path to guard.** `Project.slug` is `@Column(updatable = false)`, `update` takes
+only a name and a description, and `resolveSlug` — reached from `create` alone — is the only writer
+of the column. The create path is the whole enforcement.
 
 Uniqueness is reached two ways, and the difference is what the caller said:
 

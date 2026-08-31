@@ -63,11 +63,12 @@ public class EventWireReflectionTest {
             SCMDeleteBranch.class,
             SCMDeleteTag.class,
             RepositoryRenamed.class,
+            BuildStatusListener.BuildVerdictPayload.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records in, RepositoryRenamed out, the PUT body, the frame — an eighth wire"
-            + " type means a line here");
+        "the four SCM records and the build-verdict payload in, RepositoryRenamed out, the PUT"
+            + " body, the frame — a ninth wire type means a line here");
   }
 
   /**
@@ -102,16 +103,32 @@ public class EventWireReflectionTest {
    * eventType()} — a listener takes a frame and reads what it wants — and a signature is an event
    * class's simple name by the same derivation the typed seam used.
    */
+  /**
+   * Signatures another context publishes and this service binds through a LOCAL payload record —
+   * the qits-deployments subscriber shape, where no vocabulary jar carries a type of the wire's
+   * name. Each entry maps the signature to the registered record that binds it, so the rule below
+   * still refuses a listener whose wire path nothing registered.
+   */
+  private static final java.util.Map<String, Class<?>> BOUND_BY_LOCAL_RECORD =
+      java.util.Map.of(
+          "BuildSuccessful", BuildStatusListener.BuildVerdictPayload.class,
+          "BuildFailed", BuildStatusListener.BuildVerdictPayload.class);
+
   @Test
   public void everyDurableListenersSignatureNamesARegisteredType() {
-    Set<String> registered =
-        Set.of(EventWireReflection.class.getAnnotation(RegisterForReflection.class).targets())
-            .stream()
-            .map(Class::getSimpleName)
-            .collect(Collectors.toSet());
+    Set<Class<?>> targets =
+        Set.of(EventWireReflection.class.getAnnotation(RegisterForReflection.class).targets());
+    Set<String> registered = targets.stream().map(Class::getSimpleName).collect(Collectors.toSet());
     for (QitsDurableEventListener listener : listeners) {
       for (String signature : listener.signatures()) {
         if (QitsRawEventListener.ALL.equals(signature)) {
+          continue;
+        }
+        Class<?> localRecord = BOUND_BY_LOCAL_RECORD.get(signature);
+        if (localRecord != null) {
+          assertTrue(
+              targets.contains(localRecord),
+              signature + " is bound by " + localRecord.getName() + ", which is not registered");
           continue;
         }
         assertTrue(
@@ -134,6 +151,13 @@ public class EventWireReflectionTest {
     assertTrue(
         listeners.stream().anyMatch(ScmBackupTriggerListener.class::isInstance),
         "a removed listener is a silent one");
+  }
+
+  @Test
+  public void theBuildStatusListenerIsDiscoverableAsADurableListener() {
+    assertTrue(
+        listeners.stream().anyMatch(BuildStatusListener.class::isInstance),
+        "a removed listener is a silent one — and here it is a build gate that never resolves");
   }
 
   /**

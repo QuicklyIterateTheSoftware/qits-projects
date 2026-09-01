@@ -26,8 +26,9 @@ import org.jboss.logging.Logger;
  * reconcile state — reading "we could not ask" as "no runs" would wave a release past builds that
  * are still running, which is the exact defect this whole feature exists to close.
  *
- * <p>The identity is the forwarded pair, qits-net's standing posture; it moves to a machine bearer
- * when the auth gate lands, like every other intra-net read.
+ * <p>The credential is a machine bearer when the {@code ci} named client is enabled ({@link
+ * IdpCiBearer}); while it is off (the shipped default, and any no-idp topology) the read falls
+ * back to the forwarded pair, qits-net's standing posture.
  */
 @ApplicationScoped
 @DefaultBean
@@ -43,19 +44,25 @@ public class HttpActiveBuilds implements ActiveBuilds {
   @ConfigProperty(name = "qits.projects.release-requests.ci-url")
   Optional<String> ciUrl;
 
+  @jakarta.inject.Inject IdpCiBearer bearer;
+
   @Override
   public Optional<Integer> activeFor(String repoId, String commitSha) {
     if (ciUrl.isEmpty() || ciUrl.get().isBlank()) {
       return Optional.empty();
     }
     try {
-      HttpRequest request =
+      HttpRequest.Builder builder =
           HttpRequest.newBuilder(URI.create(ciUrl.get() + "/ci/api/runs/active"))
               .timeout(Duration.ofSeconds(3))
-              .header("X-Qits-User", "qits-projects")
-              .header("X-Qits-Roles", "qits:system")
-              .GET()
-              .build();
+              .GET();
+      Optional<String> authorization = bearer.authorization();
+      if (authorization.isPresent()) {
+        builder.header("Authorization", authorization.get());
+      } else {
+        builder.header("X-Qits-User", "qits-projects").header("X-Qits-Roles", "qits:system");
+      }
+      HttpRequest request = builder.build();
       HttpResponse<String> response =
           client.send(request, HttpResponse.BodyHandlers.ofString());
       if (response.statusCode() != 200) {

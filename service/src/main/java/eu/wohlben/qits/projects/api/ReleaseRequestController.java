@@ -41,9 +41,16 @@ public class ReleaseRequestController {
    * @param commitSha the branch head the caller means — a request is about a sha, so the caller
    *     states which one rather than this service guessing at a head that may move mid-flight
    * @param summary the release door's summary line
+   * @param requester whom the caller acts for — attribution as data, for the machine peers whose
+   *     bearer names the service rather than the person at the door. Blank falls back to the
+   *     caller's own identity. Every caller here already holds admin or system, so stating an
+   *     actor is not an escalation.
    */
   public static record CreateReleaseRequest(
-      @NotBlank String branch, @NotBlank String commitSha, @NotBlank String summary) {
+      @NotBlank String branch,
+      @NotBlank String commitSha,
+      @NotBlank String summary,
+      String requester) {
     public record Response(ReleaseRequestDto request) {}
   }
 
@@ -57,9 +64,35 @@ public class ReleaseRequestController {
               + " FAILED; detail says why for the latter two.")
   public CreateReleaseRequest.Response create(
       @PathParam("repoId") String repoId, CreateReleaseRequest body) {
-    String requester = identity.isAnonymous() ? null : identity.getPrincipal().getName();
+    String requester =
+        body.requester() != null && !body.requester().isBlank()
+            ? body.requester().trim()
+            : (identity.isAnonymous() ? null : identity.getPrincipal().getName());
     return new CreateReleaseRequest.Response(
         releaseRequests.request(repoId, body.branch(), body.commitSha(), body.summary(), requester));
+  }
+
+  /** @param reason optional sentence recorded on the request; a default names the caller. */
+  public static record WithdrawReleaseRequest(String reason) {
+    public record Response(ReleaseRequestDto request) {}
+  }
+
+  @POST
+  @Path("/{requestId}/withdraw")
+  @Operation(
+      summary = "Withdraw an open release request",
+      description =
+          "The ask is moot — nothing should land this branch. WITHDRAWN is terminal and frees the"
+              + " branch: the next release ask mints a fresh request. A request already RELEASED or"
+              + " WITHDRAWN answers 409. A deleted branch withdraws its open request"
+              + " automatically; this route is the operator's spelling for every other reason.")
+  public WithdrawReleaseRequest.Response withdraw(
+      @PathParam("repoId") String repoId,
+      @PathParam("requestId") String requestId,
+      WithdrawReleaseRequest body) {
+    String actor = identity.isAnonymous() ? null : identity.getPrincipal().getName();
+    return new WithdrawReleaseRequest.Response(
+        releaseRequests.withdraw(requestId, body == null ? null : body.reason(), actor));
   }
 
   public static record ListReleaseRequests() {

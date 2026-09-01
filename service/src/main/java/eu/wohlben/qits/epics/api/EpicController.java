@@ -76,8 +76,9 @@ public class EpicController {
 
   /**
    * A lifecycle move. {@code target} is the status name — {@code IMPLEMENTATION} (the scope
-   * freeze), {@code SUPERSEDED} or {@code ABANDONED}. A move the lifecycle does not allow, and a
-   * target naming no status, both answer 409 with a message.
+   * freeze), {@code IMPLEMENTED} (shipped: stamps every feature and task still unimplemented),
+   * {@code SUPERSEDED} or {@code ABANDONED}. A move the lifecycle does not allow, and a target
+   * naming no status, both answer 409 with a message.
    */
   public record TransitionEpicRequest(String target) {
     /** The epic in its new status, plus the successor draft a supersede spawned (null otherwise). */

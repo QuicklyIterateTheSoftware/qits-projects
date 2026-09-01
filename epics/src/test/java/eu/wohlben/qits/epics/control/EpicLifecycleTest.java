@@ -83,15 +83,67 @@ class EpicLifecycleTest extends EpicsTestSupport {
     assertTrue(history.get(0).snapshot.contains("\"status\":\"IMPLEMENTATION\""));
   }
 
+  // --- marking implemented -------------------------------------------------------------------
+
+  @Test
+  void aFeaturelessEpicCanBeMarkedImplemented() {
+    // The motivating case: an epic implemented straight from its description has nothing for the
+    // feature derivation to fire on, and used to sit in IMPLEMENTATION forever.
+    Epic epic = frozen();
+    var result = epicService.transition(epic.id, "IMPLEMENTED", "alice");
+    assertEquals(EpicStatus.IMPLEMENTED, result.epic().status);
+    assertNull(result.successor());
+  }
+
+  @Test
+  void markingImplementedStampsTheUnstampedAndKeepsEarlierTimestamps() {
+    Epic epic = epic();
+    Feature done = featureService.create(epic.id, "Shipped in June", null, null, "t");
+    Feature open = featureService.create(epic.id, "Finished by the declaration", null, null, "t");
+    Task task = taskService.create(open.id, "repo-1", "Loose end", null, null, "t");
+    epicService.transition(epic.id, "IMPLEMENTATION", "t");
+    java.time.Instant june = java.time.Instant.parse("2026-06-01T12:00:00Z");
+    featureService.update(done.id, null, null, null, false, june, false, "t");
+
+    epicService.transition(epic.id, "IMPLEMENTED", "alice");
+
+    assertEquals(june, featureService.get(done.id).implementedOn, "history is not rewritten");
+    assertNotNull(featureService.get(open.id).implementedOn);
+    assertNotNull(taskService.get(task.id).implementedAt);
+  }
+
+  @Test
+  void implementedFreezesEverythingAndMovesOnlyToSuperseded() {
+    Epic epic = epic();
+    Feature feature = featureService.create(epic.id, "The one feature", null, null, "t");
+    epicService.transition(epic.id, "IMPLEMENTATION", "t");
+    epicService.transition(epic.id, "IMPLEMENTED", "t");
+
+    // Structural changes and marker changes are both rejected — the guards' status checks.
+    assertThrows(
+        ConflictException.class, () -> featureService.create(epic.id, "Late scope", null, null, "t"));
+    assertThrows(
+        ConflictException.class,
+        () -> featureService.update(feature.id, null, null, null, false, null, true, "t"));
+    for (String target : List.of("REFINING", "IMPLEMENTATION", "IMPLEMENTED", "ABANDONED")) {
+      assertThrows(ConflictException.class, () -> epicService.transition(epic.id, target, "t"));
+    }
+    assertEquals(
+        EpicStatus.SUPERSEDED, epicService.transition(epic.id, "SUPERSEDED", "t").epic().status);
+  }
+
   // --- illegal moves -------------------------------------------------------------------------
 
   @Test
   void everyOtherMoveIsRejected() {
     Epic draft = epic();
-    // A draft has no scope to supersede, and it cannot move to where it already is.
+    // A draft has no scope to supersede, and it cannot move to where it already is. Nor can it be
+    // implemented without the freeze: IMPLEMENTED is reached through IMPLEMENTATION alone.
     assertThrows(
         ConflictException.class, () -> epicService.transition(draft.id, "SUPERSEDED", "t"));
     assertThrows(ConflictException.class, () -> epicService.transition(draft.id, "REFINING", "t"));
+    assertThrows(
+        ConflictException.class, () -> epicService.transition(draft.id, "IMPLEMENTED", "t"));
 
     Epic implementing = frozen();
     // Freezing is one-way: there is no route back to the draft.
@@ -106,14 +158,16 @@ class EpicLifecycleTest extends EpicsTestSupport {
   void terminalStatusesMoveNowhere() {
     Epic abandoned = epic();
     epicService.transition(abandoned.id, "ABANDONED", "t");
-    for (String target : List.of("REFINING", "IMPLEMENTATION", "SUPERSEDED", "ABANDONED")) {
+    for (String target :
+        List.of("REFINING", "IMPLEMENTATION", "IMPLEMENTED", "SUPERSEDED", "ABANDONED")) {
       assertThrows(
           ConflictException.class, () -> epicService.transition(abandoned.id, target, "t"));
     }
 
     Epic superseded = frozen();
     epicService.transition(superseded.id, "SUPERSEDED", "t");
-    for (String target : List.of("REFINING", "IMPLEMENTATION", "SUPERSEDED", "ABANDONED")) {
+    for (String target :
+        List.of("REFINING", "IMPLEMENTATION", "IMPLEMENTED", "SUPERSEDED", "ABANDONED")) {
       assertThrows(
           ConflictException.class, () -> epicService.transition(superseded.id, target, "t"));
     }
@@ -122,7 +176,7 @@ class EpicLifecycleTest extends EpicsTestSupport {
   @Test
   void anUnknownTargetIsRejected() {
     Epic epic = epic();
-    // "Done" is derived, not stored — asking for it names no status at all.
+    // The stored word is IMPLEMENTED — "DONE" names no status at all.
     assertThrows(ConflictException.class, () -> epicService.transition(epic.id, "DONE", "t"));
     assertThrows(ConflictException.class, () -> epicService.transition(epic.id, "refining", "t"));
   }

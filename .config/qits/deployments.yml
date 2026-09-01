@@ -35,13 +35,30 @@ application: qits-projects
 
 routes: /projects
 host: projects
-# One placement: `system.Overview`, the environment's own door. The `services.details.Api Docs`
-# entry that used to sit beside qits-docs' Docs row is gone — API documentation is a sub-item of
-# Docs now (the docs app's own sub-navigation renders it from published @apidocs bundles), and a
-# sibling row was the old flat shape re-emerging beside the nested one. This application's viewer
-# route (`/<project>/services/<repo>/api-docs`, the live swagger-ui frame) still answers; it is
-# just no longer a sidebar row.
-navigation-entries: system.Overview:1
+# TWO placements, and the second is on all six archetype slots.
+#
+# `system.Overview:1` is the environment's own door, first in the global group.
+#
+# `<category>.details.Release Requests:3=release-requests` is the per-repository row, and it opens
+# this SPA's `/<project>/<group>/<repo>/release-requests` — the repository's release requests, which
+# is the asynchronous gated ask that replaced calling the release door blind. It is declared on
+# every one of the six archetype slots because every kind of repository is released: a library, an
+# SPA and an OCI image each go through the same request, so a row that hung under services alone
+# would be missing exactly where a person most often has to ask why nothing landed.
+#
+# POSITION 3 IS A RENUMBER, not a free slot. The detail group ran Docs 2, Code 3, CI 4, Artifacts 5,
+# Configuration 6, Workspaces 7; this row goes above Code, so qits-githost, qits-ci, qits-artifacts,
+# qits-configuration and qits-workspaces each moved up one in the same change. The alternative was to
+# share position 2 with Docs and let the tie-break do the ordering — the edge sorts by position, then
+# label, then application, and "Docs" < "Release Requests" — but that makes the order an accident of
+# the *label*, so renaming this row to "Releases" would silently move it above Docs. Integers that
+# say what they mean are worth five one-line commits.
+#
+# The `services.details.Api Docs` entry this file used to carry is still gone and is not coming
+# back: API documentation is a sub-item of Docs now (the docs app renders it from published @apidocs
+# bundles). This application's viewer route (`/<project>/services/<repo>/api-docs`, the live
+# swagger-ui frame) still answers; it is just not a sidebar row.
+navigation-entries: system.Overview:1, services.details.Release Requests:3=release-requests, daemons.details.Release Requests:3=release-requests, libs.details.Release Requests:3=release-requests, frontends.details.Release Requests:3=release-requests, cli.details.Release Requests:3=release-requests, images.details.Release Requests:3=release-requests
 
 # THREE DATABASES, because this application opens three datasources with three Flyway lineages:
 # `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and

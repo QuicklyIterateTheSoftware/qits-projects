@@ -28,15 +28,28 @@ public interface ReleaseExecutor {
       String summary,
       String requester);
 
-  /** What the door said: a version when it released, otherwise why it did not. */
-  record Outcome(boolean released, String version, String detail) {
+  /**
+   * What the door said: a version when it released, otherwise why it did not — and whether retrying
+   * the same ask can possibly change the answer. Retryable is the moment failing (unreachable, a
+   * 5xx, the door's own retry-me 409s); a refusal about the request itself — ALREADY_INTEGRATED, a
+   * branch that is gone, a malformed ask — will answer the same forever, and the sweep must not
+   * knock every 30 seconds to hear it again. A non-retryable FAILED request still revives on a
+   * re-arm, which is the event that actually changes the ask.
+   */
+  record Outcome(boolean released, String version, String detail, boolean retryable) {
 
     public static Outcome released(String version) {
-      return new Outcome(true, version, null);
+      return new Outcome(true, version, null, false);
     }
 
+    /** A refusal about the request: final until the branch moves. */
     public static Outcome refused(String detail) {
-      return new Outcome(false, null, detail);
+      return new Outcome(false, null, detail, false);
+    }
+
+    /** A refusal about the moment: the sweep retries it. */
+    public static Outcome refusedRetryable(String detail) {
+      return new Outcome(false, null, detail, true);
     }
   }
 }

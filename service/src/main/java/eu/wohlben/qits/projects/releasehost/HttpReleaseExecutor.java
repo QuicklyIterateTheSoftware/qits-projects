@@ -32,10 +32,13 @@ import org.jboss.logging.Logger;
  * rather than this service; the role is the door's required {@code qits:admin}. Both move to a
  * machine bearer with the door split.
  *
- * <p><b>Never throws.</b> A refusal, a timeout and an unreachable door are all an {@link
- * Outcome#refused} with the words that came back; the state machine records them and the sweep
- * retries. The generous timeout is the door's own shape — a release is a merge, a tag and two
- * pushes.
+ * <p><b>Never throws, and every answer is classified.</b> A timeout, an unreachable door, a 5xx and
+ * the door's own retry-me 409s ({@code NOT_FAST_FORWARD}, {@code VERSION_ALREADY_RELEASED}) are
+ * {@link Outcome#refusedRetryable} — the moment failed and the sweep asks again. Every other
+ * refusal is about the request itself ({@code ALREADY_INTEGRATED}, a branch that is gone, a
+ * malformed ask) and answers the same forever, so it is a plain {@link Outcome#refused} the sweep
+ * leaves alone until a re-arm changes the ask. The generous timeout is the door's own shape — a
+ * release is a merge, a tag and two pushes.
  */
 @ApplicationScoped
 @DefaultBean
@@ -61,7 +64,7 @@ public class HttpReleaseExecutor implements ReleaseExecutor {
       String summary,
       String requester) {
     if (workspacesUrl.isEmpty() || workspacesUrl.get().isBlank()) {
-      return Outcome.refused(
+      return Outcome.refusedRetryable(
           "qits.projects.release-requests.workspaces-url is not configured; nothing can execute"
               + " this release");
     }
@@ -106,13 +109,39 @@ public class HttpReleaseExecutor implements ReleaseExecutor {
         }
         return Outcome.released(version);
       }
-      return Outcome.refused("The door answered " + response.statusCode() + ": " + clip(response.body()));
+      String detail =
+          "The door answered " + response.statusCode() + ": " + clip(response.body());
+      return retryable(response) ? Outcome.refusedRetryable(detail) : Outcome.refused(detail);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      return Outcome.refused("interrupted while asking the door");
+      return Outcome.refusedRetryable("interrupted while asking the door");
     } catch (Exception e) {
       LOG.warnf("The release door could not be reached: %s", e.toString());
-      return Outcome.refused("The door could not be reached: " + e);
+      return Outcome.refusedRetryable("The door could not be reached: " + e);
+    }
+  }
+
+  /**
+   * Whether asking again can change the answer. A 5xx is the door's moment, not the request. A 409
+   * is the door's conflict vocabulary and splits by its {@code reason}: {@code NOT_FAST_FORWARD}
+   * and {@code VERSION_ALREADY_RELEASED} are the two the door itself documents as retry-and-it-
+   * works (a racing writer, a same-second version tie); everything else there — {@code
+   * ALREADY_INTEGRATED}, {@code PUSH_REJECTED}, the conflict pair, {@code HEAD_MOVED} — states a
+   * fact about the ask that only a new push changes. Every other 4xx (a branch that is gone, a
+   * malformed request) is likewise about the ask.
+   */
+  private static boolean retryable(HttpResponse<String> response) {
+    if (response.statusCode() >= 500) {
+      return true;
+    }
+    if (response.statusCode() != 409) {
+      return false;
+    }
+    try {
+      String reason = MAPPER.readTree(response.body()).path("reason").asText("");
+      return "NOT_FAST_FORWARD".equals(reason) || "VERSION_ALREADY_RELEASED".equals(reason);
+    } catch (Exception e) {
+      return false;
     }
   }
 

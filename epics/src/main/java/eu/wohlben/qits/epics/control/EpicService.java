@@ -14,6 +14,7 @@ import eu.wohlben.qits.epics.persistence.FeatureRepository;
 import eu.wohlben.qits.epics.persistence.TaskRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -122,7 +123,10 @@ public class EpicService {
   /**
    * Moves an epic to {@code target} (the enum name), rejecting a move the lifecycle does not allow
    * with a 409. Superseding also spawns the successor draft — see {@link #supersede} — and points
-   * the old row at it.
+   * the old row at it. Moving to {@link EpicStatus#IMPLEMENTED} stamps every feature and task still
+   * unimplemented ({@link #stampImplemented}) — declaring the epic done is declaring its scope
+   * done, and doing both in one transaction is what keeps the stored status and the derived reading
+   * from ever disagreeing.
    *
    * <p>A target naming no status is a 409 too: the caller asked for a phase that does not exist,
    * which is the same kind of answer as asking for one that is not reachable. An absent target is a
@@ -143,6 +147,9 @@ public class EpicService {
           EpicLifecycle.requireTransition(epic.status, to);
 
           Epic successor = (to == EpicStatus.SUPERSEDED) ? supersede(epic, changedBy) : null;
+          if (to == EpicStatus.IMPLEMENTED) {
+            stampImplemented(epic, changedBy);
+          }
           epic.status = to;
           if (successor != null) {
             epic.supersededByEpicId = successor.id;
@@ -151,6 +158,30 @@ public class EpicService {
               AuditEntityType.EPIC, epic.id, epic.id, AuditOperation.UPDATE, changedBy, epic);
           return new Transition(epic, successor);
         });
+  }
+
+  /**
+   * The other half of moving to {@link EpicStatus#IMPLEMENTED}: every feature and task still
+   * unimplemented is stamped now, each with its own audit row. Markers already set keep their
+   * timestamps — a feature implemented in June stays implemented in June; the stamp records when
+   * the declaration covered the rest, not a rewrite of history.
+   */
+  private void stampImplemented(Epic epic, String changedBy) {
+    Instant now = Instant.now();
+    for (Feature feature : featureRepository.listByEpic(epic.id)) {
+      for (Task task : taskRepository.listByFeature(feature.id)) {
+        if (task.implementedAt == null) {
+          task.implementedAt = now;
+          auditService.record(
+              AuditEntityType.TASK, task.id, epic.id, AuditOperation.UPDATE, changedBy, task);
+        }
+      }
+      if (feature.implementedOn == null) {
+        feature.implementedOn = now;
+        auditService.record(
+            AuditEntityType.FEATURE, feature.id, epic.id, AuditOperation.UPDATE, changedBy, feature);
+      }
+    }
   }
 
   /** Removes an epic and its subtree, held through a cutover ({@link WritePatience}). */

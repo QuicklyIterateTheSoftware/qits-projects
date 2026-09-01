@@ -16,7 +16,8 @@ import java.util.Set;
  * description, and any feature/task create, update or delete, dependencies included — needs {@link
  * EpicStatus#REFINING}. The implemented markers ({@code implementedOn}/{@code implementedAt}) need
  * {@link EpicStatus#IMPLEMENTATION}. The two guards therefore reject everything in {@link
- * EpicStatus#SUPERSEDED} and {@link EpicStatus#ABANDONED} without a rule of their own.
+ * EpicStatus#IMPLEMENTED}, {@link EpicStatus#SUPERSEDED} and {@link EpicStatus#ABANDONED} without a
+ * rule of their own.
  *
  * <p>Deleting an epic stays allowed in every status: it removes the row and its subtree rather than
  * changing a frozen scope, and the audit log outlives it.
@@ -29,7 +30,9 @@ final class EpicLifecycle {
           EpicStatus.REFINING,
           EnumSet.of(EpicStatus.IMPLEMENTATION, EpicStatus.ABANDONED),
           EpicStatus.IMPLEMENTATION,
-          EnumSet.of(EpicStatus.SUPERSEDED, EpicStatus.ABANDONED));
+          EnumSet.of(EpicStatus.IMPLEMENTED, EpicStatus.SUPERSEDED, EpicStatus.ABANDONED),
+          EpicStatus.IMPLEMENTED,
+          EnumSet.of(EpicStatus.SUPERSEDED));
 
   private EpicLifecycle() {}
 

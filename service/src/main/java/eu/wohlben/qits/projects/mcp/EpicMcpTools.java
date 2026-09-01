@@ -136,13 +136,14 @@ public class EpicMcpTools {
               + " feature/task tree. Start here: call it with status=\"REFINING\" to find the"
               + " drafts that are open for editing, and decide between extending one of them and"
               + " proposing a new epic. Only REFINING epics can be changed at all; the other"
-              + " statuses (IMPLEMENTATION, SUPERSEDED, ABANDONED) are read-only records.")
+              + " statuses (IMPLEMENTATION, IMPLEMENTED, SUPERSEDED, ABANDONED) are read-only"
+              + " records.")
   public List<EpicSummary> listEpics(
       @ToolArg(
               required = false,
               description =
-                  "exact status to filter by: REFINING, IMPLEMENTATION, SUPERSEDED or ABANDONED."
-                      + " Omit for every epic of the project.")
+                  "exact status to filter by: REFINING, IMPLEMENTATION, IMPLEMENTED, SUPERSEDED or"
+                      + " ABANDONED. Omit for every epic of the project.")
           String status) {
     return epicService.listByProject(scope.requireProjectId(), status).stream()
         .map(EpicMcpTools::summarize)

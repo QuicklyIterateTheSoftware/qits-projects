@@ -5,6 +5,7 @@ import eu.wohlben.qits.projects.dto.ReleaseRequestDto;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
 import eu.wohlben.qits.projects.entity.Repository;
 import eu.wohlben.qits.projects.error.BadRequestException;
+import eu.wohlben.qits.projects.error.DomainException;
 import eu.wohlben.qits.projects.error.NotFoundException;
 import eu.wohlben.qits.projects.persistence.ReleaseRequestRepository;
 import eu.wohlben.qits.projects.persistence.RepositoryNameRepository;
@@ -195,6 +196,61 @@ public class ReleaseRequests {
     open.retryable = false;
     open.armedAt = Instant.now();
     open.updatedAt = open.armedAt;
+  }
+
+  /**
+   * Withdraw an open request: the ask is moot and a person (or the branch's deletion) said so.
+   * WITHDRAWN is terminal and leaves the branch free — the next door call mints a fresh request
+   * rather than reviving this one, and a moving head no longer re-arms it. A request already
+   * settled (RELEASED, WITHDRAWN) refuses with a 409 naming its state: withdrawing what already
+   * concluded would rewrite a record.
+   */
+  public ReleaseRequestDto withdraw(String id, String reason, String actor) {
+    return QuarkusTransaction.requiringNew()
+        .call(
+            () -> {
+              ReleaseRequest row =
+                  requests
+                      .findByIdOptional(id)
+                      .orElseThrow(
+                          () -> new NotFoundException("Release request not found: " + id));
+              if (row.state == ReleaseRequest.State.RELEASED
+                  || row.state == ReleaseRequest.State.WITHDRAWN) {
+                throw new DomainException(
+                    409, "Release request " + id + " is already " + row.state);
+              }
+              row.state = ReleaseRequest.State.WITHDRAWN;
+              row.detail =
+                  (reason == null || reason.isBlank())
+                      ? "Withdrawn by " + (actor == null ? "an operator" : actor)
+                      : reason.trim();
+              row.retryable = false;
+              row.updatedAt = Instant.now();
+              return dto(row);
+            });
+  }
+
+  /**
+   * The branch is gone, so the open request tracking it is moot: nothing can gate or land a
+   * deleted branch, and the row would otherwise stand open forever. Called from the
+   * SCMDeleteBranch consumption; a branch with no open request is a no-op.
+   */
+  public void onBranchDeleted(String repoId, String branch) {
+    QuarkusTransaction.requiringNew()
+        .run(
+            () ->
+                requests
+                    .findOpenByBranch(repoId, branch)
+                    .ifPresent(
+                        open -> {
+                          open.state = ReleaseRequest.State.WITHDRAWN;
+                          open.detail = "Withdrawn: the branch was deleted";
+                          open.retryable = false;
+                          open.updatedAt = Instant.now();
+                          LOG.infof(
+                              "Release request %s withdrawn: branch %s of %s was deleted",
+                              open.id, branch, repoId);
+                        }));
   }
 
   /** One request, as the API answers it. */

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.eventstream.QitsDurableEventListener;
 import eu.wohlben.qits.eventstream.control.EventFrame;
+import eu.wohlben.qits.githost.events.SCMDeleteBranch;
 import eu.wohlben.qits.githost.events.SCMPublishCommit;
 import eu.wohlben.qits.projects.control.ReleaseRequests;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -14,7 +15,9 @@ import org.jboss.logging.Logger;
 /**
  * A branch moved, so the open release request tracking it re-arms onto the new head — the
  * merge-request shape: pushing a fix onto a rejected request is the ordinary way to answer it, and
- * a head that outran a pending gate must invalidate it rather than be silently released.
+ * a head that outran a pending gate must invalidate it rather than be silently released. A branch
+ * <b>deleted</b> withdraws the open request instead: nothing can gate or land a ref that is gone,
+ * and the row would otherwise stand open forever (three did, 2026-09-01).
  *
  * <p>Its own durable consumer beside {@link ScmBackupTriggerListener} rather than a second concern
  * inside it: the backup consumption is total over all four SCM events and must never learn release
@@ -48,7 +51,8 @@ public class ReleaseRequestHeadListener implements QitsDurableEventListener {
 
   @Override
   public Set<String> signatures() {
-    return Set.of(SCMPublishCommit.class.getSimpleName());
+    return Set.of(
+        SCMPublishCommit.class.getSimpleName(), SCMDeleteBranch.class.getSimpleName());
   }
 
   @Override
@@ -64,6 +68,16 @@ public class ReleaseRequestHeadListener implements QitsDurableEventListener {
     }
     String repoId = payload.path("repoId").asText(null);
     String branch = payload.path("branch").asText(null);
+    if (SCMDeleteBranch.class.getSimpleName().equals(frame.name())) {
+      if (isBlank(repoId) || isBlank(branch)) {
+        LOG.warnf(
+            "%s %s names no (repoId, branch); no request can withdraw on it",
+            frame.name(), frame.id());
+        return;
+      }
+      releaseRequests.onBranchDeleted(repoId, branch);
+      return;
+    }
     String sha = payload.path("sha").asText(null);
     if (isBlank(repoId) || isBlank(branch) || isBlank(sha)) {
       LOG.warnf(

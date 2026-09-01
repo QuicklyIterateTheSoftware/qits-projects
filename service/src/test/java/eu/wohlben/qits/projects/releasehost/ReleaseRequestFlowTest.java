@@ -313,4 +313,64 @@ public class ReleaseRequestFlowTest {
     verdict("BuildSuccessful", fixed, "");
     awaitState(id, "RELEASED");
   }
+
+  private void branchDeleted(String branch) {
+    headListener.onFrame(
+        new EventFrame(
+            UUID.randomUUID().toString(),
+            "SCMDeleteBranch",
+            Instant.now(),
+            "{\"branch\":\"" + branch + "\",\"repoId\":\"" + repoId + "\",\"sha\":\"" + sha()
+                + "\"}",
+            null,
+            null,
+            null));
+  }
+
+  @Test
+  public void aDeletedBranchWithdrawsItsOpenRequestAndFreesTheBranch() {
+    activeBuilds.answer(Optional.of(1));
+    String id = create("work", sha());
+
+    branchDeleted("work");
+    given()
+        .get(base() + "/" + id)
+        .then()
+        .body("request.state", equalTo("WITHDRAWN"))
+        .body("request.detail", equalTo("Withdrawn: the branch was deleted"));
+
+    // WITHDRAWN is not open: a moving head revives nothing, and a new ask mints a fresh row.
+    headMoved("work", sha());
+    assertEquals("WITHDRAWN", stateOf(id));
+    String fresh = create("work", sha());
+    assertTrue(!fresh.equals(id), "a withdrawn request is never converged on");
+  }
+
+  @Test
+  public void anOperatorWithdrawsAMootRequestAndTerminalOnesRefuse() {
+    executor.answer(ReleaseExecutor.Outcome.refused("409: ALREADY_INTEGRATED"));
+    String sha = sha();
+    String id = create("work", sha);
+    verdict("BuildSuccessful", sha, "");
+    awaitState(id, "FAILED");
+
+    given()
+        .contentType(ContentType.JSON)
+        .body("{\"reason\":\"already integrated; the work shipped through another door\"}")
+        .post(base() + "/" + id + "/withdraw")
+        .then()
+        .statusCode(200)
+        .body("request.state", equalTo("WITHDRAWN"))
+        .body(
+            "request.detail",
+            equalTo("already integrated; the work shipped through another door"));
+
+    // Withdrawing what already concluded would rewrite a record.
+    given()
+        .contentType(ContentType.JSON)
+        .body("{}")
+        .post(base() + "/" + id + "/withdraw")
+        .then()
+        .statusCode(409);
+  }
 }

@@ -259,6 +259,8 @@ components:
         summary:
           type: string
           pattern: \S
+        requester:
+          type: string
     CreateTaskRequest:
       type: object
       required:
@@ -859,10 +861,8 @@ components:
     Response29:
       type: object
       properties:
-        requests:
-          type: array
-          items:
-            $ref: "#/components/schemas/ReleaseRequestDto"
+        request:
+          $ref: "#/components/schemas/ReleaseRequestDto"
     Response3:
       type: object
       properties:
@@ -871,8 +871,10 @@ components:
     Response30:
       type: object
       properties:
-        request:
-          $ref: "#/components/schemas/ReleaseRequestDto"
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReleaseRequestDto"
     Response31:
       type: object
       properties:
@@ -881,14 +883,19 @@ components:
     Response32:
       type: object
       properties:
+        request:
+          $ref: "#/components/schemas/ReleaseRequestDto"
+    Response33:
+      type: object
+      properties:
         technicalProcessId:
           type: string
-    Response33:
+    Response34:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response34:
+    Response35:
       type: object
       properties:
         repository:
@@ -897,11 +904,6 @@ components:
           type: string
         changed:
           type: boolean
-    Response35:
-      type: object
-      properties:
-        technicalProcessId:
-          type: string
     Response36:
       type: object
       properties:
@@ -910,20 +912,20 @@ components:
     Response37:
       type: object
       properties:
+        technicalProcessId:
+          type: string
+    Response38:
+      type: object
+      properties:
         repositories:
           type: array
           items:
             $ref: "#/components/schemas/RepositoryCoordinatesDto"
-    Response38:
+    Response39:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response39:
-      type: object
-      properties:
-        success:
-          type: boolean
     Response4:
       type: object
       properties:
@@ -937,25 +939,30 @@ components:
     Response41:
       type: object
       properties:
+        success:
+          type: boolean
+    Response42:
+      type: object
+      properties:
         builds:
           type: array
           items:
             $ref: "#/components/schemas/CommitBuildStatusDto"
-    Response42:
+    Response43:
       type: object
       properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response43:
+    Response44:
       type: object
       properties:
         repositoryId:
           type: string
         scheduled:
           type: boolean
-    Response44:
+    Response45:
       type: object
       properties:
         technicalProcessId:
@@ -1114,6 +1121,11 @@ components:
           $ref: "#/components/schemas/Instant"
         clearImplementedAt:
           type: boolean
+    WithdrawReleaseRequest:
+      type: object
+      properties:
+        reason:
+          type: string
     WrapperView:
       type: object
       properties:
@@ -2670,7 +2682,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response37"
+                $ref: "#/components/schemas/Response38"
         "401":
           description: Not Authorized
         "403":
@@ -2710,7 +2722,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response34"
+                $ref: "#/components/schemas/Response35"
         "400":
           description: "An invalid name, a name another repository in this project\
             \ already answers to, or the project's wrapper repository (whose name\
@@ -2739,7 +2751,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response38"
+                $ref: "#/components/schemas/Response39"
         "401":
           description: Not Authorized
         "403":
@@ -2771,7 +2783,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response40"
+                $ref: "#/components/schemas/Response41"
         "401":
           description: Not Authorized
         "403":
@@ -2795,7 +2807,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response44"
+                $ref: "#/components/schemas/Response45"
         "401":
           description: Not Authorized
         "403":
@@ -2824,7 +2836,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response43"
+                $ref: "#/components/schemas/Response44"
         "404":
           description: No such repository
         "401":
@@ -2856,7 +2868,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response39"
+                $ref: "#/components/schemas/Response40"
         "401":
           description: Not Authorized
         "403":
@@ -2880,7 +2892,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response42"
+                $ref: "#/components/schemas/Response43"
         "401":
           description: Not Authorized
         "403":
@@ -2945,7 +2957,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response41"
+                $ref: "#/components/schemas/Response42"
         "401":
           description: Not Authorized
         "403":
@@ -3050,7 +3062,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response33"
+                $ref: "#/components/schemas/Response34"
         "401":
           description: Not Authorized
         "403":
@@ -3077,7 +3089,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response36"
+                $ref: "#/components/schemas/Response37"
         "401":
           description: Not Authorized
         "403":
@@ -3102,7 +3114,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response35"
+                $ref: "#/components/schemas/Response36"
         "401":
           description: Not Authorized
         "403":
@@ -3127,7 +3139,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response29"
+                $ref: "#/components/schemas/Response30"
         "401":
           description: Not Authorized
         "403":
@@ -3163,7 +3175,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response31"
+                $ref: "#/components/schemas/Response32"
         "401":
           description: Not Authorized
         "403":
@@ -3195,12 +3207,56 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response30"
+                $ref: "#/components/schemas/Response31"
         "401":
           description: Not Authorized
         "403":
           description: Not Allowed
       summary: Get
+      tags:
+      - Release Request Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+  /projects/api/repositories/{repoId}/release-requests/{requestId}/withdraw:
+    post:
+      summary: Withdraw an open release request
+      description: "The ask is moot — nothing should land this branch. WITHDRAWN is\
+        \ terminal and frees the branch: the next release ask mints a fresh request.\
+        \ A request already RELEASED or WITHDRAWN answers 409. A deleted branch withdraws\
+        \ its open request automatically; this route is the operator's spelling for\
+        \ every other reason."
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WithdrawReleaseRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response29"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
       tags:
       - Release Request Controller
       security:
@@ -3221,7 +3277,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response32"
+                $ref: "#/components/schemas/Response33"
         "401":
           description: Not Authorized
         "403":

@@ -27,10 +27,11 @@ import org.jboss.logging.Logger;
  * visible stall the sweep keeps retrying, never a silent one.
  *
  * <p>The door is addressed by the public pair when the repository has a name and by the storage id
- * when it does not — the same two arms the door itself keeps. The acting identity is the request's
- * own requester over the forwarded pair, so the door's audit trail names the person who asked
- * rather than this service; the role is the door's required {@code qits:admin}. Both move to a
- * machine bearer with the door split.
+ * when it does not — the same two arms the door itself keeps. <b>The credential is a machine
+ * bearer when the {@code workspaces} named client is enabled</b> ({@link IdpWorkspacesBearer}),
+ * with the requester travelling in the body so the door's audit still names the person who asked;
+ * while the client is off (the shipped default, and any no-idp topology) the hop falls back to the
+ * forwarded {@code X-Qits-*} pair, qits-net's standing posture.
  *
  * <p><b>Never throws, and every answer is classified.</b> A timeout, an unreachable door, a 5xx and
  * the door's own retry-me 409s ({@code NOT_FAST_FORWARD}, {@code VERSION_ALREADY_RELEASED}) are
@@ -53,6 +54,8 @@ public class HttpReleaseExecutor implements ReleaseExecutor {
 
   @ConfigProperty(name = "qits.projects.release-requests.workspaces-url")
   Optional<String> workspacesUrl;
+
+  @jakarta.inject.Inject IdpWorkspacesBearer bearer;
 
   @Override
   public Outcome release(
@@ -90,15 +93,28 @@ public class HttpReleaseExecutor implements ReleaseExecutor {
         // the field.
         fields.put("expectedSha", expectedSha);
       }
+      if (requester != null && !requester.isBlank()) {
+        // Attribution as data: with a bearer the identity is this service, so the door reads whom
+        // it acts for out of the body. Sent on the header arm too — an old door ignores it.
+        fields.put("requester", requester);
+      }
       String body = MAPPER.writeValueAsString(fields);
-      HttpRequest request =
+      HttpRequest.Builder builder =
           HttpRequest.newBuilder(URI.create(address))
               .timeout(Duration.ofSeconds(120))
               .header("Content-Type", "application/json")
-              .header("X-Qits-User", requester == null || requester.isBlank() ? "qits-projects" : requester)
-              .header("X-Qits-Roles", "qits:admin")
-              .POST(HttpRequest.BodyPublishers.ofString(body))
-              .build();
+              .POST(HttpRequest.BodyPublishers.ofString(body));
+      Optional<String> authorization = bearer.authorization();
+      if (authorization.isPresent()) {
+        builder.header("Authorization", authorization.get());
+      } else {
+        builder
+            .header(
+                "X-Qits-User",
+                requester == null || requester.isBlank() ? "qits-projects" : requester)
+            .header("X-Qits-Roles", "qits:admin");
+      }
+      HttpRequest request = builder.build();
       HttpResponse<String> response =
           client.send(request, HttpResponse.BodyHandlers.ofString());
       if (response.statusCode() == 200) {

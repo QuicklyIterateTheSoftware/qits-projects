@@ -6,7 +6,9 @@ import eu.wohlben.qits.projects.entity.RepositoryName;
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.jboss.logging.Logger;
 
 /**
@@ -66,6 +68,22 @@ public class RepositoryNameRepository implements PanacheRepositoryBase<Repositor
    */
   public List<String> namesFor(Repository repository) {
     return find("repository.id", repository.id).stream().map(alias -> alias.name).toList();
+  }
+
+  /**
+   * Every repository named within {@code projectId}, as {@code repositoryId → name} — one query for
+   * a whole project's worth of rows, so a project-wide list can name its repositories without an
+   * alias lookup per row.
+   *
+   * <p>A repository addressed by several names keeps the first the table hands back, the same
+   * arbitrary-but-stable choice {@link #nameFor} makes; a repository with no alias is simply absent,
+   * and the caller decides what to show instead.
+   */
+  public Map<String, String> namesByRepository(String projectId) {
+    return find("project.id", projectId).stream()
+        .collect(
+            Collectors.toMap(
+                alias -> alias.repository.id, alias -> alias.name, (first, second) -> first));
   }
 
   /**

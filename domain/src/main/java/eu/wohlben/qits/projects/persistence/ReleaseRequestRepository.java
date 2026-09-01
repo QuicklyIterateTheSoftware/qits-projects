@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.persistence;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,11 +16,12 @@ import java.util.Optional;
 public class ReleaseRequestRepository implements PanacheRepositoryBase<ReleaseRequest, String> {
 
   /**
-   * The states a request can still move out of — what a new head re-arms and a sweep visits.
-   * REJECTED is in the set deliberately: a rejected request comes back to life when the fix lands,
-   * which is the merge-request shape of the whole aggregate.
+   * The states a request can still move out of — what a new head re-arms, what a sweep visits, and
+   * what a list of "pending work" means when nobody named a state. REJECTED is in the set
+   * deliberately: a rejected request comes back to life when the fix lands, which is the
+   * merge-request shape of the whole aggregate.
    */
-  private static final List<ReleaseRequest.State> OPEN =
+  public static final List<ReleaseRequest.State> OPEN =
       List.of(
           ReleaseRequest.State.PENDING,
           ReleaseRequest.State.READY,
@@ -49,5 +51,23 @@ public class ReleaseRequestRepository implements PanacheRepositoryBase<ReleaseRe
   /** One repository's requests, newest first. */
   public List<ReleaseRequest> listByRepo(String repoId) {
     return list("repoId = ?1 order by createdAt desc", repoId);
+  }
+
+  /**
+   * One project's requests in the named states, across every repository it owns, <b>most recently
+   * moved first</b>. Ordered by {@code updatedAt} rather than {@code createdAt} because this list is
+   * read as a worklist: a re-armed request that has been waiting a week is the live one, and burying
+   * it under a request created an hour ago and untouched since would be the wrong answer.
+   *
+   * <p>{@code projectId} is the column on the row, denormalised at creation. A repository with no
+   * project has null there and appears in no project's list, which is correct — nothing addresses it
+   * through a project.
+   */
+  public List<ReleaseRequest> listByProject(
+      String projectId, Collection<ReleaseRequest.State> states) {
+    if (states.isEmpty()) {
+      return List.of();
+    }
+    return list("projectId = ?1 and state in ?2 order by updatedAt desc", projectId, states);
   }
 }

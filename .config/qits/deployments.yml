@@ -54,11 +54,26 @@ host: projects
 # the *label*, so renaming this row to "Releases" would silently move it above Docs. Integers that
 # say what they mean are worth five one-line commits.
 #
+# `project.detail.Release Requests:3=release-requests` is the same row one scope up: the whole
+# project's open requests, at `/<project>/release-requests`. The per-repository rows above answer
+# "why has this repository not landed"; this one answers "what is waiting anywhere in the project",
+# which is a question you cannot ask a repository-shaped sidebar without opening every repository in
+# turn.
+#
+# It is a REGISTRY entry rather than something the SPA declares, and that is not a preference. The
+# Project node's children are drawn by the shared chrome (`QitsMainLayout.projectRows`): it renders
+# "Project setup" itself and then appends whatever the platform announces on the `project.detail`
+# slot. An application has no other way to put a row there, and the ordering the ask names — below
+# Editor — is expressible only against the positions the slot already carries.
+#
+# Position 3 IS free here, unlike the renumber below: the slot runs qits-workspaces' Workspaces 1 and
+# Editor 2 and stops. The row sorts under Editor and above nothing, which is the placement asked for.
+#
 # The `services.details.Api Docs` entry this file used to carry is still gone and is not coming
 # back: API documentation is a sub-item of Docs now (the docs app renders it from published @apidocs
 # bundles). This application's viewer route (`/<project>/services/<repo>/api-docs`, the live
 # swagger-ui frame) still answers; it is just not a sidebar row.
-navigation-entries: system.Overview:1, services.details.Release Requests:3=release-requests, daemons.details.Release Requests:3=release-requests, libs.details.Release Requests:3=release-requests, frontends.details.Release Requests:3=release-requests, cli.details.Release Requests:3=release-requests, images.details.Release Requests:3=release-requests
+navigation-entries: system.Overview:1, project.detail.Release Requests:3=release-requests, services.details.Release Requests:3=release-requests, daemons.details.Release Requests:3=release-requests, libs.details.Release Requests:3=release-requests, frontends.details.Release Requests:3=release-requests, cli.details.Release Requests:3=release-requests, images.details.Release Requests:3=release-requests
 
 # THREE DATABASES, because this application opens three datasources with three Flyway lineages:
 # `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and

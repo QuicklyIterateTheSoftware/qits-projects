@@ -18,11 +18,13 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -265,6 +267,67 @@ public class ReleaseRequests {
   }
 
   /**
+   * A whole project's requests, across every repository it owns, most recently moved first — the
+   * one read that answers "what is waiting on me here" without walking the repositories.
+   *
+   * <p><b>Open by default, because that is the question.</b> With no {@code state} the answer is
+   * {@link ReleaseRequestRepository#OPEN} — the requests that can still move. {@code all} answers
+   * every state, and a state's own name narrows to it. A word naming none is a {@link
+   * BadRequestException} rather than an empty list, so a typo in the filter never reads as "nothing
+   * is pending" — the same posture the epic board's status filter takes.
+   *
+   * <p>Each row is named with the repository's <b>current</b> alias rather than the one recorded
+   * when the request was made: a rename moves the name and leaves the row's snapshot behind, and a
+   * list that spans repositories is exactly where a stale name would mislead. The map is one query
+   * for the project, so naming the rows costs nothing per row. A repository with no alias keeps its
+   * snapshot, and then null — the caller shows the id.
+   */
+  public List<ReleaseRequestDto> listByProject(String projectId, String state) {
+    List<ReleaseRequest.State> states = statesFor(state);
+    return QuarkusTransaction.requiringNew()
+        .call(
+            () -> {
+              var current = names.namesByRepository(projectId);
+              return requests.listByProject(projectId, states).stream()
+                  .map(row -> dto(row, current.getOrDefault(row.repoId, row.repoName)))
+                  .toList();
+            });
+  }
+
+  /** The word "all", spelled once — every other value is a state name or a mistake. */
+  private static final String ALL_STATES = "all";
+
+  /**
+   * The states a {@code state} query means. Absent or blank is the open set; {@code all} is every
+   * state (spelled as the full set rather than as "no filter", so one query shape serves both); a
+   * state name, in any case, is itself.
+   */
+  private static List<ReleaseRequest.State> statesFor(String state) {
+    if (state == null || state.isBlank()) {
+      return ReleaseRequestRepository.OPEN;
+    }
+    String wanted = state.trim();
+    if (ALL_STATES.equalsIgnoreCase(wanted)) {
+      return List.of(ReleaseRequest.State.values());
+    }
+    for (ReleaseRequest.State candidate : ReleaseRequest.State.values()) {
+      if (candidate.name().equalsIgnoreCase(wanted)) {
+        return List.of(candidate);
+      }
+    }
+    throw new BadRequestException(
+        "Unknown release-request state: "
+            + state
+            + ". Name one of "
+            + Arrays.stream(ReleaseRequest.State.values())
+                .map(Enum::name)
+                .collect(Collectors.joining(", "))
+            + ", or '"
+            + ALL_STATES
+            + "' for every state; leaving it off answers the open ones.");
+  }
+
+  /**
    * A verdict landed for {@code (repoId, commitSha)} — re-evaluate what it may settle. Called by
    * the bus consumption right after the ledger write; the evaluation opens transactions of its own,
    * so the claim never spans this datasource.
@@ -460,9 +523,14 @@ public class ReleaseRequests {
   }
 
   private static ReleaseRequestDto dto(ReleaseRequest row) {
+    return dto(row, row.repoName);
+  }
+
+  private static ReleaseRequestDto dto(ReleaseRequest row, String repoName) {
     return new ReleaseRequestDto(
         row.id,
         row.repoId,
+        repoName,
         row.branch,
         row.commitSha,
         row.state.name(),

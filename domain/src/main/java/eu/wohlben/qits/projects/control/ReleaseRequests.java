@@ -307,6 +307,7 @@ public class ReleaseRequests {
                   snapshot.projectId,
                   snapshot.repoName,
                   snapshot.branch,
+                  snapshot.commitSha,
                   snapshot.summary,
                   snapshot.requester);
     } catch (RuntimeException e) {

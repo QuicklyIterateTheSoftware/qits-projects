@@ -55,6 +55,7 @@ public class HttpReleaseExecutor implements ReleaseExecutor {
       String projectId,
       String repoName,
       String branch,
+      String expectedSha,
       String summary,
       String requester) {
     if (workspacesUrl.isEmpty() || workspacesUrl.get().isBlank()) {
@@ -75,9 +76,16 @@ public class HttpReleaseExecutor implements ReleaseExecutor {
           workspacesUrl.get() + "/workspaces/api/branches/release?repositoryId=" + encode(repoId);
     }
     try {
-      String body =
-          MAPPER.writeValueAsString(
-              java.util.Map.of("branch", branch, "summary", summary == null ? "" : summary));
+      java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();
+      fields.put("branch", branch);
+      fields.put("summary", summary == null ? "" : summary);
+      if (expectedSha != null) {
+        // The pin: the gates evaluated this commit, and the door refuses (HEAD_MOVED) rather than
+        // landing a head that moved past it. Omitted rather than nulled for a door that predates
+        // the field.
+        fields.put("expectedSha", expectedSha);
+      }
+      String body = MAPPER.writeValueAsString(fields);
       HttpRequest request =
           HttpRequest.newBuilder(URI.create(address))
               .timeout(Duration.ofSeconds(120))

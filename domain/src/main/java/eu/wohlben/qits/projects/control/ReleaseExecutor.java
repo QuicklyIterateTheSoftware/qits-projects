@@ -15,10 +15,17 @@ public interface ReleaseExecutor {
   /**
    * Release {@code branch} of the repository the request names, acting as {@code requester}.
    * {@code projectId}/{@code repoName} are the public address pair; {@code repoId} rides along for
-   * the arms that can only speak storage ids.
+   * the arms that can only speak storage ids. {@code expectedSha} is the pin: the gates evaluated
+   * that commit, and the door refuses ({@code HEAD_MOVED}) rather than landing a head that moved
+   * past it.
    */
   Outcome release(
-      String repoId, String projectId, String repoName, String branch, String summary,
+      String repoId,
+      String projectId,
+      String repoName,
+      String branch,
+      String expectedSha,
+      String summary,
       String requester);
 
   /** What the door said: a version when it released, otherwise why it did not. */

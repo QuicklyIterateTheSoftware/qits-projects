@@ -141,6 +141,7 @@ public class ReleaseRequestFlowTest {
     assertEquals(repoId, call.repoId());
     assertEquals(projectId, call.projectId());
     assertEquals("work", call.branch());
+    assertEquals(sha, call.expectedSha(), "the door is pinned to the sha the gates evaluated");
     given()
         .get(base() + "/" + id)
         .then()

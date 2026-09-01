@@ -37,6 +37,8 @@ public class ReleaseRequestFlowTest {
 
   @Inject BuildStatusListener listener;
 
+  @Inject eu.wohlben.qits.projects.bus.ReleaseRequestHeadListener headListener;
+
   @Inject ReleaseRequests releaseRequests;
 
   @Inject FakeActiveBuilds activeBuilds;
@@ -196,32 +198,72 @@ public class ReleaseRequestFlowTest {
     assertEquals(1, executor.calls().size(), "the vacuous pass reaches the door exactly once");
   }
 
+  private void headMoved(String branch, String sha) {
+    headListener.onFrame(
+        new EventFrame(
+            UUID.randomUUID().toString(),
+            "SCMPublishCommit",
+            Instant.now(),
+            "{\"branch\":\"" + branch + "\",\"repoId\":\"" + repoId + "\",\"sha\":\"" + sha
+                + "\"}",
+            null,
+            null,
+            null));
+  }
+
   @Test
-  public void aRequestForANewShaWithdrawsTheOpenOne() {
+  public void oneOpenRequestPerBranchAndANewShaRearmsIt() {
     activeBuilds.answer(Optional.of(1));
     String first = create("work", sha());
-    String second = create("work", sha());
+    String secondSha = sha();
+    String second = create("work", secondSha);
 
-    assertEquals("WITHDRAWN", stateOf(first), "a request is about a sha, and the branch moved on");
-    assertEquals("PENDING", stateOf(second));
-    // The same (branch, sha) converges on the open request rather than piling up duplicates.
-    String third =
-        given()
-            .contentType(ContentType.JSON)
-            .body(
-                "{\"branch\":\"work\",\"commitSha\":\""
-                    + given()
-                        .get(base() + "/" + second)
-                        .then()
-                        .extract()
-                        .path("request.commitSha")
-                    + "\",\"summary\":\"again\"}")
-            .post(base())
-            .then()
-            .statusCode(200)
-            .extract()
-            .path("request.id");
-    assertEquals(second, third);
+    // The merge-request shape: the branch has ONE open request, and a new sha re-arms it.
+    assertEquals(first, second);
+    given()
+        .get(base() + "/" + first)
+        .then()
+        .body("request.state", equalTo("PENDING"))
+        .body("request.commitSha", equalTo(secondSha));
+  }
+
+  @Test
+  public void aPushMovingTheBranchRearmsTheGatesOntoTheNewHead() {
+    String gated = sha();
+    activeBuilds.answer(Optional.of(1));
+    String id = create("work", gated);
+
+    String newHead = sha();
+    headMoved("work", newHead);
+    given()
+        .get(base() + "/" + id)
+        .then()
+        .body("request.state", equalTo("PENDING"))
+        .body("request.commitSha", equalTo(newHead));
+
+    // The old head's verdict is now about a sha the request no longer gates — it settles nothing.
+    activeBuilds.answer(Optional.of(0));
+    verdict("BuildSuccessful", gated, "");
+    assertEquals("PENDING", stateOf(id), "a verdict for the outrun sha must not release the new one");
+
+    verdict("BuildSuccessful", newHead, "");
+    awaitState(id, "RELEASED");
+    assertEquals(newHead, executor.calls().get(0).expectedSha(), "what lands is what was re-gated");
+  }
+
+  @Test
+  public void aRejectedRequestComesBackToLifeWhenTheFixLands() {
+    String red = sha();
+    String id = create("work", red);
+    verdict("BuildFailed", red, ",\"outcome\":\"FAILED\"");
+    awaitState(id, "REJECTED");
+
+    String fixed = sha();
+    headMoved("work", fixed);
+    assertEquals("PENDING", stateOf(id), "the fix a rejection asks for is exactly what a push is");
+
+    verdict("BuildSuccessful", fixed, "");
+    awaitState(id, "RELEASED");
   }
 
   @Test

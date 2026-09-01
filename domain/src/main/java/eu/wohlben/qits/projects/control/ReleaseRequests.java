@@ -43,7 +43,7 @@ import org.jboss.logging.Logger;
  *       request pending rather than guessing — the sweep asks again.
  *   <li><b>Something vouches for the sha, or nothing ever will.</b> A gating SUCCESS is the vouch.
  *       With no verdict at all the request waits {@code qits.projects.release-requests.settle}
- *       from its creation and then passes vacuously — the CI-less repository's path, with the
+ *       from the sha's arming and then passes vacuously — the CI-less repository's path, with the
  *       window covering the race where the push's runs have not been accepted yet.
  * </ol>
  *
@@ -53,9 +53,9 @@ import org.jboss.logging.Logger;
  * the row, so a request executed twice over is settled by the first arrival — and the door's own
  * ALREADY_INTEGRATED refusal is the backstop behind that.
  *
- * <p><b>A request is about a sha</b> (the entity javadoc argues it). Supersede-on-create is the
- * consequence: a new request for a branch withdraws the open one, so "release what is on the branch
- * now" is always spelled as a fresh request about the new head.
+ * <p><b>A request tracks its branch</b> (the entity javadoc argues it): a new head re-arms the one
+ * open request per branch — gates invalidated, PENDING again, same row — so what is gated is always
+ * the sha on the row, and what lands is pinned to it.
  */
 @ApplicationScoped
 public class ReleaseRequests {
@@ -75,7 +75,7 @@ public class ReleaseRequests {
   @Inject Instance<ReleaseExecutor> executors;
 
   /**
-   * How long a request with no verdict at all waits before passing vacuously — long enough that a
+   * How long a request with no verdict at all waits after arming before passing vacuously — long enough that a
    * push's runs have been accepted and would show as active, short enough that a CI-less
    * repository's release is not meaningfully delayed.
    */
@@ -101,10 +101,11 @@ public class ReleaseRequests {
   }
 
   /**
-   * Create (or converge on) the request for one branch. The same {@code (branch, sha)} answers the
-   * open request rather than a duplicate; a different sha withdraws the open request — it was about
-   * a head the branch has moved past — and opens the next one. Evaluated once inline, so a sha the
-   * ledger already vouches for answers READY (and is handed to the worker) immediately.
+   * Create (or converge on) the request for one branch — at most one open request per branch, the
+   * merge-request shape. The same {@code (branch, sha)} answers the open request rather than a
+   * duplicate; a different sha <b>re-arms</b> the open request onto the new head (gates
+   * invalidated, back to PENDING, same row). Evaluated once inline, so a sha the ledger already
+   * vouches for answers READY (and is handed to the worker) immediately.
    */
   public ReleaseRequestDto request(
       String repoId, String branch, String commitSha, String summary, String requester) {
@@ -130,16 +131,16 @@ public class ReleaseRequests {
             .call(
                 () -> {
                   ReleaseRequest open = requests.findOpenByBranch(repoId, branch).orElse(null);
-                  if (open != null && open.commitSha.equals(commitSha)) {
-                    return open;
-                  }
                   if (open != null) {
-                    open.state = ReleaseRequest.State.WITHDRAWN;
-                    open.detail =
-                        "Superseded by a request about "
-                            + commitSha
-                            + " — a request is about a sha, and the branch moved past this one";
+                    if (!open.commitSha.equals(commitSha)) {
+                      rearm(open, commitSha, "re-armed by a new request naming " + commitSha);
+                    }
+                    open.summary = summary.trim();
+                    if (requester != null) {
+                      open.requester = requester;
+                    }
                     open.updatedAt = Instant.now();
+                    return open;
                   }
                   ReleaseRequest fresh = new ReleaseRequest();
                   fresh.id = UUID.randomUUID().toString();
@@ -152,12 +153,47 @@ public class ReleaseRequests {
                   fresh.requester = requester;
                   fresh.state = ReleaseRequest.State.PENDING;
                   fresh.createdAt = Instant.now();
+                  fresh.armedAt = fresh.createdAt;
                   fresh.updatedAt = fresh.createdAt;
                   requests.persist(fresh);
                   return fresh;
                 });
     evaluate(row.id);
     return dto(requireRequest(row.id));
+  }
+
+  /**
+   * The branch's head moved: re-arm the open request onto the new head, whatever state it was in —
+   * a PENDING request re-gates the new sha, a READY-but-unexecuted one must not land the old one,
+   * a REJECTED one comes back to life because the fix it asked for is exactly what a new push is,
+   * and a FAILED one retries against reality. Called from the SCMPublishCommit consumption; a
+   * branch with no open request is a no-op.
+   */
+  public void onBranchMoved(String repoId, String branch, String sha) {
+    String rearmed =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () -> {
+                  ReleaseRequest open = requests.findOpenByBranch(repoId, branch).orElse(null);
+                  if (open == null || open.commitSha.equals(sha)) {
+                    return null;
+                  }
+                  rearm(open, sha, "re-armed by a push moving the branch to " + sha);
+                  return open.id;
+                });
+    if (rearmed != null) {
+      evaluate(rearmed);
+    }
+  }
+
+  /** The one place a request changes sha: gates invalidated, PENDING again, the window restarted. */
+  private static void rearm(ReleaseRequest open, String sha, String note) {
+    open.commitSha = sha;
+    open.state = ReleaseRequest.State.PENDING;
+    open.detail = note;
+    open.version = null;
+    open.armedAt = Instant.now();
+    open.updatedAt = open.armedAt;
   }
 
   /** One request, as the API answers it. */
@@ -241,7 +277,7 @@ public class ReleaseRequests {
                     // Could not ask (or no probe configured): only the settle window may pass a
                     // sha nothing vouches for, and a vouched sha still waits for it — without the
                     // active answer, "no runs left" cannot be told from "runs still coming".
-                    if (Instant.now().isBefore(row.createdAt.plus(settle))) {
+                    if (Instant.now().isBefore(row.armedAt.plus(settle))) {
                       return false;
                     }
                   } else if (active > 0) {
@@ -249,7 +285,7 @@ public class ReleaseRequests {
                   }
                   boolean vouched =
                       verdicts.stream().anyMatch(v -> v.gating() && "SUCCESS".equals(v.status()));
-                  if (!vouched && Instant.now().isBefore(row.createdAt.plus(settle))) {
+                  if (!vouched && Instant.now().isBefore(row.armedAt.plus(settle))) {
                     return false;
                   }
                   row.state = ReleaseRequest.State.READY;

@@ -17,16 +17,19 @@ import java.util.UUID;
  * One ask to release a branch, settled by quality gates before anything merges — the asynchronous
  * replacement for calling the release door and hoping the build was green.
  *
- * <p><b>A request is about a sha.</b> The caller names {@code (branch, commitSha)} and every gate
- * evaluates that sha; a branch whose head moves past a pending request is not silently widened —
- * the open request is withdrawn when a new one arrives, and the caller re-requests. The execution
- * arm gains an expected-sha check when the door split lands; until then the small race between
- * "gated at X" and "the door merges the branch" is the same one the synchronous door always had.
+ * <p><b>A request tracks its branch, merge-request-shaped.</b> {@code commitSha} is the head
+ * currently being gated, and a new push to the branch <b>re-arms</b> the open request onto the new
+ * head: gates invalidated, state back to PENDING, the same row — pushing a fix onto a rejected
+ * request is the ordinary way to answer it, never a reason to open a second one. What a moving
+ * head must never do is release commits nothing gated, and it cannot: every gate evaluates {@code
+ * commitSha}, execution is pinned to it ({@code HEAD_MOVED} at the door otherwise), and the
+ * re-arm is what moves it.
  *
  * <p>The state machine: {@code PENDING → READY → RELEASED}; {@code PENDING → REJECTED} when a
- * gating verdict is red; {@code READY → FAILED → READY} around a mechanical execution failure; and
- * {@code PENDING|READY → WITHDRAWN} when superseded. Stored as a string with no check constraint,
- * the platform's usual reasoning.
+ * gating verdict is red; {@code READY → FAILED → READY} around a mechanical execution failure; a
+ * new head re-arms {@code REJECTED} and {@code FAILED} back to {@code PENDING}; {@code WITHDRAWN}
+ * is reserved for an explicit withdrawal. Stored as a string with no check constraint, the
+ * platform's usual reasoning.
  *
  * <p>A {@link CausedRow}: created on the request thread, so the stamp records what asked. Updates
  * (gate resolution, execution) are machine-driven and the stamp is insert-only — the verdicts that
@@ -62,8 +65,17 @@ public class ReleaseRequest extends PanacheEntityBase implements CausedRow {
   @Column(nullable = false)
   public String branch;
 
+  /** The head currently being gated — moved by a re-arm, never silently outrun. */
   @Column(name = "commit_sha", nullable = false)
   public String commitSha;
+
+  /**
+   * When {@link #commitSha} was armed — creation or the latest re-arm. The settle window's basis:
+   * a re-armed request waits its own window, and a no-ci push (which will never produce a verdict)
+   * still passes vacuously after it.
+   */
+  @Column(name = "armed_at", nullable = false)
+  public Instant armedAt;
 
   @Column(nullable = false)
   public String summary;

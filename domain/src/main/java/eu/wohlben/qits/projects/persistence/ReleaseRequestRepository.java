@@ -14,11 +14,19 @@ import java.util.Optional;
 @ApplicationScoped
 public class ReleaseRequestRepository implements PanacheRepositoryBase<ReleaseRequest, String> {
 
-  /** The states a request can still move out of — what a supersede withdraws and a sweep visits. */
+  /**
+   * The states a request can still move out of — what a new head re-arms and a sweep visits.
+   * REJECTED is in the set deliberately: a rejected request comes back to life when the fix lands,
+   * which is the merge-request shape of the whole aggregate.
+   */
   private static final List<ReleaseRequest.State> OPEN =
-      List.of(ReleaseRequest.State.PENDING, ReleaseRequest.State.READY, ReleaseRequest.State.FAILED);
+      List.of(
+          ReleaseRequest.State.PENDING,
+          ReleaseRequest.State.READY,
+          ReleaseRequest.State.FAILED,
+          ReleaseRequest.State.REJECTED);
 
-  /** The open request for one branch, if any — at most one by the supersede-on-create rule. */
+  /** The open request for one branch, if any — at most one by the converge-on-create rule. */
   public Optional<ReleaseRequest> findOpenByBranch(String repoId, String branch) {
     return find("repoId = ?1 and branch = ?2 and state in ?3", repoId, branch, OPEN)
         .firstResultOptional();

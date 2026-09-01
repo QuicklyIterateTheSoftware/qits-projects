@@ -17,8 +17,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
- * The {@link ReleaseExecutor} port over qits-workspaces' release door — the execution arm a READY
- * request is handed to. Hand-rolled {@code java.net.http}, the module's standing shape.
+ * The {@link ReleaseExecutor} port over qits-workspaces' <b>execution arm</b>
+ * ({@code /branches/execute-release}) — the door-split half only gated execution calls, so this
+ * address stays correct when the public door becomes request-creating. Hand-rolled {@code
+ * java.net.http}, the module's standing shape.
  *
  * <p>{@code qits.projects.release-requests.workspaces-url} is <b>unset shipped</b>; a deployment
  * names its tier's qits-workspaces. Unset, every execution refuses with a detail that says so — a
@@ -67,13 +69,13 @@ public class HttpReleaseExecutor implements ReleaseExecutor {
     if (projectId != null && repoName != null) {
       address =
           workspacesUrl.get()
-              + "/workspaces/api/branches/release?projectId="
+              + "/workspaces/api/branches/execute-release?projectId="
               + encode(projectId)
               + "&repositoryName="
               + encode(repoName);
     } else {
       address =
-          workspacesUrl.get() + "/workspaces/api/branches/release?repositoryId=" + encode(repoId);
+          workspacesUrl.get() + "/workspaces/api/branches/execute-release?repositoryId=" + encode(repoId);
     }
     try {
       java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();

@@ -16,7 +16,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public class RecordingReleaseExecutor implements ReleaseExecutor {
 
   public record Released(
-      String repoId, String projectId, String repoName, String branch, String summary,
+      String repoId,
+      String projectId,
+      String repoName,
+      String branch,
+      String expectedSha,
+      String summary,
       String requester) {}
 
   private final List<Released> calls = Collections.synchronizedList(new ArrayList<>());
@@ -38,9 +43,15 @@ public class RecordingReleaseExecutor implements ReleaseExecutor {
 
   @Override
   public Outcome release(
-      String repoId, String projectId, String repoName, String branch, String summary,
+      String repoId,
+      String projectId,
+      String repoName,
+      String branch,
+      String expectedSha,
+      String summary,
       String requester) {
-    calls.add(new Released(repoId, projectId, repoName, branch, summary, requester));
+    calls.add(
+        new Released(repoId, projectId, repoName, branch, expectedSha, summary, requester));
     return outcome.get();
   }
 }

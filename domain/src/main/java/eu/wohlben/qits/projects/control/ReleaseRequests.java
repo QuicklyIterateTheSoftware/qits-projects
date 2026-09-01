@@ -192,6 +192,7 @@ public class ReleaseRequests {
     open.state = ReleaseRequest.State.PENDING;
     open.detail = note;
     open.version = null;
+    open.retryable = false;
     open.armedAt = Instant.now();
     open.updatedAt = open.armedAt;
   }
@@ -226,7 +227,9 @@ public class ReleaseRequests {
   /**
    * The safety net under the event-driven path: re-evaluates every open request. It is what turns
    * "could not ask qits-ci" and "settle window not over yet" into delays instead of stalls, and
-   * what retries a FAILED execution.
+   * what retries a FAILED execution — a <b>retryable</b> one only. A refusal about the ask itself
+   * would answer the same on every knock (measured 2026-09-01: two doomed door calls every sweep,
+   * forever), so it stands with its detail until a re-arm changes the ask.
    */
   public void sweep() {
     List<ReleaseRequest> open =
@@ -234,7 +237,12 @@ public class ReleaseRequests {
     for (ReleaseRequest row : open) {
       switch (row.state) {
         case PENDING -> evaluate(row.id);
-        case READY, FAILED -> enqueueExecution(row.id);
+        case READY -> enqueueExecution(row.id);
+        case FAILED -> {
+          if (row.retryable) {
+            enqueueExecution(row.id);
+          }
+        }
         default -> {}
       }
     }
@@ -305,9 +313,10 @@ public class ReleaseRequests {
 
   /**
    * The door call, on the worker. The row is re-read first, so of two enqueues the second finds a
-   * settled request and does nothing; a refusal is FAILED with the door's words and the sweep
-   * retries it — deliberately including {@code ALREADY_INTEGRATED}-shaped answers, which an
-   * operator reads and withdraws rather than this code guessing at the door's vocabulary.
+   * settled request and does nothing; a refusal is FAILED with the door's words, and whether the
+   * sweep retries it is the executor's classification — a failure of the moment is, a refusal about
+   * the ask ({@code ALREADY_INTEGRATED}, a vanished branch) stands for an operator to read, revived
+   * by the next re-arm.
    */
   private void execute(String id) {
     ReleaseRequest snapshot =
@@ -330,7 +339,8 @@ public class ReleaseRequests {
           id,
           ReleaseRequest.State.FAILED,
           "No release executor is configured; the request stays and the sweep will retry",
-          null);
+          null,
+          true);
       return;
     }
     ReleaseExecutor.Outcome outcome;
@@ -352,18 +362,21 @@ public class ReleaseRequests {
       outcome = ReleaseExecutor.Outcome.refused("executor error: " + e.getMessage());
     }
     if (outcome.released()) {
-      settle(id, ReleaseRequest.State.RELEASED, null, outcome.version());
+      settle(id, ReleaseRequest.State.RELEASED, null, outcome.version(), false);
       LOG.infof(
           "Release request %s released %s@%s as %s",
           id, snapshot.repoName != null ? snapshot.repoName : snapshot.repoId, snapshot.branch,
           outcome.version());
     } else {
-      settle(id, ReleaseRequest.State.FAILED, outcome.detail(), null);
-      LOG.warnf("Release request %s was not released: %s", id, outcome.detail());
+      settle(id, ReleaseRequest.State.FAILED, outcome.detail(), null, outcome.retryable());
+      LOG.warnf(
+          "Release request %s was not released (%s): %s",
+          id, outcome.retryable() ? "will retry" : "final until re-armed", outcome.detail());
     }
   }
 
-  private void settle(String id, ReleaseRequest.State state, String detail, String version) {
+  private void settle(
+      String id, ReleaseRequest.State state, String detail, String version, boolean retryable) {
     QuarkusTransaction.requiringNew()
         .run(
             () ->
@@ -373,6 +386,7 @@ public class ReleaseRequests {
                         row -> {
                           row.state = state;
                           row.detail = detail;
+                          row.retryable = retryable;
                           if (version != null) {
                             row.version = version;
                           }
@@ -400,6 +414,7 @@ public class ReleaseRequests {
         row.requester,
         row.detail,
         row.version,
+        row.retryable,
         row.createdAt,
         row.updatedAt);
   }

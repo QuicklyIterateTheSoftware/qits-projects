@@ -267,14 +267,14 @@ public class ReleaseRequestFlowTest {
   }
 
   @Test
-  public void aRefusedExecutionIsFailedWithTheDoorsWordsAndTheSweepRetriesIt() {
+  public void aRetryableRefusalIsFailedWithTheDoorsWordsAndTheSweepRetriesIt() {
     String sha = sha();
-    executor.answer(ReleaseExecutor.Outcome.refused("the door said no"));
+    executor.answer(ReleaseExecutor.Outcome.refusedRetryable("the door could not be reached"));
     String id = create("work", sha);
     verdict("BuildSuccessful", sha, "");
     awaitState(id, "FAILED");
     String detail = given().get(base() + "/" + id).then().extract().path("request.detail");
-    assertTrue(detail.contains("the door said no"), detail);
+    assertTrue(detail.contains("could not be reached"), detail);
 
     executor.answer(ReleaseExecutor.Outcome.released("2026.831.90001"));
     releaseRequests.sweep();
@@ -283,5 +283,34 @@ public class ReleaseRequestFlowTest {
         .get(base() + "/" + id)
         .then()
         .body("request.version", equalTo("2026.831.90001"));
+  }
+
+  @Test
+  public void aFinalRefusalStandsUntilAPushChangesTheAsk() {
+    // The unbounded-loop fix: ALREADY_INTEGRATED-shaped answers repeat forever, so the sweep must
+    // leave them standing — and the re-arm is what revives them, because it changes the ask.
+    String sha = sha();
+    executor.answer(ReleaseExecutor.Outcome.refused("409: ALREADY_INTEGRATED"));
+    String id = create("work", sha);
+    verdict("BuildSuccessful", sha, "");
+    awaitState(id, "FAILED");
+    assertEquals(1, executor.calls().size());
+
+    executor.answer(ReleaseExecutor.Outcome.released("2026.831.90002"));
+    releaseRequests.sweep();
+    releaseRequests.sweep();
+    // The worker is asynchronous: give a wrongly-enqueued execution time to show up as a call.
+    try {
+      Thread.sleep(300);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    assertEquals("FAILED", stateOf(id), "a final refusal is not knocked on again");
+    assertEquals(1, executor.calls().size(), "the sweep made no further door call");
+
+    String fixed = sha();
+    headMoved("work", fixed);
+    verdict("BuildSuccessful", fixed, "");
+    awaitState(id, "RELEASED");
   }
 }

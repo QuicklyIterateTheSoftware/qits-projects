@@ -7,6 +7,8 @@ import java.time.Instant;
  * {@code READY}, {@code RELEASED}, {@code REJECTED}, {@code FAILED} or {@code WITHDRAWN} today, and
  * the vocabulary may grow. {@code detail} is the sentence explaining a request that is not simply
  * pending or released; {@code version} is the calver the release door answered with, once it did.
+ * {@code retryable} says, of a FAILED request, whether the sweep keeps retrying the execution or
+ * the refusal stands until a push re-arms it.
  */
 public record ReleaseRequestDto(
     String id,
@@ -18,5 +20,6 @@ public record ReleaseRequestDto(
     String requester,
     String detail,
     String version,
+    boolean retryable,
     Instant createdAt,
     Instant updatedAt) {}

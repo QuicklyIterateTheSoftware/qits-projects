@@ -26,7 +26,8 @@ import java.util.UUID;
  * re-arm is what moves it.
  *
  * <p>The state machine: {@code PENDING → READY → RELEASED}; {@code PENDING → REJECTED} when a
- * gating verdict is red; {@code READY → FAILED → READY} around a mechanical execution failure; a
+ * gating verdict is red; {@code READY → FAILED → READY} around a mechanical execution failure —
+ * retried by the sweep only while {@link #retryable} says asking again can change the answer; a
  * new head re-arms {@code REJECTED} and {@code FAILED} back to {@code PENDING}; {@code WITHDRAWN}
  * is reserved for an explicit withdrawal. Stored as a string with no check constraint, the
  * platform's usual reasoning.
@@ -89,6 +90,15 @@ public class ReleaseRequest extends PanacheEntityBase implements CausedRow {
 
   /** Why a request is REJECTED, FAILED or WITHDRAWN — a sentence for the person who asked. */
   @Column public String detail;
+
+  /**
+   * On a FAILED request: whether the sweep retries the execution. The executor classifies — a
+   * failure of the moment (unreachable, 5xx, the door's retry-me 409s) is retried; a refusal about
+   * the ask itself (ALREADY_INTEGRATED, a vanished branch) answers the same forever and waits for a
+   * re-arm instead. Meaningless in every other state.
+   */
+  @Column(nullable = false)
+  public boolean retryable;
 
   /** The calver the release door answered with, once RELEASED. */
   @Column public String version;

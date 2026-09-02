@@ -35,9 +35,51 @@ application: qits-projects
 
 routes: /projects
 host: projects
-# TWO placements, and the second is on all six archetype slots.
+# FOUR KINDS OF PLACEMENT, and two of them claim `project.detail` — one application, two rows under
+# one heading, which is what makes this file the first user of the lifted claim rule below.
 #
 # `system.Overview:1` is the environment's own door, first in the global group.
+#
+# `project.detail.Epics:1=epics` is the project's plan, at `/<project>/epics`, and it is FIRST under
+# the Project node because a plan is what a project mostly is — everything else under that node is a
+# way of working on it. The board used to BE the bare project address, which meant it had no row at
+# all and a reader found it only by knowing that `/<project>` rendered it; the board moved one
+# segment down to `epics` and the project address became a hub, and this entry is how the board
+# acquired a name in the chrome.
+#
+# `project.detail.Release Requests:4=release-requests` is the whole project's open requests, at
+# `/<project>/release-requests`. The per-repository rows below answer "why has this repository not
+# landed"; this one answers "what is waiting anywhere in the project", which is a question you
+# cannot ask a repository-shaped sidebar without opening every repository in turn.
+#
+# THE SECOND CLAIM ON ONE SLOT IS THE POINT, and it was refused until 2026-08-31: the deployer's
+# DeploymentSpecParser, the edge's EdgeRoutes and the `edge_navigation_entry` primary key all
+# admitted one entry per slot per application, so a file shaped like this one made the WHOLE spec
+# unreadable and the deployment failed while CI stayed green. All three key the claim on the
+# `(slot, label)` pair now — a slot is a heading the shell draws, not a seat one application
+# occupies — and the ui-components shell renders two same-application rows correctly since
+# 2026.831.134647 (row keys carry the label). What is still refused is the same label twice in one
+# slot, which is one row asked for twice.
+#
+# BOTH PROJECT ROWS ARE REGISTRY ENTRIES rather than something the SPA declares, and that is not a
+# preference. The Project node's children are drawn by the shared chrome
+# (`QitsMainLayout.projectRows`): it renders "Project setup" itself and then appends whatever the
+# platform announces on the `project.detail` slot. An application has no other way to put a row
+# there, and an ordering stated against the rows qits-workspaces already publishes is expressible
+# only in that slot's own integers.
+#
+# THE PROJECT GROUP READS Epics 1, Workspaces 2, Editor 3, Release Requests 4. qits-workspaces moved
+# its pair 1,2 -> 2,3 in the same change so that Epics could take 1. Deliberate integers and no ties,
+# for the reason the renumber below gives: the edge breaks a tie by label and then by application, so
+# two rows sharing a number would make the order an accident of the LABEL and renaming one would
+# silently reorder the group.
+#
+# THIS SPA'S OWN HUB PAGE DOES NOT DRAW THEM TWICE. `ProjectPage` composes a card per
+# `project.detail` entry and drops the entries whose `app` is this application: Epics and Release
+# requests are `routerLink`s it declares itself, so drawing them from the registry as well would put
+# one destination on the page twice — once as a router hop and once as a full page load of this very
+# host. The drop is by application, so it covers a second entry the moment one exists;
+# `project-page.spec.ts` states that with an Epics entry in its fixture tree.
 #
 # `<category>.details.Release Requests:3=release-requests` is the per-repository row, and it opens
 # this SPA's `/<project>/<group>/<repo>/release-requests` — the repository's release requests, which
@@ -54,26 +96,15 @@ host: projects
 # the *label*, so renaming this row to "Releases" would silently move it above Docs. Integers that
 # say what they mean are worth five one-line commits.
 #
-# `project.detail.Release Requests:3=release-requests` is the same row one scope up: the whole
-# project's open requests, at `/<project>/release-requests`. The per-repository rows above answer
-# "why has this repository not landed"; this one answers "what is waiting anywhere in the project",
-# which is a question you cannot ask a repository-shaped sidebar without opening every repository in
-# turn.
-#
-# It is a REGISTRY entry rather than something the SPA declares, and that is not a preference. The
-# Project node's children are drawn by the shared chrome (`QitsMainLayout.projectRows`): it renders
-# "Project setup" itself and then appends whatever the platform announces on the `project.detail`
-# slot. An application has no other way to put a row there, and the ordering the ask names — below
-# Editor — is expressible only against the positions the slot already carries.
-#
-# Position 3 IS free here, unlike the renumber below: the slot runs qits-workspaces' Workspaces 1 and
-# Editor 2 and stops. The row sorts under Editor and above nothing, which is the placement asked for.
+# The per-repository row and the project one share a LABEL and not a slot, which is exactly what the
+# pair-shaped claim permits: seven entries spell "Release Requests" and no two of them are in one
+# slot.
 #
 # The `services.details.Api Docs` entry this file used to carry is still gone and is not coming
 # back: API documentation is a sub-item of Docs now (the docs app renders it from published @apidocs
 # bundles). This application's viewer route (`/<project>/services/<repo>/api-docs`, the live
 # swagger-ui frame) still answers; it is just not a sidebar row.
-navigation-entries: system.Overview:1, project.detail.Release Requests:3=release-requests, services.details.Release Requests:3=release-requests, daemons.details.Release Requests:3=release-requests, libs.details.Release Requests:3=release-requests, frontends.details.Release Requests:3=release-requests, cli.details.Release Requests:3=release-requests, images.details.Release Requests:3=release-requests
+navigation-entries: system.Overview:1, project.detail.Epics:1=epics, project.detail.Release Requests:4=release-requests, services.details.Release Requests:3=release-requests, daemons.details.Release Requests:3=release-requests, libs.details.Release Requests:3=release-requests, frontends.details.Release Requests:3=release-requests, cli.details.Release Requests:3=release-requests, images.details.Release Requests:3=release-requests
 
 # THREE DATABASES, because this application opens three datasources with three Flyway lineages:
 # `projects` (domain/), `epics` (epics/) and `eventstream` (the qits-eventstream jar's outbox and

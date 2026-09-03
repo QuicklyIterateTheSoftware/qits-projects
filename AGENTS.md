@@ -693,10 +693,15 @@ Where it differs from the agent harness, each difference is the domain line:
   lights the repository-scoped narration (pull/push/sync leases) that ran unnarrated before, and
   `api/TechnicalProcessEventsController` is the SSE controller the port was waiting for. Everything
   in it is this process's memory; an evicted id answers the 404 the frontend reads as "expired".
-- **The image pin rides qits-workspace-daemon's releases**: that repo's release publishes
-  `qits/workspace`, and `.config/qits/ci-event-upstream-workspace-daemon.yml` moves
-  `qits.projects.refinement-image-version` the same way the SPA follow moves the webui gitlink.
-  Deployments can override it as `QITS_PROJECTS_REFINEMENT_IMAGE_VERSION`.
+- **The image pin rides qits-workspace-daemon's releases through qits-configuration**: that repo's
+  release publishes `qits/workspace`, qits-configuration's `bus/SoftwareReleaseListener` consumes the
+  `SoftwareRelease` and writes this application's `QITS_PROJECTS_REFINEMENT_IMAGE_VERSION` extra, and
+  the deployer injects it at the next deploy. SmallRye maps it onto
+  `qits.projects.refinement-image-version` and lets the env win, so the committed property is the
+  clone-alone default and nothing rebuilds this service to move a version.
+  `.config/qits/ci-event-upstream-workspace-daemon.yml` used to carry that follow by rewriting the
+  property and releasing this service; it was retired on 2026-09-03, the way the library follows went
+  to qits-platform-maintenance on 2026-09-02/03.
 - **Git reaches the edge** (`qits.projects.refinement-git-url`, default
   `http://qits-platform-edge:8080`): the workspace image's credential helper speaks oauth2 Basic and
   the edge rewrites it to a Bearer, exactly as a workspace's does. The three registry keys

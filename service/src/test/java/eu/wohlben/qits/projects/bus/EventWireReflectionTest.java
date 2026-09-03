@@ -73,12 +73,13 @@ public class EventWireReflectionTest {
             SCMRelease.class,
             BuildStatusListener.BuildVerdictPayload.class,
             DeploymentActiveListener.DeploymentActivePayload.class,
+            SoftwareReleaseListener.SoftwareReleasePayload.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records, the build-verdict payload and the deployment-active payload in,"
-            + " RepositoryRenamed, ReleaseRequestChanged and SCMRelease out, the PUT body, the"
-            + " frame — a twelfth wire type means a line here");
+        "the four SCM records and the three bound consumption payloads in, RepositoryRenamed,"
+            + " ReleaseRequestChanged and SCMRelease out, the PUT body, the frame — a thirteenth"
+            + " wire type means a line here");
   }
 
   /**
@@ -169,7 +170,8 @@ public class EventWireReflectionTest {
       java.util.Map.of(
           "BuildSuccessful", BuildStatusListener.BuildVerdictPayload.class,
           "BuildFailed", BuildStatusListener.BuildVerdictPayload.class,
-          "DeploymentActive", DeploymentActiveListener.DeploymentActivePayload.class);
+          "DeploymentActive", DeploymentActiveListener.DeploymentActivePayload.class,
+          "SoftwareRelease", SoftwareReleaseListener.SoftwareReleasePayload.class);
 
   @Test
   public void everyDurableListenersSignatureNamesARegisteredType() {
@@ -220,6 +222,18 @@ public class EventWireReflectionTest {
     assertTrue(
         listeners.stream().anyMatch(DeploymentActiveListener.class::isInstance),
         "a removed listener is a silent one — and here it is main that stops being finalized");
+  }
+
+  /**
+   * The temporary half of the publish phase. Its absence is a library that releases, publishes and
+   * never finalizes its own {@code main} — and every later release request of it folding a tag that
+   * is already shipping, for ever.
+   */
+  @Test
+  public void theSoftwareReleaseListenerIsDiscoverableAsADurableListener() {
+    assertTrue(
+        listeners.stream().anyMatch(SoftwareReleaseListener.class::isInstance),
+        "a removed listener is a silent one — and here it is every non-deployable repository");
   }
 
   @Test

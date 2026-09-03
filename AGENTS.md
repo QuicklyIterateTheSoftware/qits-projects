@@ -204,6 +204,17 @@ HTTP server they never wanted, because vertx-http rides in with the jar. That is
   A conflict there is an ERROR on every attempt: `main` only advances through this path and every
   release folds the pending tags in, so a released tag that will not merge is an anomaly rather than
   traffic.
+- **`SoftwareReleaseListener` is the same phase's TEMPORARY second gate, and its whole content is
+  one question.** A library deploys nothing, so `DeploymentActive` never comes for it and its `main`
+  would never move again — so on the first artifact published out of a release, the released tag's
+  tree is read and a repository declaring no `.config/qits/deployments.yml` is finalized there and
+  then. **The fork lives in exactly one place** (`ReleaseFinalization.deployability`), it reads the
+  TREE and not the file (a tree listing separates "declares nothing" from "could not be asked";
+  `file` answers "failed" to both), and a repository that *does* declare a deployment is left
+  entirely alone — merging on publication would put the commit on `main` before the deployment, the
+  ordering this epic exists to fix. It goes when qits-maintenance becomes the lifecycle for
+  libraries and a consumer's bump becomes the deployment it already is. One throw and one only: a
+  git host that could not answer, which is the seam's own "ask me again".
 - **`bus/EventWireReflection` is the native-image registration**, and `EventWireReflectionTest`
   guards its completeness against the registered listener beans. Read that class's javadoc before
   adding a wire type; the failure it prevents is invisible to every JVM test by construction.

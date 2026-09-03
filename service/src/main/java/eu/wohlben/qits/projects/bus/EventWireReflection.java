@@ -60,11 +60,18 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * a native binary that subscribes to every deployment and cannot read one — and {@code main} would
  * never be finalized again, silently, with the JVM suite green.
  *
- * <p>{@link BuildStatusListener.BuildVerdictPayload} is the one <em>bound</em>
- * consumption: {@code BuildStatusListener} reads qits-ci's {@code BuildSuccessful}/{@code
- * BuildFailed} through {@code CanonicalJson.payloadTo} rather than {@code readTree}, so the record
- * it binds is on the wire path exactly the way the qits-deployments subscriber's payload record is
- * in that service's own registration.
+ * <p>{@link SoftwareReleaseListener.SoftwareReleasePayload} is the third bound consumption, for the
+ * same reason as the second: qits-ci's {@code ci-events} module is another context's vocabulary and
+ * this service depends on it nowhere, so the type this binary deserializes is the local record. Its
+ * absence is a library whose {@code main} is never finalized again, silently.
+ *
+ * <p>{@link BuildStatusListener.BuildVerdictPayload} is the <em>first</em> of those three bound
+ * consumptions and the pattern the other two follow: {@code BuildStatusListener} reads qits-ci's
+ * {@code BuildSuccessful}/{@code BuildFailed} through {@code CanonicalJson.payloadTo} rather than
+ * {@code readTree}, so the record it binds is on the wire path exactly the way the qits-deployments
+ * subscriber's payload record is in that service's own registration. <b>The rule that generalises:
+ * a listener that BINDS registers its record; one that only walks the payload with {@code readTree}
+ * still registers the type it consumes.</b>
  *
  * <p><b>And why a mix-in by name.</b> {@code CanonicalJson$QitsEventMixin} keeps {@code QitsEvent}'s
  * declared methods — {@code eventId} above all — out of a payload, and Jackson finds its {@code
@@ -88,6 +95,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       SCMRelease.class,
       BuildStatusListener.BuildVerdictPayload.class,
       DeploymentActiveListener.DeploymentActivePayload.class,
+      SoftwareReleaseListener.SoftwareReleasePayload.class,
       EventEnvelope.class,
       EventFrame.class
     },

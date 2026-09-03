@@ -96,7 +96,7 @@
              cached maven layer — so the resolution the pin governs was never actually performed. A
              green build that resolved nothing is not evidence that it could, which is the whole
              reason to name a release here. qits-githost cut one on 2026-08-12 and this is it. -->
-        <qits.eventstream.version>2026.825.74539</qits.eventstream.version>
+        <qits.eventstream.version>2026.902.231856</qits.eventstream.version>
         <qits.githost-events.version>2026.820.65553</qits.githost-events.version>
 
         <!-- qits-containers' client jar: the orchestrator that owns every container this service
@@ -107,7 +107,7 @@
              PINNED AT A RELEASED CALVER, never a snapshot, for the reason spelled out above the
              vocabulary jar: a snapshot that resolves only from a warm docker layer and a
              developer's ~/.m2 is a red release waiting for whoever next edits a file. -->
-        <qits.containers-client.version>2026.822.190148</qits.containers-client.version>
+        <qits.containers-client.version>2026.901.182959</qits.containers-client.version>
 
         <!-- qits-integrations-quarkus ships two jars this repo consumes, released together, so they
              carry ONE version property rather than drifting apart:
@@ -123,7 +123,7 @@
              The version moves with that repository rather than with the eventstream jar the rules
              judge — deliberately, since the rules name every type they judge as a string and depend
              on neither. -->
-        <qits.integrations-quarkus.version>2026.817.175344</qits.integrations-quarkus.version>
+        <qits.integrations-quarkus.version>2026.902.53026</qits.integrations-quarkus.version>
 
         <!-- The user-story framework (test scope): every *IT under service/src/test/.../stories/
              is a userflow, plus TokenValidationBootstrapIT, so a run of them regenerates
@@ -137,12 +137,12 @@
              is deleted here rather than kept in step. It carries its OWN version rather than riding
              qits.integrations-quarkus.version above, because it is released out of
              libs/qits-userflows and not out of that reactor. -->
-        <qits.userflows.version>2026.829.201516</qits.userflows.version>
+        <qits.userflows.version>2026.902.53027</qits.userflows.version>
         <!-- The recording service mocks the same IT boots against (the generic MockService plus
              idp.MockIdp), released out of libs/qits-integrations-quarkus like qits-arch-rules and
              qits-db-core above — so the same-string policy applies the day this repo consumes a
              newer reactor, and until then it names the release the mock idp actually shipped in. -->
-        <qits.service-mock.version>2026.829.201505</qits.service-mock.version>
+        <qits.service-mock.version>2026.902.53026</qits.service-mock.version>
         <qits.maven.repository.url>http://registry.dev.localhost:8080/artifacts/maven/maven</qits.maven.repository.url>
 
         <!-- The container ITs need docker and a built qits/workspace image, which a fresh clone has

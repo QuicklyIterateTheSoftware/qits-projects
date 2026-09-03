@@ -42,7 +42,12 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * is exactly qits-ci's measured failure — every publish dying inside {@code CanonicalJson} with "no
  * serializer found", green JVM suite and all — written down here before it can happen again.
  *
- * <p>{@link BuildStatusListener.BuildVerdictPayload} is the eighth and the one <em>bound</em>
+ * <p>{@link ReleaseRequestChanged} is the second <em>published</em> one, and the one the release
+ * flow rests on: a request's backing branch is written by qits-githost's merge primitive, which
+ * fires no post-receive, so this announcement is the only thing that tells qits-ci a fold exists to
+ * build. An unregistered payload here is a release flow that silently never starts.
+ *
+ * <p>{@link BuildStatusListener.BuildVerdictPayload} is the one <em>bound</em>
  * consumption: {@code BuildStatusListener} reads qits-ci's {@code BuildSuccessful}/{@code
  * BuildFailed} through {@code CanonicalJson.payloadTo} rather than {@code readTree}, so the record
  * it binds is on the wire path exactly the way the qits-deployments subscriber's payload record is
@@ -66,6 +71,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       SCMDeleteBranch.class,
       SCMDeleteTag.class,
       RepositoryRenamed.class,
+      ReleaseRequestChanged.class,
       BuildStatusListener.BuildVerdictPayload.class,
       EventEnvelope.class,
       EventFrame.class

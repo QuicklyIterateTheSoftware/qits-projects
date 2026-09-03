@@ -9,6 +9,16 @@ components:
       properties:
         technicalProcessId:
           type: string
+    AddReleaseRequestSource:
+      type: object
+      required:
+      - branch
+      properties:
+        branch:
+          type: string
+          pattern: \S
+        requester:
+          type: string
     AdoptProjectRepositoryRequest:
       type: object
       required:
@@ -182,6 +192,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CommitDto"
+    ConflictedPath:
+      type: object
+      properties:
+        path:
+          type: string
+        head:
+          type: string
+        headSha:
+          type: string
+        reason:
+          type: string
     ContainerView:
       type: object
       properties:
@@ -247,13 +268,9 @@ components:
       type: object
       required:
       - branch
-      - commitSha
       - summary
       properties:
         branch:
-          type: string
-          pattern: \S
-        commitSha:
           type: string
           pattern: \S
         summary:
@@ -485,6 +502,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AttachmentDto"
+    MergeConflictDto:
+      type: object
+      properties:
+        target:
+          type: string
+        conflicts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConflictedPath"
     NewAttachment:
       type: object
       required:
@@ -631,9 +657,13 @@ components:
           type: string
         repoName:
           type: string
-        branch:
+        backingBranch:
           type: string
-        commitSha:
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReleaseRequestSourceDto"
+        mergedSha:
           type: string
         state:
           type: string
@@ -643,6 +673,8 @@ components:
           type: string
         detail:
           type: string
+        conflict:
+          $ref: "#/components/schemas/MergeConflictDto"
         version:
           type: string
         retryable:
@@ -651,6 +683,17 @@ components:
           $ref: "#/components/schemas/Instant"
         updatedAt:
           $ref: "#/components/schemas/Instant"
+    ReleaseRequestSourceDto:
+      type: object
+      properties:
+        kind:
+          type: string
+        name:
+          type: string
+        ref:
+          type: string
+        implicit:
+          type: boolean
     RenameDesign:
       type: object
       required:
@@ -897,14 +940,19 @@ components:
     Response34:
       type: object
       properties:
+        request:
+          $ref: "#/components/schemas/ReleaseRequestDto"
+    Response35:
+      type: object
+      properties:
         technicalProcessId:
           type: string
-    Response35:
+    Response36:
       type: object
       properties:
         repository:
           $ref: "#/components/schemas/RepositoryDto"
-    Response36:
+    Response37:
       type: object
       properties:
         repository:
@@ -913,11 +961,6 @@ components:
           type: string
         changed:
           type: boolean
-    Response37:
-      type: object
-      properties:
-        technicalProcessId:
-          type: string
     Response38:
       type: object
       properties:
@@ -926,10 +969,8 @@ components:
     Response39:
       type: object
       properties:
-        repositories:
-          type: array
-          items:
-            $ref: "#/components/schemas/RepositoryCoordinatesDto"
+        technicalProcessId:
+          type: string
     Response4:
       type: object
       properties:
@@ -938,13 +979,15 @@ components:
     Response40:
       type: object
       properties:
-        repository:
-          $ref: "#/components/schemas/RepositoryDto"
+        repositories:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepositoryCoordinatesDto"
     Response41:
       type: object
       properties:
-        success:
-          type: boolean
+        repository:
+          $ref: "#/components/schemas/RepositoryDto"
     Response42:
       type: object
       properties:
@@ -953,25 +996,30 @@ components:
     Response43:
       type: object
       properties:
+        success:
+          type: boolean
+    Response44:
+      type: object
+      properties:
         builds:
           type: array
           items:
             $ref: "#/components/schemas/CommitBuildStatusDto"
-    Response44:
+    Response45:
       type: object
       properties:
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchDto"
-    Response45:
+    Response46:
       type: object
       properties:
         repositoryId:
           type: string
         scheduled:
           type: boolean
-    Response46:
+    Response47:
       type: object
       properties:
         technicalProcessId:
@@ -1844,8 +1892,8 @@ paths:
       summary: "The project's release requests, across all of its repositories"
       description: "Most recently moved first. With no state the answer is the open\
         \ requests — the work still waiting on somebody. Pass state=all for the whole\
-        \ history, or a state name (PENDING, READY, RELEASED, REJECTED, FAILED, WITHDRAWN)\
-        \ to narrow to one."
+        \ history, or a state name (PENDING, READY, RELEASED, REJECTED, FAILED, CONFLICTED,\
+        \ WITHDRAWN) to narrow to one."
       parameters:
       - name: projectId
         in: path
@@ -2725,7 +2773,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response39"
+                $ref: "#/components/schemas/Response40"
         "401":
           description: Not Authorized
         "403":
@@ -2765,7 +2813,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response36"
+                $ref: "#/components/schemas/Response37"
         "400":
           description: "An invalid name, a name another repository in this project\
             \ already answers to, or the project's wrapper repository (whose name\
@@ -2794,7 +2842,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response40"
+                $ref: "#/components/schemas/Response41"
         "401":
           description: Not Authorized
         "403":
@@ -2826,7 +2874,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response42"
+                $ref: "#/components/schemas/Response43"
         "401":
           description: Not Authorized
         "403":
@@ -2850,7 +2898,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response46"
+                $ref: "#/components/schemas/Response47"
         "401":
           description: Not Authorized
         "403":
@@ -2879,7 +2927,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response45"
+                $ref: "#/components/schemas/Response46"
         "404":
           description: No such repository
         "401":
@@ -2911,7 +2959,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response41"
+                $ref: "#/components/schemas/Response42"
         "401":
           description: Not Authorized
         "403":
@@ -2935,7 +2983,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response44"
+                $ref: "#/components/schemas/Response45"
         "401":
           description: Not Authorized
         "403":
@@ -3000,7 +3048,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response43"
+                $ref: "#/components/schemas/Response44"
         "401":
           description: Not Authorized
         "403":
@@ -3105,7 +3153,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response35"
+                $ref: "#/components/schemas/Response36"
         "401":
           description: Not Authorized
         "403":
@@ -3132,7 +3180,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response38"
+                $ref: "#/components/schemas/Response39"
         "401":
           description: Not Authorized
         "403":
@@ -3157,7 +3205,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response37"
+                $ref: "#/components/schemas/Response38"
         "401":
           description: Not Authorized
         "403":
@@ -3196,10 +3244,13 @@ paths:
         - qits:system
     post:
       summary: Ask for a branch to be released once its builds are green
-      description: "Creates (or converges on) the open release request for the branch.\
-        \ The request is about the named sha: gates evaluate that commit, and a request\
-        \ for a different sha withdraws the open one. Poll the request until it is\
-        \ RELEASED, REJECTED or FAILED; detail says why for the latter two."
+      description: "Creates (or converges on) the open release request the branch\
+        \ participates in. The request's sources are main plus the named branch, plus\
+        \ every released tag of the repository not yet merged to main; they are folded\
+        \ onto release/<id> and it is that MERGE the gates evaluate — mergedSha on\
+        \ the answer. A branch that already participates in an open request answers\
+        \ that request rather than opening a second. Poll until RELEASED, REJECTED,\
+        \ CONFLICTED or FAILED; detail says why, and conflict says what to resolve."
       parameters:
       - name: repoId
         in: path
@@ -3256,6 +3307,50 @@ paths:
         "403":
           description: Not Allowed
       summary: Get
+      tags:
+      - Release Request Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+  /projects/api/repositories/{repoId}/release-requests/{requestId}/sources:
+    post:
+      summary: Add a branch to an open release request
+      description: "The request is re-folded with the new source and, if the fold\
+        \ produces a new commit, the gates are re-armed onto it. Idempotent: a branch\
+        \ already on the request answers the request unchanged. A RELEASED or WITHDRAWN\
+        \ request answers 409. Implicit tag sources are not addable — they are derived\
+        \ from what the repository has in flight."
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddReleaseRequestSource"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response34"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+        "400":
+          description: Bad Request
       tags:
       - Release Request Controller
       security:
@@ -3320,7 +3415,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Response34"
+                $ref: "#/components/schemas/Response35"
         "401":
           description: Not Authorized
         "403":
@@ -3466,4 +3561,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.901.171149
+  version: 2026.903.111721

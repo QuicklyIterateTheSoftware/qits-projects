@@ -51,6 +51,9 @@ public class EventWireReflectionTest {
    */
   @Inject Instance<RepositoryRenamedAnnouncer> shippedAnnouncer;
 
+  /** The same, for the second publisher — by its own type, past its {@code @DefaultBean}. */
+  @Inject Instance<ReleaseRequestChangedAnnouncer> shippedReleaseAnnouncer;
+
   @Test
   public void theRegisteredTargetsAreExactlyTheTypesThatCrossTheWire() {
     RegisterForReflection registration =
@@ -63,12 +66,14 @@ public class EventWireReflectionTest {
             SCMDeleteBranch.class,
             SCMDeleteTag.class,
             RepositoryRenamed.class,
+            ReleaseRequestChanged.class,
             BuildStatusListener.BuildVerdictPayload.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records and the build-verdict payload in, RepositoryRenamed out, the PUT"
-            + " body, the frame — a ninth wire type means a line here");
+        "the four SCM records and the build-verdict payload in, RepositoryRenamed and"
+            + " ReleaseRequestChanged out, the PUT body, the frame — a tenth wire type means a"
+            + " line here");
   }
 
   /**
@@ -79,11 +84,21 @@ public class EventWireReflectionTest {
    * rather than delaying it.
    */
   @Test
-  public void thePublishedEventTypeIsRegistered() {
+  public void thePublishedEventTypesAreRegistered() {
+    Set<Class<?>> targets =
+        Set.of(EventWireReflection.class.getAnnotation(RegisterForReflection.class).targets());
     assertTrue(
-        Set.of(EventWireReflection.class.getAnnotation(RegisterForReflection.class).targets())
-            .contains(RepositoryRenamed.class),
+        targets.contains(RepositoryRenamed.class),
         "RepositoryRenamedAnnouncer publishes this; an unregistered payload is a lost announcement");
+    assertTrue(
+        targets.contains(ReleaseRequestChanged.class),
+        "ReleaseRequestChangedAnnouncer publishes this, and it is the only thing that tells qits-ci"
+            + " a release request's fold exists to build");
+  }
+
+  @Test
+  public void theReleaseRequestAnnouncerShipsAsABean() {
+    assertTrue(!shippedReleaseAnnouncer.isUnsatisfied(), "an unsatisfied port is a silent one");
   }
 
   /**

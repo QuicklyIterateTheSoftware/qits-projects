@@ -45,8 +45,8 @@ public class ProjectReleaseRequestsController {
 
   /**
    * @param state which requests to answer: omitted means the open ones (PENDING, READY, FAILED,
-   *     REJECTED — everything that can still move), {@code all} means every state, and a state's own
-   *     name narrows to it. A word naming no state is a 400.
+   *     REJECTED, CONFLICTED — everything that can still move), {@code all} means every state, and a
+   *     state's own name narrows to it. A word naming no state is a 400.
    */
   @GET
   @Operation(
@@ -54,7 +54,8 @@ public class ProjectReleaseRequestsController {
       description =
           "Most recently moved first. With no state the answer is the open requests — the work"
               + " still waiting on somebody. Pass state=all for the whole history, or a state name"
-              + " (PENDING, READY, RELEASED, REJECTED, FAILED, WITHDRAWN) to narrow to one.")
+              + " (PENDING, READY, RELEASED, REJECTED, FAILED, CONFLICTED, WITHDRAWN) to narrow to"
+              + " one.")
   public ListProjectReleaseRequests.Response list(
       @PathParam("projectId") String projectId, @QueryParam("state") String state) {
     projects.get(projectId); // 404 if the project does not exist

@@ -95,11 +95,27 @@ import org.jboss.logging.Logger;
  * <p>A request with no {@code mergedSha} yet is gated on nothing and stays PENDING: the fold has not
  * been computed, so there is no content to have an opinion about.
  *
+ * <p><b>The merged sha is the correlation key, in both directions.</b> Only a verdict naming the
+ * request's <em>current</em> fold can flip it — one for a superseded merge matches no request and is
+ * simply not read — and the ledger rows of superseded merges are kept rather than deleted, because
+ * they are the record of what was built. That is what makes the gate safe without anybody stopping
+ * the runs, which in turn is what lets the run cancellation a re-fold asks for be best effort: it
+ * frees a build agent, it does not decide anything. See {@link #evaluate(String, String)} and {@link
+ * QaRunCancellations}.
+ *
+ * <h2>The release</h2>
+ *
  * <p><b>Execution happens off every other thread.</b> A READY request is handed to the one-thread
  * {@code release-request-worker}: the resolution runs under the bus consumption and the sweep on a
- * scheduler thread, and the door call is an HTTP round trip neither may sit on. The worker re-reads
- * the row, so a request executed twice over is settled by the first arrival — and the door's own
- * ALREADY_INTEGRATED refusal is the backstop behind that.
+ * scheduler thread, and the release is several HTTP round trips neither may sit on. The worker
+ * re-reads the row, so a request executed twice over is settled by the first arrival.
+ *
+ * <p>What {@link ReleaseExecutor} does is stamp a calver, rewrite the manifests at the fold, commit
+ * them onto the backing branch, <b>tag</b> that commit, delete the branches the release consumed and
+ * announce {@code SCMRelease}. There is no push to {@code main} in it: a release is a tag, and
+ * {@code main} is finalized after the deployment. This class's own share of that is the bookkeeping
+ * — {@link #recordReleasedTag} puts the new tag in the repository's implicit source set and re-folds
+ * every <em>other</em> open request, so each of them is a superset of what is already shipping.
  */
 @ApplicationScoped
 public class ReleaseRequests {
@@ -130,6 +146,8 @@ public class ReleaseRequests {
   @Inject Instance<BackingBranchMerger> mergers;
 
   @Inject Instance<ReleaseRequestAnnouncer> announcers;
+
+  @Inject Instance<QaRunCancellations> cancellations;
 
   /**
    * How long a request with no verdict at all waits after arming before passing vacuously — long enough that a
@@ -430,6 +448,12 @@ public class ReleaseRequests {
    * A verdict landed for {@code (repoId, commitSha)} — re-evaluate what it may settle. Called by
    * the bus consumption right after the ledger write; the evaluation opens transactions of its own,
    * so the claim never spans this datasource.
+   *
+   * <p><b>The commit is a MERGED sha</b>, which is what makes this read a filter rather than a fan-
+   * out: {@code findPendingByCommit} matches requests whose current fold <em>is</em> that commit, so
+   * a verdict for a superseded merge names no request and settles nothing. {@link #evaluate(String,
+   * String)} re-checks the same equality inside its transaction, because the fold can move between
+   * the two.
    */
   public void onVerdict(String repoId, String commitSha) {
     List<String> pending =
@@ -439,7 +463,7 @@ public class ReleaseRequests {
                     requests.findPendingByCommit(repoId, commitSha).stream()
                         .map(row -> row.id)
                         .toList());
-    pending.forEach(this::evaluate);
+    pending.forEach(id -> evaluate(id, commitSha));
   }
 
   /**
@@ -490,6 +514,7 @@ public class ReleaseRequests {
       String repoName,
       String backingBranch,
       String mergedSha,
+      String supersededSha,
       Instant changedAt) {}
 
   /**
@@ -541,10 +566,45 @@ public class ReleaseRequests {
     }
     Folded folded = apply(id, target, why, outcome);
     if (folded != null) {
+      if (folded.supersededSha() != null) {
+        // A fold that REPLACED a sha, not the first one: whatever qits-ci is still running for this
+        // request is grinding on content nobody will accept. See cancel() for why this is best
+        // effort and why it is scoped to this request alone.
+        cancel(folded.repoId(), folded.releaseRequestId(), folded.supersededSha());
+      }
       announce(folded);
     }
     if (outcome.folded()) {
       evaluate(id);
+    }
+  }
+
+  /**
+   * Ask qits-ci to stop this request's in-flight runs, because the fold they were started for has
+   * been superseded.
+   *
+   * <p><b>Best effort, and never able to fail a fold.</b> The gate is correlated by sha — a verdict
+   * naming a merge this request has already moved past matches nothing and settles nothing — so the
+   * cancellation buys a build agent rather than correctness. An unreachable qits-ci, a refusal and
+   * no implementation at all are one answer: carry on. That is also why it is called <b>after</b>
+   * the fold's write transaction and outside every transaction, beside the announcement.
+   *
+   * <p><b>Scoped to this request and never to the repository.</b> A sibling request folds its own
+   * sources onto its own backing branch and its runs are none of this one's business; cancelling by
+   * repository would take a neighbour's green build away seconds before it settled them.
+   */
+  private void cancel(String repoId, String requestId, String supersededSha) {
+    if (!cancellations.isResolvable()) {
+      return;
+    }
+    try {
+      LOG.debugf(
+          "Release request %s superseded %s; asking qits-ci to cancel its runs",
+          requestId, shortSha(supersededSha));
+      cancellations.get().cancelRunsOf(repoId, requestId);
+    } catch (RuntimeException e) {
+      // The port says it must not throw; a throw is a port bug and must not cost the fold.
+      LOG.warnf(e, "Could not ask qits-ci to cancel the runs of release request %s", requestId);
     }
   }
 
@@ -595,7 +655,8 @@ public class ReleaseRequests {
                   return null;
                 }
                 default -> {
-                  boolean moved = !outcome.sha().equals(row.mergedSha);
+                  String superseded = row.mergedSha;
+                  boolean moved = !outcome.sha().equals(superseded);
                   row.mergedSha = outcome.sha();
                   row.conflictDetail = null;
                   if (!moved) {
@@ -609,6 +670,7 @@ public class ReleaseRequests {
                       row.repoName,
                       row.backingBranch(),
                       row.mergedSha,
+                      superseded,
                       now);
                 }
               }
@@ -665,6 +727,26 @@ public class ReleaseRequests {
 
   /** Package-private so the suite can drive one evaluation without the worker or the sweep. */
   void evaluate(String id) {
+    evaluate(id, null);
+  }
+
+  /**
+   * Re-decide one request's gate.
+   *
+   * <p><b>The correlation key is the merged sha, and it is checked twice.</b> {@code verdictSha} is
+   * the commit a verdict just landed for, or null when nothing in particular prompted this (the
+   * sweep, a fold). A verdict naming anything other than the request's <b>current</b> {@code
+   * mergedSha} settles nothing and returns here: it is an answer about a fold this request has moved
+   * past, and the run that produced it was started for content nobody will accept any more. The
+   * ledger rows for it are <b>kept</b> — they are the record of what was built and are read again if
+   * that sha ever comes back — and this is also why a re-fold asks qits-ci to cancel the runs it
+   * superseded: the gate is already safe without the cancellation, which is why the cancellation is
+   * allowed to fail.
+   *
+   * <p>The verdicts read below are then read <em>at</em> {@code mergedSha} for the same reason, so a
+   * request whose fold moved between the two reads is simply evaluated against the newer one.
+   */
+  void evaluate(String id, String verdictSha) {
     boolean ready =
         QuarkusTransaction.requiringNew()
             .call(
@@ -675,6 +757,12 @@ public class ReleaseRequests {
                   }
                   if (row.mergedSha == null) {
                     // Nothing has been folded yet: there is no content to have an opinion about.
+                    return false;
+                  }
+                  if (verdictSha != null && !verdictSha.equals(row.mergedSha)) {
+                    LOG.debugf(
+                        "Release request %s ignores a verdict for %s; it is gating %s now",
+                        id, shortSha(verdictSha), shortSha(row.mergedSha));
                     return false;
                   }
                   List<CommitBuildStatusDto> verdicts =
@@ -731,17 +819,23 @@ public class ReleaseRequests {
   }
 
   /**
-   * The door call, on the worker. The row is re-read first, so of two enqueues the second finds a
-   * settled request and does nothing; a refusal is FAILED with the door's words, and whether the
-   * sweep retries it is the executor's classification.
+   * The release itself, on the worker. The row is re-read first, so of two enqueues the second finds
+   * a settled request and does nothing; a failure is FAILED with the executor's own words, and
+   * whether the sweep retries it is the executor's classification.
    *
    * <p>What is released is the <b>backing branch</b> at the <b>merged sha</b> — the fold, not any
-   * one participant. The release becoming a tag alone, and {@code main} being finalized after the
-   * deployment, are the later halves of this epic; what this arm owes them already is the
-   * bookkeeping below, which records the released tag as pending a merge to main.
+   * one participant — and what the release <em>is</em> is a tag: the executor stamps a calver,
+   * rewrites the manifests at the fold, commits them onto the backing branch, tags that commit and
+   * deletes the branches the release consumed. {@code main} is finalized after the deployment, which
+   * is why the bookkeeping below exists: the tag joins the repository's implicit source set until
+   * something merges it, so that every other open request is a superset of what is already shipping.
+   *
+   * <p>The read below assembles the whole ask — the named sources and the repository's default
+   * branch included, because the executor deletes the first and must never delete the second — in
+   * <b>one</b> short transaction, and the release happens outside it.
    */
   private void execute(String id) {
-    ReleaseRequest snapshot =
+    ReleaseExecutor.Release ask =
         QuarkusTransaction.requiringNew()
             .call(
                 () -> {
@@ -752,9 +846,19 @@ public class ReleaseRequests {
                           && row.state != ReleaseRequest.State.FAILED)) {
                     return null;
                   }
-                  return row;
+                  return new ReleaseExecutor.Release(
+                      row.id,
+                      row.repoId,
+                      row.projectId,
+                      row.repoName,
+                      row.backingBranch(),
+                      row.mergedSha,
+                      row.summary,
+                      row.requester,
+                      sources.listByRequest(row.id).stream().map(source -> source.name).toList(),
+                      mainOf(row.repoId));
                 });
-    if (snapshot == null) {
+    if (ask == null) {
       return;
     }
     if (!executors.isResolvable()) {
@@ -768,17 +872,7 @@ public class ReleaseRequests {
     }
     ReleaseExecutor.Outcome outcome;
     try {
-      outcome =
-          executors
-              .get()
-              .release(
-                  snapshot.repoId,
-                  snapshot.projectId,
-                  snapshot.repoName,
-                  snapshot.backingBranch(),
-                  snapshot.mergedSha,
-                  snapshot.summary,
-                  snapshot.requester);
+      outcome = executors.get().release(ask);
     } catch (RuntimeException e) {
       // The port says it must not throw; a throw is a port bug and must not kill the worker.
       LOG.warnf(e, "Release executor threw for request %s", id);
@@ -787,16 +881,15 @@ public class ReleaseRequests {
     if (outcome.released()) {
       // The tag is tracked BEFORE the request is settled, so that a reader who sees RELEASED can
       // rely on the release being in the in-flight set. Only the siblings' re-fold is left after.
-      recordReleasedTag(snapshot.repoId, id, outcome.version(), snapshot.mergedSha);
+      recordReleasedTag(ask.repoId(), id, outcome.version(), outcome.releasedSha());
       settle(id, ReleaseRequest.State.RELEASED, null, outcome.version(), false);
       LOG.infof(
           "Release request %s released %s@%s as %s",
           id,
-          snapshot.repoName != null ? snapshot.repoName : snapshot.repoId,
-          snapshot.backingBranch(),
+          ask.repoName() != null ? ask.repoName() : ask.repoId(),
+          ask.backingBranch(),
           outcome.version());
-      remergeOpenOf(
-          snapshot.repoId, id, "the sibling release " + outcome.version() + " is in flight");
+      remergeOpenOf(ask.repoId(), id, "the sibling release " + outcome.version() + " is in flight");
     } else {
       settle(id, ReleaseRequest.State.FAILED, outcome.detail(), null, outcome.retryable());
       LOG.warnf(

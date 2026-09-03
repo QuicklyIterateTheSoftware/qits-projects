@@ -25,10 +25,10 @@ import org.jboss.logging.Logger;
 /**
  * The {@link BackingBranchMerger} port over qits-githost's octopus-merge primitive — {@code POST
  * /githost/api/repositories/{repoId}/merges}. Hand-rolled {@code java.net.http}, this package's
- * standing shape ({@code HttpReleaseExecutor}, {@code HttpActiveBuilds}).
+ * standing shape ({@link HttpReleaseGitHost}, {@link HttpActiveBuilds}).
  *
  * <p>{@code qits.projects.release-requests.githost-url} is <b>unset shipped</b>, the same optional
- * posture the two addresses beside it take; a deployment names its tier's git host. Unset, every
+ * posture {@code …ci-url} beside it takes; a deployment names its tier's git host. Unset, every
  * fold refuses with a detail that says so — a visible stall the sweep keeps re-folding, never a
  * silent one. It is a separate key from {@code qits.githost.url} (the address the mirrors clone
  * from) on purpose while the release flow is being stood up: the flow is opt-in per tier and must be

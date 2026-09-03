@@ -317,7 +317,7 @@ public class ReleaseRequestFlowTest {
     assertTrue(detail.contains("could not be reached"), detail);
 
     // The sweep re-folds nothing (the fold is already made), so the retry is about the door alone.
-    executor.answer(ReleaseExecutor.Outcome.released("2026.831.90001"));
+    executor.answer(ReleaseExecutor.Outcome.released("2026.831.90001", "released-sha-1"));
     releaseRequests.sweep();
     awaitState(id, "RELEASED");
     given()
@@ -337,7 +337,7 @@ public class ReleaseRequestFlowTest {
     awaitState(id, "FAILED");
     assertEquals(1, executor.calls().size());
 
-    executor.answer(ReleaseExecutor.Outcome.released("2026.831.90002"));
+    executor.answer(ReleaseExecutor.Outcome.released("2026.831.90002", "released-sha-2"));
     releaseRequests.sweep();
     releaseRequests.sweep();
     // The worker is asynchronous: give a wrongly-enqueued execution time to show up as a call.

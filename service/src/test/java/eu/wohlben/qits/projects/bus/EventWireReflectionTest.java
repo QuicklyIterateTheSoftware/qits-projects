@@ -54,6 +54,9 @@ public class EventWireReflectionTest {
   /** The same, for the second publisher — by its own type, past its {@code @DefaultBean}. */
   @Inject Instance<ReleaseRequestChangedAnnouncer> shippedReleaseAnnouncer;
 
+  /** And the third, which is the release itself. */
+  @Inject Instance<SCMReleaseAnnouncer> shippedScmReleaseAnnouncer;
+
   @Test
   public void theRegisteredTargetsAreExactlyTheTypesThatCrossTheWire() {
     RegisterForReflection registration =
@@ -67,13 +70,14 @@ public class EventWireReflectionTest {
             SCMDeleteTag.class,
             RepositoryRenamed.class,
             ReleaseRequestChanged.class,
+            SCMRelease.class,
             BuildStatusListener.BuildVerdictPayload.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records and the build-verdict payload in, RepositoryRenamed and"
-            + " ReleaseRequestChanged out, the PUT body, the frame — a tenth wire type means a"
-            + " line here");
+        "the four SCM records and the build-verdict payload in, RepositoryRenamed,"
+            + " ReleaseRequestChanged and SCMRelease out, the PUT body, the frame — an eleventh"
+            + " wire type means a line here");
   }
 
   /**
@@ -94,11 +98,47 @@ public class EventWireReflectionTest {
         targets.contains(ReleaseRequestChanged.class),
         "ReleaseRequestChangedAnnouncer publishes this, and it is the only thing that tells qits-ci"
             + " a release request's fold exists to build");
+    assertTrue(
+        targets.contains(SCMRelease.class),
+        "SCMReleaseAnnouncer publishes this — the event qits-workspaces used to publish and this"
+            + " service does since the release became a tag; the WIRE name is the simple class"
+            + " name, so a consumer cannot tell the two apart and must not have to");
   }
 
   @Test
   public void theReleaseRequestAnnouncerShipsAsABean() {
     assertTrue(!shippedReleaseAnnouncer.isUnsatisfied(), "an unsatisfied port is a silent one");
+  }
+
+  /**
+   * The release announcement, whose absence is the loudest of the three: a release would land, the
+   * tag would exist, and no consumer of {@code SCMRelease} — every release pipeline on the platform
+   * — would ever hear about it.
+   */
+  @Test
+  public void theScmReleaseAnnouncerShipsAsABean() {
+    assertTrue(!shippedScmReleaseAnnouncer.isUnsatisfied(), "an unsatisfied port is a silent one");
+  }
+
+  /**
+   * The replica's signature is the original's, which is the whole of the claim that the publisher
+   * moved and the event did not. {@code QitsEvent.signature()} is the simple class name, so the
+   * package this record lives in is invisible on the wire — and a rename here would silently mint a
+   * second event nobody subscribes to.
+   */
+  @Test
+  public void theReplicatedReleaseEventKeepsTheWireNameAndTheFiveFieldsItAlwaysHad() {
+    assertEquals("SCMRelease", SCMRelease.class.getSimpleName());
+    assertEquals(
+        java.util.List.of(
+            "eventId", "projectId", "repository", "repositoryName", "branch", "version",
+            "occurredAt"),
+        java.util.Arrays.stream(SCMRelease.class.getRecordComponents())
+            .map(java.lang.reflect.RecordComponent::getName)
+            .toList(),
+        "field-for-field with qits-workspaces' record, order included — eventId and occurredAt are"
+            + " components the canonical mix-in keeps out of the payload, leaving exactly the five"
+            + " every existing consumer selects on");
   }
 
   /**

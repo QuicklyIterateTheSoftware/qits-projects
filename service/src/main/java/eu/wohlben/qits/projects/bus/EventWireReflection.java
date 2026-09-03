@@ -47,6 +47,12 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * fires no post-receive, so this announcement is the only thing that tells qits-ci a fold exists to
  * build. An unregistered payload here is a release flow that silently never starts.
  *
+ * <p>{@link SCMRelease} is the third, and it is the only one on this list this service did not
+ * invent: qits-workspaces published it until 2026-09-03, when the release became a tag asked for
+ * from here. The <em>wire</em> name is the simple class name, so a replica in another package is the
+ * same event to every consumer — which is exactly why it needs a line of its own here, and why the
+ * absence would look like the release flow working and nothing downstream ever hearing about it.
+ *
  * <p>{@link BuildStatusListener.BuildVerdictPayload} is the one <em>bound</em>
  * consumption: {@code BuildStatusListener} reads qits-ci's {@code BuildSuccessful}/{@code
  * BuildFailed} through {@code CanonicalJson.payloadTo} rather than {@code readTree}, so the record
@@ -72,6 +78,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       SCMDeleteTag.class,
       RepositoryRenamed.class,
       ReleaseRequestChanged.class,
+      SCMRelease.class,
       BuildStatusListener.BuildVerdictPayload.class,
       EventEnvelope.class,
       EventFrame.class

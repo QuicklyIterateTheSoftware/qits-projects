@@ -1,5 +1,6 @@
 package eu.wohlben.qits.projects.releasehost;
 
+import eu.wohlben.qits.projects.control.ReleaseFinalization;
 import eu.wohlben.qits.projects.control.ReleaseRequests;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -20,10 +21,25 @@ public class ReleaseRequestSweep {
 
   @Inject ReleaseRequests releaseRequests;
 
+  @Inject ReleaseFinalization finalization;
+
   @Scheduled(
       every = "{qits.projects.release-requests.sweep-every}",
       concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
   void sweep() {
     releaseRequests.sweep();
+  }
+
+  /**
+   * The publish phase's own belt: every merge to {@code main} this service owes and the git host has
+   * not applied yet. Its own scheduled method rather than a second line in the one above, so that a
+   * sweep of the open requests throwing cannot stop a released tag from reaching {@code main} — the
+   * two are separate concerns that happen to want the same interval.
+   */
+  @Scheduled(
+      every = "{qits.projects.release-requests.sweep-every}",
+      concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+  void sweepFinalizations() {
+    finalization.sweep();
   }
 }

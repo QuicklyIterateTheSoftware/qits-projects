@@ -24,6 +24,13 @@ import java.util.List;
  * <p>{@code conflict} is populated on a CONFLICTED request and null on every other, so a caller
  * never has to ask a second question to find out what to resolve.
  *
+ * <p><b>{@code mergedToMainAt} is the end of the lifecycle</b>, and it is the only place a reader
+ * can see it: a release is a tag and {@code main} is finalized after the deployment succeeds, so a
+ * RELEASED request whose {@code version} is set and whose {@code mergedToMainAt} is null is a
+ * release that shipped and has not reached {@code main} yet — waiting for its deployment, or stuck
+ * on a merge that will not apply. Null on every request that has not released, where there is
+ * nothing to have reached {@code main}.
+ *
  * <p>{@code repoName} is the repository's public name — null where it has none. It rides along
  * because a request read outside its repository's own page (the project-wide list) has nothing else
  * to name the repository with, and an opaque id is not a thing to show a person. The project list
@@ -43,6 +50,7 @@ public record ReleaseRequestDto(
     String detail,
     MergeConflictDto conflict,
     String version,
+    Instant mergedToMainAt,
     boolean retryable,
     Instant createdAt,
     Instant updatedAt) {}

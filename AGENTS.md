@@ -186,6 +186,24 @@ HTTP server they never wanted, because vertx-http rides in with the jar. That is
   `%test`) stops publishing, sweeping and dialling — never the datasource, which Quarkus opens and
   migrates at boot regardless. That is why the suite hands out a third database
   (`testdb/ServiceEmbeddedPgConfigSource`) and why `PackagedSurfaceIT` supplies a third triple.
+- **`DeploymentActiveListener` is the only reason `main` ever moves, and it is the platform's first
+  consumer of the deployment lifecycle events.** A release is a tag; `main` is finalized when
+  qits-deployments says the version is live, and `control/ReleaseFinalization` is where every
+  decision behind that sits — the correlation (by tag name, because `DeploymentActive` names an
+  *application* and the application `qits-ci` is built from the repository `qits-ci-service`), the
+  merge through `BackingBranchMerger` onto `refs/heads/main`, and the bookkeeping that follows
+  (`ReleaseRequests.onReleasedTagMerged`, still the only writer of `merged_at`). Three things travel
+  with it: the payload is a **local record** because the platform's Maven registry serves nothing
+  under `qits-platform-deployments-events` (measured 2026-09-03) and a jar it does not serve is a
+  release pipeline that cannot build; `consumerId()` is `projects-main-finalization` and initializes
+  at the **head** of the log, because replaying from the epoch would try to merge every deployment
+  this platform has ever made; and **a merge that will not apply is never thrown** — it is recorded
+  on the released tag's row (`merge_requested_at`/`merge_detail`, V13) and retried by
+  `ReleaseRequestSweep.sweepFinalizations`, because a throw would hold this consumer's watermark
+  behind one repository's stuck merge and stop every other application's deployment from being read.
+  A conflict there is an ERROR on every attempt: `main` only advances through this path and every
+  release folds the pending tags in, so a released tag that will not merge is an anomaly rather than
+  traffic.
 - **`bus/EventWireReflection` is the native-image registration**, and `EventWireReflectionTest`
   guards its completeness against the registered listener beans. Read that class's javadoc before
   adding a wire type; the failure it prevents is invisible to every JVM test by construction.

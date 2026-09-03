@@ -306,7 +306,12 @@ public class ReleaseRequests {
                       .findByIdOptional(id)
                       .orElseThrow(
                           () -> new NotFoundException("Release request not found: " + id));
-              return dto(row, row.repoName, sources.listByRequest(id), implicitFor(row.repoId));
+              return dto(
+                  row,
+                  row.repoName,
+                  sources.listByRequest(id),
+                  implicitFor(row.repoId),
+                  pendingTags.findByRequest(id).map(tag -> tag.mergedAt).orElse(null));
             });
   }
 
@@ -416,8 +421,11 @@ public class ReleaseRequests {
 
   /**
    * A released tag reached {@code main}, so it LEAVES the implicit source set — the post-deployment
-   * merge's half of the bookkeeping, and the one the later task in this epic calls. Every open
-   * request of the repository re-folds without it.
+   * merge's half of the bookkeeping, called by {@link ReleaseFinalization} once the git host has
+   * applied that merge. Every open request of the repository re-folds without it.
+   *
+   * <p><b>This is the only writer of {@code merged_at}</b>, which is what keeps "the tag is on
+   * {@code main}" and "the open requests no longer fold it in" one step rather than two.
    *
    * <p><b>Content-idempotent, and that is the point.</b> A tag on {@code main} is already contained
    * in the fold through {@code main} itself, so dropping it changes nothing the git host can see: the
@@ -1000,19 +1008,25 @@ public class ReleaseRequests {
   }
 
   /**
-   * Names a list of rows without a query per row: one read of every named source in the page, and
-   * one read of each distinct repository's pending tags.
+   * Names a list of rows without a query per row: one read of every named source in the page, one
+   * read of each distinct repository's pending tags, and one read of the released tags the page's
+   * own requests produced — which is where {@code mergedToMainAt} comes from.
    */
   private List<ReleaseRequestDto> decorate(
       List<ReleaseRequest> rows, Map<String, String> currentNames) {
+    List<String> ids = rows.stream().map(row -> row.id).toList();
     Map<String, List<ReleaseRequestSource>> named =
-        sources.listByRequests(rows.stream().map(row -> row.id).toList()).stream()
+        sources.listByRequests(ids).stream()
             .collect(Collectors.groupingBy(source -> source.requestId));
     Map<String, List<ReleasedTagPendingMerge>> implicit =
         rows.stream()
             .map(row -> row.repoId)
             .distinct()
             .collect(Collectors.toMap(repoId -> repoId, this::implicitFor));
+    Map<String, Instant> reachedMain =
+        pendingTags.listByRequests(ids).stream()
+            .filter(tag -> tag.mergedAt != null)
+            .collect(Collectors.toMap(tag -> tag.releaseRequestId, tag -> tag.mergedAt, (a, b) -> a));
     return rows.stream()
         .map(
             row ->
@@ -1020,7 +1034,8 @@ public class ReleaseRequests {
                     row,
                     currentNames.getOrDefault(row.repoId, row.repoName),
                     named.getOrDefault(row.id, List.of()),
-                    implicit.getOrDefault(row.repoId, List.of())))
+                    implicit.getOrDefault(row.repoId, List.of()),
+                    reachedMain.get(row.id)))
         .toList();
   }
 
@@ -1032,7 +1047,8 @@ public class ReleaseRequests {
       ReleaseRequest row,
       String repoName,
       List<ReleaseRequestSource> named,
-      List<ReleasedTagPendingMerge> implicit) {
+      List<ReleasedTagPendingMerge> implicit,
+      Instant mergedToMainAt) {
     List<ReleaseRequestSourceDto> all = new ArrayList<>();
     for (ReleaseRequestSource source : named) {
       all.add(
@@ -1060,6 +1076,7 @@ public class ReleaseRequests {
         row.detail,
         conflictOf(row),
         row.version,
+        mergedToMainAt,
         row.retryable,
         row.createdAt,
         row.updatedAt);

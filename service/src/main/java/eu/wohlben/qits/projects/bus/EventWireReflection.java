@@ -53,6 +53,13 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * same event to every consumer — which is exactly why it needs a line of its own here, and why the
  * absence would look like the release flow working and nothing downstream ever hearing about it.
  *
+ * <p>{@link DeploymentActiveListener.DeploymentActivePayload} is the second bound consumption and
+ * the same shape as the first: qits-deployments' vocabulary jar is not on this classpath (the
+ * platform's Maven registry serves nothing under that coordinate), so the wire type this binary has
+ * to deserialize is the local record and not {@code DeploymentActive} itself. An absent line here is
+ * a native binary that subscribes to every deployment and cannot read one — and {@code main} would
+ * never be finalized again, silently, with the JVM suite green.
+ *
  * <p>{@link BuildStatusListener.BuildVerdictPayload} is the one <em>bound</em>
  * consumption: {@code BuildStatusListener} reads qits-ci's {@code BuildSuccessful}/{@code
  * BuildFailed} through {@code CanonicalJson.payloadTo} rather than {@code readTree}, so the record
@@ -80,6 +87,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       ReleaseRequestChanged.class,
       SCMRelease.class,
       BuildStatusListener.BuildVerdictPayload.class,
+      DeploymentActiveListener.DeploymentActivePayload.class,
       EventEnvelope.class,
       EventFrame.class
     },

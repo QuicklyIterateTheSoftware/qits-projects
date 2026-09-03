@@ -72,12 +72,13 @@ public class EventWireReflectionTest {
             ReleaseRequestChanged.class,
             SCMRelease.class,
             BuildStatusListener.BuildVerdictPayload.class,
+            DeploymentActiveListener.DeploymentActivePayload.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records and the build-verdict payload in, RepositoryRenamed,"
-            + " ReleaseRequestChanged and SCMRelease out, the PUT body, the frame — an eleventh"
-            + " wire type means a line here");
+        "the four SCM records, the build-verdict payload and the deployment-active payload in,"
+            + " RepositoryRenamed, ReleaseRequestChanged and SCMRelease out, the PUT body, the"
+            + " frame — a twelfth wire type means a line here");
   }
 
   /**
@@ -167,7 +168,8 @@ public class EventWireReflectionTest {
   private static final java.util.Map<String, Class<?>> BOUND_BY_LOCAL_RECORD =
       java.util.Map.of(
           "BuildSuccessful", BuildStatusListener.BuildVerdictPayload.class,
-          "BuildFailed", BuildStatusListener.BuildVerdictPayload.class);
+          "BuildFailed", BuildStatusListener.BuildVerdictPayload.class,
+          "DeploymentActive", DeploymentActiveListener.DeploymentActivePayload.class);
 
   @Test
   public void everyDurableListenersSignatureNamesARegisteredType() {
@@ -206,6 +208,18 @@ public class EventWireReflectionTest {
     assertTrue(
         listeners.stream().anyMatch(ScmBackupTriggerListener.class::isInstance),
         "a removed listener is a silent one");
+  }
+
+  /**
+   * The publish phase's own subscription. Its absence is the quietest failure in the flow: releases
+   * would go on happening, deployments would go on going active, and {@code main} would simply never
+   * move again — with nothing failing anywhere to say so.
+   */
+  @Test
+  public void theDeploymentActiveListenerIsDiscoverableAsADurableListener() {
+    assertTrue(
+        listeners.stream().anyMatch(DeploymentActiveListener.class::isInstance),
+        "a removed listener is a silent one — and here it is main that stops being finalized");
   }
 
   @Test

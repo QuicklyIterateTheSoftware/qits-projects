@@ -677,6 +677,8 @@ components:
           $ref: "#/components/schemas/MergeConflictDto"
         version:
           type: string
+        mergedToMainAt:
+          $ref: "#/components/schemas/Instant"
         retryable:
           type: boolean
         createdAt:

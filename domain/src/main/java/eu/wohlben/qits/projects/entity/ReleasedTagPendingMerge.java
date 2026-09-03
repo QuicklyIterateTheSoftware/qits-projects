@@ -56,4 +56,28 @@ public class ReleasedTagPendingMerge extends PanacheEntityBase {
   /** Null while the tag is still in flight; stamped when the post-deployment merge lands it. */
   @Column(name = "merged_at")
   public Instant mergedAt;
+
+  /**
+   * When the terminal gate passed and this tag became owed a merge to {@code main} — a deployment
+   * of this version reported active, or, for a repository that deploys nothing, its release being
+   * published (V13).
+   *
+   * <p><b>It is the sweep's whole selection</b>, together with a null {@link #mergedAt}. A row with
+   * neither set is a release still waiting on its deployment and must never be swept: merging it
+   * would put the commit on {@code main} before the deployment that justifies it, which is the
+   * shape this epic removed. Stamped once and left alone, so a replayed gate is not a second ask.
+   */
+  @Column(name = "merge_requested_at")
+  public Instant mergeRequestedAt;
+
+  /**
+   * Why the last attempt at that merge did not apply, in the git host's own words; null when none
+   * has failed. Cleared by the attempt that lands.
+   *
+   * <p>Its presence beside a null {@link #mergedAt} is the loud state. {@code main} only ever
+   * advances through these merges and every release folds the repository's pending tags in, so a
+   * conflict here is an anomaly rather than ordinary traffic.
+   */
+  @Column(name = "merge_detail", length = 4000)
+  public String mergeDetail;
 }

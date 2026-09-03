@@ -64,10 +64,14 @@ public class RefinementContainerFactory {
   String imageRepo;
 
   /**
-   * The released calver the workspace image is pinned to. A config default moved by
-   * {@code .config/qits/ci-event-upstream-workspace-daemon.yml} (the qits/workspace image rides
-   * qits-workspace-daemon's release), and overridable per deployment as
-   * {@code QITS_PROJECTS_REFINEMENT_IMAGE_VERSION}.
+   * The released calver the workspace image is pinned to. Read per container start, so a deployment
+   * that changes it needs no rebuild of this service.
+   *
+   * <p>The deployed value rides qits-configuration's image pin: it consumes qits-workspace-daemon's
+   * {@code SoftwareRelease} of {@code qits/workspace} and writes it as this application's {@code
+   * QITS_PROJECTS_REFINEMENT_IMAGE_VERSION} extra, which SmallRye maps onto this key and lets win.
+   * The committed property is the clone-alone default — it was what
+   * {@code .config/qits/ci-event-upstream-workspace-daemon.yml} rewrote before that hop was retired.
    */
   @ConfigProperty(name = "qits.projects.refinement-image-version")
   String imageVersion;

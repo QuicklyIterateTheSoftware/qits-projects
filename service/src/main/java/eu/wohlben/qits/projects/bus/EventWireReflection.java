@@ -42,11 +42,36 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * is exactly qits-ci's measured failure — every publish dying inside {@code CanonicalJson} with "no
  * serializer found", green JVM suite and all — written down here before it can happen again.
  *
- * <p>{@link BuildStatusListener.BuildVerdictPayload} is the eighth and the one <em>bound</em>
- * consumption: {@code BuildStatusListener} reads qits-ci's {@code BuildSuccessful}/{@code
- * BuildFailed} through {@code CanonicalJson.payloadTo} rather than {@code readTree}, so the record
- * it binds is on the wire path exactly the way the qits-deployments subscriber's payload record is
- * in that service's own registration.
+ * <p>{@link ReleaseRequestChanged} is the second <em>published</em> one, and the one the release
+ * flow rests on: a request's backing branch is written by qits-githost's merge primitive, which
+ * fires no post-receive, so this announcement is the only thing that tells qits-ci a fold exists to
+ * build. An unregistered payload here is a release flow that silently never starts.
+ *
+ * <p>{@link SCMRelease} is the third, and it is the only one on this list this service did not
+ * invent: qits-workspaces published it until 2026-09-03, when the release became a tag asked for
+ * from here. The <em>wire</em> name is the simple class name, so a replica in another package is the
+ * same event to every consumer — which is exactly why it needs a line of its own here, and why the
+ * absence would look like the release flow working and nothing downstream ever hearing about it.
+ *
+ * <p>{@link DeploymentActiveListener.DeploymentActivePayload} is the second bound consumption and
+ * the same shape as the first: qits-deployments' vocabulary jar is not on this classpath (the
+ * platform's Maven registry serves nothing under that coordinate), so the wire type this binary has
+ * to deserialize is the local record and not {@code DeploymentActive} itself. An absent line here is
+ * a native binary that subscribes to every deployment and cannot read one — and {@code main} would
+ * never be finalized again, silently, with the JVM suite green.
+ *
+ * <p>{@link SoftwareReleaseListener.SoftwareReleasePayload} is the third bound consumption, for the
+ * same reason as the second: qits-ci's {@code ci-events} module is another context's vocabulary and
+ * this service depends on it nowhere, so the type this binary deserializes is the local record. Its
+ * absence is a library whose {@code main} is never finalized again, silently.
+ *
+ * <p>{@link BuildStatusListener.BuildVerdictPayload} is the <em>first</em> of those three bound
+ * consumptions and the pattern the other two follow: {@code BuildStatusListener} reads qits-ci's
+ * {@code BuildSuccessful}/{@code BuildFailed} through {@code CanonicalJson.payloadTo} rather than
+ * {@code readTree}, so the record it binds is on the wire path exactly the way the qits-deployments
+ * subscriber's payload record is in that service's own registration. <b>The rule that generalises:
+ * a listener that BINDS registers its record; one that only walks the payload with {@code readTree}
+ * still registers the type it consumes.</b>
  *
  * <p><b>And why a mix-in by name.</b> {@code CanonicalJson$QitsEventMixin} keeps {@code QitsEvent}'s
  * declared methods — {@code eventId} above all — out of a payload, and Jackson finds its {@code
@@ -66,7 +91,11 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       SCMDeleteBranch.class,
       SCMDeleteTag.class,
       RepositoryRenamed.class,
+      ReleaseRequestChanged.class,
+      SCMRelease.class,
       BuildStatusListener.BuildVerdictPayload.class,
+      DeploymentActiveListener.DeploymentActivePayload.class,
+      SoftwareReleaseListener.SoftwareReleasePayload.class,
       EventEnvelope.class,
       EventFrame.class
     },

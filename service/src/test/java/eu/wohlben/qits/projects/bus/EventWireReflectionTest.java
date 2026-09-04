@@ -51,6 +51,12 @@ public class EventWireReflectionTest {
    */
   @Inject Instance<RepositoryRenamedAnnouncer> shippedAnnouncer;
 
+  /** The same, for the second publisher — by its own type, past its {@code @DefaultBean}. */
+  @Inject Instance<ReleaseRequestChangedAnnouncer> shippedReleaseAnnouncer;
+
+  /** And the third, which is the release itself. */
+  @Inject Instance<SCMReleaseAnnouncer> shippedScmReleaseAnnouncer;
+
   @Test
   public void theRegisteredTargetsAreExactlyTheTypesThatCrossTheWire() {
     RegisterForReflection registration =
@@ -63,12 +69,17 @@ public class EventWireReflectionTest {
             SCMDeleteBranch.class,
             SCMDeleteTag.class,
             RepositoryRenamed.class,
+            ReleaseRequestChanged.class,
+            SCMRelease.class,
             BuildStatusListener.BuildVerdictPayload.class,
+            DeploymentActiveListener.DeploymentActivePayload.class,
+            SoftwareReleaseListener.SoftwareReleasePayload.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records and the build-verdict payload in, RepositoryRenamed out, the PUT"
-            + " body, the frame — a ninth wire type means a line here");
+        "the four SCM records and the three bound consumption payloads in, RepositoryRenamed,"
+            + " ReleaseRequestChanged and SCMRelease out, the PUT body, the frame — a thirteenth"
+            + " wire type means a line here");
   }
 
   /**
@@ -79,11 +90,57 @@ public class EventWireReflectionTest {
    * rather than delaying it.
    */
   @Test
-  public void thePublishedEventTypeIsRegistered() {
+  public void thePublishedEventTypesAreRegistered() {
+    Set<Class<?>> targets =
+        Set.of(EventWireReflection.class.getAnnotation(RegisterForReflection.class).targets());
     assertTrue(
-        Set.of(EventWireReflection.class.getAnnotation(RegisterForReflection.class).targets())
-            .contains(RepositoryRenamed.class),
+        targets.contains(RepositoryRenamed.class),
         "RepositoryRenamedAnnouncer publishes this; an unregistered payload is a lost announcement");
+    assertTrue(
+        targets.contains(ReleaseRequestChanged.class),
+        "ReleaseRequestChangedAnnouncer publishes this, and it is the only thing that tells qits-ci"
+            + " a release request's fold exists to build");
+    assertTrue(
+        targets.contains(SCMRelease.class),
+        "SCMReleaseAnnouncer publishes this — the event qits-workspaces used to publish and this"
+            + " service does since the release became a tag; the WIRE name is the simple class"
+            + " name, so a consumer cannot tell the two apart and must not have to");
+  }
+
+  @Test
+  public void theReleaseRequestAnnouncerShipsAsABean() {
+    assertTrue(!shippedReleaseAnnouncer.isUnsatisfied(), "an unsatisfied port is a silent one");
+  }
+
+  /**
+   * The release announcement, whose absence is the loudest of the three: a release would land, the
+   * tag would exist, and no consumer of {@code SCMRelease} — every release pipeline on the platform
+   * — would ever hear about it.
+   */
+  @Test
+  public void theScmReleaseAnnouncerShipsAsABean() {
+    assertTrue(!shippedScmReleaseAnnouncer.isUnsatisfied(), "an unsatisfied port is a silent one");
+  }
+
+  /**
+   * The replica's signature is the original's, which is the whole of the claim that the publisher
+   * moved and the event did not. {@code QitsEvent.signature()} is the simple class name, so the
+   * package this record lives in is invisible on the wire — and a rename here would silently mint a
+   * second event nobody subscribes to.
+   */
+  @Test
+  public void theReplicatedReleaseEventKeepsTheWireNameAndTheFiveFieldsItAlwaysHad() {
+    assertEquals("SCMRelease", SCMRelease.class.getSimpleName());
+    assertEquals(
+        java.util.List.of(
+            "eventId", "projectId", "repository", "repositoryName", "branch", "version",
+            "occurredAt"),
+        java.util.Arrays.stream(SCMRelease.class.getRecordComponents())
+            .map(java.lang.reflect.RecordComponent::getName)
+            .toList(),
+        "field-for-field with qits-workspaces' record, order included — eventId and occurredAt are"
+            + " components the canonical mix-in keeps out of the payload, leaving exactly the five"
+            + " every existing consumer selects on");
   }
 
   /**
@@ -112,7 +169,9 @@ public class EventWireReflectionTest {
   private static final java.util.Map<String, Class<?>> BOUND_BY_LOCAL_RECORD =
       java.util.Map.of(
           "BuildSuccessful", BuildStatusListener.BuildVerdictPayload.class,
-          "BuildFailed", BuildStatusListener.BuildVerdictPayload.class);
+          "BuildFailed", BuildStatusListener.BuildVerdictPayload.class,
+          "DeploymentActive", DeploymentActiveListener.DeploymentActivePayload.class,
+          "SoftwareRelease", SoftwareReleaseListener.SoftwareReleasePayload.class);
 
   @Test
   public void everyDurableListenersSignatureNamesARegisteredType() {
@@ -151,6 +210,30 @@ public class EventWireReflectionTest {
     assertTrue(
         listeners.stream().anyMatch(ScmBackupTriggerListener.class::isInstance),
         "a removed listener is a silent one");
+  }
+
+  /**
+   * The publish phase's own subscription. Its absence is the quietest failure in the flow: releases
+   * would go on happening, deployments would go on going active, and {@code main} would simply never
+   * move again — with nothing failing anywhere to say so.
+   */
+  @Test
+  public void theDeploymentActiveListenerIsDiscoverableAsADurableListener() {
+    assertTrue(
+        listeners.stream().anyMatch(DeploymentActiveListener.class::isInstance),
+        "a removed listener is a silent one — and here it is main that stops being finalized");
+  }
+
+  /**
+   * The temporary half of the publish phase. Its absence is a library that releases, publishes and
+   * never finalizes its own {@code main} — and every later release request of it folding a tag that
+   * is already shipping, for ever.
+   */
+  @Test
+  public void theSoftwareReleaseListenerIsDiscoverableAsADurableListener() {
+    assertTrue(
+        listeners.stream().anyMatch(SoftwareReleaseListener.class::isInstance),
+        "a removed listener is a silent one — and here it is every non-deployable repository");
   }
 
   @Test

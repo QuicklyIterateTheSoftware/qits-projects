@@ -43,6 +43,13 @@ public class ProjectReleaseRequestsTest {
 
   @Inject RecordingReleaseExecutor executor;
 
+  /**
+   * Reset because the fakes are application-scoped and a neighbouring class scripts them: a merger
+   * left answering a conflict would make every fixture here CONFLICTED for reasons nothing in this
+   * class states.
+   */
+  @Inject RecordingBackingBranchMerger merger;
+
   private String projectId;
   private String otherProjectId;
   private String serviceRepoId;
@@ -52,6 +59,7 @@ public class ProjectReleaseRequestsTest {
   @BeforeEach
   void seed() {
     executor.reset();
+    merger.reset();
     // Nothing must release itself while the fixture is being built: the list is the subject.
     activeBuilds.answer(Optional.of(1));
     projectId = "prr-project-" + UUID.randomUUID();
@@ -118,14 +126,7 @@ public class ProjectReleaseRequestsTest {
   private static String create(String repoId, String branch) {
     return given()
         .contentType(ContentType.JSON)
-        .body(
-            "{\"branch\":\""
-                + branch
-                + "\",\"commitSha\":\""
-                + UUID.randomUUID().toString().replace("-", "")
-                + "\",\"summary\":\"a gated release of "
-                + branch
-                + "\"}")
+        .body("{\"branch\":\"" + branch + "\",\"summary\":\"a gated release of " + branch + "\"}")
         .post(repoBase(repoId))
         .then()
         .statusCode(200)

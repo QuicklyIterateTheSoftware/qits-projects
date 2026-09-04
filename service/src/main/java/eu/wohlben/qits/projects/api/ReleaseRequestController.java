@@ -17,9 +17,17 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 
 /**
  * The release requests: the asynchronous ask that replaces calling the release door blind. A
- * request is created PENDING, the build gate settles it off the commit ledger, and the execution
- * arm performs the release once it is READY — see {@code control/ReleaseRequests} for the state
- * machine, which this controller only fronts.
+ * request is an <b>octopus merge of N sources</b> — {@code main}, the branches somebody put on it,
+ * and the repository's released tags not yet merged to {@code main} — folded onto {@code
+ * release/<id>}; it is created PENDING, the build gate settles it off the commit ledger against the
+ * merged sha, and the execution arm performs the release once it is READY. See {@code
+ * control/ReleaseRequests} for the state machine, which this controller only fronts.
+ *
+ * <p><b>Named sources are caller-managed; implicit ones are not.</b> A create names one branch and
+ * implies {@code main}; {@code POST …/{requestId}/sources} adds more. The released tags are derived
+ * from what the repository has in flight, are reported in every read, and cannot be added or dropped
+ * — an API that let a caller drop one would let somebody release a step backwards from what is
+ * already shipping.
  *
  * <p><b>Two callers, two roles, on every route</b>: a person driving a release from a browser, and
  * the machine peers the door split brings (qits-workspaces creating requests on behalf of its
@@ -37,20 +45,18 @@ public class ReleaseRequestController {
   @Inject SecurityIdentity identity;
 
   /**
-   * @param branch what to release
-   * @param commitSha the branch head the caller means — a request is about a sha, so the caller
-   *     states which one rather than this service guessing at a head that may move mid-flight
-   * @param summary the release door's summary line
+   * @param branch the branch to release. {@code main} is <b>implied</b> and is never asked for — a
+   *     release that does not contain what is already on main is not a release anybody wants — so a
+   *     fresh request's named sources are the repository's default branch and this one. Naming the
+   *     default branch itself makes a main-only request.
+   * @param summary the release's summary line, which is also the fold's commit message
    * @param requester whom the caller acts for — attribution as data, for the machine peers whose
    *     bearer names the service rather than the person at the door. Blank falls back to the
    *     caller's own identity. Every caller here already holds admin or system, so stating an
    *     actor is not an escalation.
    */
   public static record CreateReleaseRequest(
-      @NotBlank String branch,
-      @NotBlank String commitSha,
-      @NotBlank String summary,
-      String requester) {
+      @NotBlank String branch, @NotBlank String summary, String requester) {
     public record Response(ReleaseRequestDto request) {}
   }
 
@@ -58,18 +64,48 @@ public class ReleaseRequestController {
   @Operation(
       summary = "Ask for a branch to be released once its builds are green",
       description =
-          "Creates (or converges on) the open release request for the branch. The request is about"
-              + " the named sha: gates evaluate that commit, and a request for a different sha"
-              + " withdraws the open one. Poll the request until it is RELEASED, REJECTED or"
-              + " FAILED; detail says why for the latter two.")
+          "Creates (or converges on) the open release request the branch participates in. The"
+              + " request's sources are main plus the named branch, plus every released tag of the"
+              + " repository not yet merged to main; they are folded onto release/<id> and it is"
+              + " that MERGE the gates evaluate — mergedSha on the answer. A branch that already"
+              + " participates in an open request answers that request rather than opening a"
+              + " second. Poll until RELEASED, REJECTED, CONFLICTED or FAILED; detail says why, and"
+              + " conflict says what to resolve.")
   public CreateReleaseRequest.Response create(
       @PathParam("repoId") String repoId, CreateReleaseRequest body) {
-    String requester =
-        body.requester() != null && !body.requester().isBlank()
-            ? body.requester().trim()
-            : (identity.isAnonymous() ? null : identity.getPrincipal().getName());
     return new CreateReleaseRequest.Response(
-        releaseRequests.request(repoId, body.branch(), body.commitSha(), body.summary(), requester));
+        releaseRequests.request(repoId, body.branch(), body.summary(), actorFor(body.requester())));
+  }
+
+  /** @param branch another branch to fold into this request. */
+  public static record AddReleaseRequestSource(@NotBlank String branch, String requester) {
+    public record Response(ReleaseRequestDto request) {}
+  }
+
+  @POST
+  @Path("/{requestId}/sources")
+  @Operation(
+      summary = "Add a branch to an open release request",
+      description =
+          "The request is re-folded with the new source and, if the fold produces a new commit, the"
+              + " gates are re-armed onto it. Idempotent: a branch already on the request answers"
+              + " the request unchanged. A RELEASED or WITHDRAWN request answers 409. Implicit tag"
+              + " sources are not addable — they are derived from what the repository has in"
+              + " flight.")
+  public AddReleaseRequestSource.Response addSource(
+      @PathParam("repoId") String repoId,
+      @PathParam("requestId") String requestId,
+      AddReleaseRequestSource body) {
+    return new AddReleaseRequestSource.Response(
+        releaseRequests.addSource(requestId, body.branch(), actorFor(body.requester())));
+  }
+
+  /** The stated actor, or the caller's own identity when none is stated. */
+  private String actorFor(String stated) {
+    if (stated != null && !stated.isBlank()) {
+      return stated.trim();
+    }
+    return identity.isAnonymous() ? null : identity.getPrincipal().getName();
   }
 
   /** @param reason optional sentence recorded on the request; a default names the caller. */

@@ -9,6 +9,7 @@ import eu.wohlben.qits.projects.entity.ReleaseRequest;
 import eu.wohlben.qits.projects.entity.ReleaseRequestSource;
 import eu.wohlben.qits.projects.entity.ReleasedTagPendingMerge;
 import eu.wohlben.qits.projects.entity.Repository;
+import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.DomainException;
 import eu.wohlben.qits.projects.error.NotFoundException;
@@ -27,6 +28,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -146,6 +148,8 @@ public class ReleaseRequests {
   @Inject Instance<BackingBranchMerger> mergers;
 
   @Inject Instance<ReleaseRequestAnnouncer> announcers;
+
+  @Inject Instance<ReleaseFinalization> finalization;
 
   @Inject Instance<QaRunCancellations> cancellations;
 
@@ -864,7 +868,8 @@ public class ReleaseRequests {
                       row.summary,
                       row.requester,
                       sources.listByRequest(row.id).stream().map(source -> source.name).toList(),
-                      mainOf(row.repoId));
+                      mainOf(row.repoId),
+                      wrapperCatalogOf(row.repoId, row.projectId));
                 });
     if (ask == null) {
       return;
@@ -898,6 +903,21 @@ public class ReleaseRequests {
           ask.backingBranch(),
           outcome.version());
       remergeOpenOf(ask.repoId(), id, "the sibling release " + outcome.version() + " is in flight");
+      // The committed qits config decides which quality gate the tag now waits for — and a
+      // repository that declares no deployment declares no gate, so its main is finalized here and
+      // now rather than on an event that will never come. Best effort: the finalization sweep is
+      // the belt under a git host that could not answer this moment.
+      if (finalization.isResolvable()) {
+        try {
+          finalization.get().onReleased(ask.repoId(), outcome.version());
+        } catch (RuntimeException e) {
+          LOG.warnf(
+              e,
+              "Could not finalize %s of %s at its release; the sweep will",
+              outcome.version(),
+              ask.repoId());
+        }
+      }
     } else {
       settle(id, ReleaseRequest.State.FAILED, outcome.detail(), null, outcome.retryable());
       LOG.warnf(
@@ -1136,6 +1156,38 @@ public class ReleaseRequests {
         .map(repository -> repository.mainBranch)
         .filter(branch -> branch != null && !branch.isBlank())
         .orElse(DEFAULT_MAIN);
+  }
+
+  /**
+   * The project's other repositories by registered name, and only for a WRAPPER release — the
+   * catalog the executor banks the wrapper's gitlink pins from. Empty for every ordinary
+   * repository, which is what turns the banking arm off without a flag: an estate of nothing is
+   * nothing to pin.
+   *
+   * <p>The wrapper itself is excluded — a superproject does not pin itself — and a repository the
+   * name table has no row for is simply absent, because a gitlink needs the name {@code
+   * .gitmodules} declares and an unnamed row cannot be matched to one.
+   */
+  private Map<String, ReleaseExecutor.Submodule> wrapperCatalogOf(String repoId, String projectId) {
+    boolean wrapper =
+        repositories
+            .findByIdOptional(repoId)
+            .map(repository -> repository.archetype == RepositoryArchetype.PROJECT)
+            .orElse(false);
+    if (!wrapper || projectId == null) {
+      return Map.of();
+    }
+    Map<String, ReleaseExecutor.Submodule> catalog = new LinkedHashMap<>();
+    names
+        .namesByRepository(projectId)
+        .forEach(
+            (siblingId, name) -> {
+              if (siblingId.equals(repoId)) {
+                return;
+              }
+              catalog.put(name, new ReleaseExecutor.Submodule(siblingId, mainOf(siblingId)));
+            });
+    return Map.copyOf(catalog);
   }
 
   private String conflictJson(String target, List<BackingBranchMerger.Conflict> conflicts) {

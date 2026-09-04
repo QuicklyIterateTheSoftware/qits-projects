@@ -18,33 +18,39 @@ import org.jboss.logging.Logger;
  * far end of the flow {@code ReleaseRequests} opens — a release is a tag, {@code main} is finalized
  * afterwards — and the only thing on this platform that advances {@code main} at all.
  *
- * <h2>The gate</h2>
+ * <h2>The gate, and where a gate comes from</h2>
  *
- * <p>The terminal gate is <b>a deployment reporting active</b>: qits-deployments announces {@code
- * DeploymentActive} for an application and a version, and that version is a released tag of some
- * repository, waiting in {@code released_tag_pending_merge} with a null {@code merged_at}. Nothing
- * else may move {@code main}: merging before the deployment would put a commit there that nothing
- * had proved, which is the shape this epic removed.
+ * <p><b>The tag's committed qits config is what enables a gate.</b> A repository that declares
+ * {@code .config/qits/deployments.yml} has opted into the one quality gate that exists today —
+ * <b>a deployment reporting active</b>: qits-deployments announces {@code DeploymentActive} for an
+ * application and a version, and that version is a released tag waiting in {@code
+ * released_tag_pending_merge} with a null {@code merged_at}. Merging such a tag before its
+ * deployment would put a commit on {@code main} that nothing had proved, which is the shape this
+ * epic removed.
  *
- * <p>Passing the gate stamps {@link ReleasedTagPendingMerge#mergeRequestedAt}, and that stamp — not
+ * <p><b>A repository that declares no deployment has declared no gate</b>, and a gate that does not
+ * exist is not waited for: {@link #onReleased} finalizes its tag at the release, instantly. That is
+ * one rule for libraries, images, daemons and the wrapper alike, and it is what keeps a repository
+ * with no pipeline at all — the wrapper releases nothing but its own tree — from stranding forever.
+ * <b>The fork lives in exactly one place</b>, {@link #deployability}, reading the config at the
+ * tag; further gates slot in beside the deployment one as the config grows words for them.
+ *
+ * <p>Passing a gate stamps {@link ReleasedTagPendingMerge#mergeRequestedAt}, and that stamp — not
  * the event, not this thread — is what the merge is owed on. A merge that could not be applied stays
  * owed and the sweep keeps asking, so a git host that was unreachable for an hour costs a delay
  * rather than a release that never lands on {@code main}.
  *
- * <h2>The one repository that has no deployment to wait for</h2>
+ * <h2>The publication arm, kept as a belt</h2>
  *
- * <p>A library deploys nothing, so the gate above would never come and its {@code main} would never
- * move again. {@link #onSoftwareRelease} is the shortcut: on the first artifact published out of a
- * release, the released tag's tree is read and a repository declaring no {@code
- * .config/qits/deployments.yml} is finalized there and then. <b>That fork lives in exactly one
- * place</b> — {@link #deployability} — and it is <b>temporary</b>, in the sense that its replacement
- * is already named: when qits-maintenance becomes the lifecycle for libraries the way
- * qits-deployments is for services, a consumer taking the new version <em>is</em> the deployment,
- * and this arm goes.
+ * <p>{@link #onSoftwareRelease} predates the no-gate rule: it finalized an undeployable repository
+ * on the first artifact published out of its release. Under {@link #onReleased} such a tag is
+ * normally merged before any artifact exists, so the arm finds the gate stamped and does nothing —
+ * but it stays, because it is also the path that heals a row whose release-time probe could not
+ * read the git host, and removing a working belt buys nothing.
  *
- * <p>The two gates cannot both fire for one tag: a repository that declares a deployment is left
- * entirely to {@code DeploymentActive}, and the stamped {@code merge_requested_at} settles the race
- * even if it could.
+ * <p>The gates cannot double-fire for one tag: a repository that declares a deployment is left
+ * entirely to {@code DeploymentActive}, and the stamped {@code merge_requested_at} settles every
+ * race.
  *
  * <h2>Correlating a deployment back to a release</h2>
  *
@@ -157,6 +163,65 @@ public class ReleaseFinalization {
    *     asks again, which is the only thing that can fix it. A tag the git host does not know is not
    *     that case and settles with a WARN.
    */
+  /**
+   * A release just happened — decide, from the tag's committed config, whether any gate exists for
+   * it at all.
+   *
+   * <p><b>The qits config is what enables a gate.</b> A tag whose tree declares {@code
+   * .config/qits/deployments.yml} has opted into the "deployment successful" gate and waits for
+   * {@code DeploymentActive}; a tag that declares no deployment has declared no gate, and there is
+   * nothing between it and {@code main} — it is finalized here, at the release, rather than on an
+   * event that may or may not ever come. That covers libraries, images, daemons and the wrapper
+   * alike, and it is what keeps a repository with no pipeline at all from stranding forever.
+   *
+   * <p>Best effort by design: a git host that cannot answer right now leaves the row un-gated and
+   * visibly unfinished, and {@link #sweep} re-asks — the same belt that finalizes rows released
+   * before this rule existed.
+   */
+  public void onReleased(String repoId, String version) {
+    if (repoId == null || repoId.isBlank() || version == null || version.isBlank()) {
+      return;
+    }
+    Owed owed =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () ->
+                    pendingTags
+                        .find(repoId, version.trim())
+                        .filter(row -> row.mergedAt == null && row.mergeRequestedAt == null)
+                        .map(ReleaseFinalization::owedOf)
+                        .orElse(null));
+    if (owed == null) {
+      return;
+    }
+    finalizeUndeployable(owed);
+  }
+
+  /** The shared arm of {@link #onReleased} and the sweep: gate and merge an undeployable tag. */
+  private void finalizeUndeployable(Owed owed) {
+    switch (deployability(owed.repoId(), owed.tagName())) {
+      case DEPLOYS ->
+          LOG.debugf(
+              "%s declares a deployment, so its release %s reaches main when that deployment does",
+              owed.repoId(), owed.tagName());
+      case DEPLOYS_NOTHING -> {
+        gate(
+            owed,
+            "the repository declares no deployment, so " + owed.tagName() + " has no gate to wait"
+                + " for");
+        merge(owed.id());
+      }
+      case UNREADABLE, UNKNOWN_FOR_NOW ->
+          // Warned where it was read. The row stays un-gated and the sweep asks again — for
+          // UNREADABLE too, deliberately: an unreadable tree is this host's moment, never the
+          // tag's fault, and a released tag must not strand on it.
+          LOG.debugf(
+              "Whether %s of %s deploys anything cannot be established right now; the sweep will"
+                  + " ask again",
+              owed.tagName(), owed.repoId());
+    }
+  }
+
   public void onSoftwareRelease(String repoId, String version) {
     if (repoId == null || repoId.isBlank() || version == null || version.isBlank()) {
       return;
@@ -225,6 +290,19 @@ public class ReleaseFinalization {
         QuarkusTransaction.requiringNew()
             .call(() -> pendingTags.listOwedMerges().stream().map(row -> row.id).toList());
     owed.forEach(this::merge);
+    // The belt under the release-time decision: rows no gate has passed are re-asked against the
+    // tag's config, so a git host that could not answer at the release costs a sweep interval
+    // rather than a strand — and rows released before the no-gate rule existed are healed the same
+    // way. A row whose tag declares a deployment answers DEPLOYS every time and simply keeps
+    // waiting for its deployment; the probe is one tree read against a bare repo.
+    List<Owed> ungated =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () ->
+                    pendingTags.listUngated().stream()
+                        .map(ReleaseFinalization::owedOf)
+                        .collect(Collectors.toList()));
+    ungated.forEach(this::finalizeUndeployable);
   }
 
   // -----------------------------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -50,6 +51,8 @@ public class MainFinalizationTest {
 
   @Inject RecordingReleaseRequestAnnouncer announcer;
 
+  @Inject RecordingReleaseGitHost gitHost;
+
   private String repoId;
   private String projectId;
 
@@ -59,6 +62,7 @@ public class MainFinalizationTest {
     executor.reset();
     merger.reset();
     announcer.reset();
+    gitHost.reset();
     // A run is still active, so no fixture request settles itself mid-test: what is under test is
     // the merge to main, never the gate's timing.
     activeBuilds.answer(Optional.of(1));
@@ -237,11 +241,73 @@ public class MainFinalizationTest {
    */
   @Test
   public void theSweepDoesNotTouchATagWhoseDeploymentHasNotHappened() {
-    QuarkusTransaction.requiringNew().run(() -> pendingTag(freshTag()));
+    // The tag's config declares a deployment, so the deployment gate exists and only
+    // DeploymentActive may pass it — the sweep's un-gated probe reads exactly that and moves on.
+    String tag = freshTag();
+    QuarkusTransaction.requiringNew().run(() -> pendingTag(tag));
+    gitHost.tree(
+        "refs/tags/" + tag, Map.of(".config/qits/deployments.yml", "wire:\n  alias: publisher\n"));
 
     finalization.sweep();
 
     assertEquals(List.of(), merger.foldsOf("refs/heads/main"));
+  }
+
+  // -----------------------------------------------------------------------------------------------
+  // A release with no gate to wait for
+  // -----------------------------------------------------------------------------------------------
+
+  /**
+   * The committed qits config is what enables a gate, and a tag that declares no deployment has
+   * declared none: it reaches {@code main} at the release itself, not on an event that will never
+   * come — the wrapper, a library, an image, all the same rule.
+   */
+  @Test
+  public void aReleaseDeclaringNoDeploymentReachesMainAtTheReleaseItself() {
+    String tag = freshTag();
+    String releasedSha = QuarkusTransaction.requiringNew().call(() -> pendingTag(tag).releasedSha);
+    gitHost.tree("refs/tags/" + tag, Map.of("README.md", "a wrapper, a library, an image"));
+
+    finalization.onReleased(repoId, tag);
+
+    List<RecordingBackingBranchMerger.Fold> intoMain = merger.foldsOf("refs/heads/main");
+    assertEquals(1, intoMain.size(), "no gate declared, so nothing between the tag and main");
+    assertEquals(List.of(releasedSha), intoMain.get(0).sources());
+    ReleasedTagPendingMerge row = rowOf(tag);
+    assertNotNull(row.mergedAt);
+    assertNotNull(row.mergeRequestedAt, "the no-gate reading is still a recorded gate pass");
+  }
+
+  /**
+   * The belt under that decision: a row the release-time probe could not settle — and every row
+   * released before the no-gate rule existed — is healed by the sweep the same way.
+   */
+  @Test
+  public void theSweepHealsAnUngatedTagWhoseConfigDeclaresNoGate() {
+    String tag = freshTag();
+    QuarkusTransaction.requiringNew().run(() -> pendingTag(tag));
+    gitHost.tree("refs/tags/" + tag, Map.of("handoff.md", "the wrapper's own tree"));
+
+    finalization.sweep();
+
+    assertEquals(1, merger.foldsOf("refs/heads/main").size());
+    assertNotNull(rowOf(tag).mergedAt);
+  }
+
+  /** An unreadable tag settles nothing: the row stays un-gated and the next sweep asks again. */
+  @Test
+  public void anUnreadableTagLeavesTheRowForTheNextSweepRatherThanGuessing() {
+    String tag = freshTag();
+    QuarkusTransaction.requiringNew().run(() -> pendingTag(tag));
+    // No tree staged at refs/tags/<tag>: the git host cannot say what the config declares.
+
+    finalization.onReleased(repoId, tag);
+    finalization.sweep();
+
+    assertEquals(List.of(), merger.foldsOf("refs/heads/main"));
+    ReleasedTagPendingMerge row = rowOf(tag);
+    assertNull(row.mergedAt);
+    assertNull(row.mergeRequestedAt);
   }
 
   // -----------------------------------------------------------------------------------------------

@@ -46,6 +46,16 @@ public class ReleasedTagPendingMergeRepository
    * Everything gated and not landed: the merges this service owes {@code main}. The publish phase's
    * sweep is the only caller, and a row is here exactly while the git host has not applied it.
    */
+  /**
+   * Rows no gate has passed yet — released, unmerged, and with nothing owed. The finalization sweep
+   * probes these against the tag's committed config: a tag that declares no deployment has no gate
+   * to wait for and is finalized on sight, which is also what heals rows released before that rule
+   * existed.
+   */
+  public List<ReleasedTagPendingMerge> listUngated() {
+    return list("mergeRequestedAt is null and mergedAt is null order by releasedAt");
+  }
+
   public List<ReleasedTagPendingMerge> listOwedMerges() {
     return list("mergeRequestedAt is not null and mergedAt is null order by mergeRequestedAt");
   }

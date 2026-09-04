@@ -5,14 +5,17 @@ import eu.wohlben.qits.projects.control.ReleaseAnnouncer;
 import eu.wohlben.qits.projects.control.ReleaseExecutor;
 import eu.wohlben.qits.projects.control.ReleaseGitHost;
 import eu.wohlben.qits.projects.control.VersionStamp;
+import eu.wohlben.qits.projects.control.WrapperGitmodules;
 import eu.wohlben.qits.projects.error.ManifestBumpException;
 import io.quarkus.arc.DefaultBean;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.jboss.logging.Logger;
 
@@ -35,7 +38,9 @@ import org.jboss.logging.Logger;
  *       back the new bytes. There is no worktree on this side: the fold exists only on the git host.
  *   <li><b>Commit</b> them onto the backing branch. This is the last commit before the tag and its
  *       sha is what gets tagged. A repository that renders no version commits nothing and tags the
- *       fold itself, which is a release like any other.
+ *       fold itself, which is a release like any other — except the project's WRAPPER, whose
+ *       release also <b>banks the estate</b>: every declared submodule pinned as a gitlink at its
+ *       default branch's head, in this same commit ({@link #bankGitlinks}).
  *   <li><b>Tag</b> that commit with the version. A {@code 409 tag-exists} is <b>the platform's
  *       version-uniqueness guarantee</b>, not an error: somebody released that second already, so
  *       the whole attempt starts again with a fresh stamp. Bounded at {@link #ATTEMPTS}, because a
@@ -103,8 +108,13 @@ public class GitHostReleaseExecutor implements ReleaseExecutor {
         return Outcome.refused("the manifests could not be stamped: " + e.getMessage());
       }
 
+      Banked banked = bankGitlinks(release, tip);
+      if (banked.refusal() != null) {
+        return banked.refusal();
+      }
+
       String tagged;
-      if (bumped.files().isEmpty()) {
+      if (bumped.files().isEmpty() && banked.gitlinks().isEmpty()) {
         // Nothing renders a version. The fold itself is what the tag names — a stackless repository
         // releases exactly like every other one, it just has no commit before its tag.
         tagged = tip;
@@ -114,7 +124,8 @@ public class GitHostReleaseExecutor implements ReleaseExecutor {
                 release.repoId(),
                 ref,
                 "release(" + version + "): " + summaryOf(release),
-                bumped.files());
+                bumped.files(),
+                banked.gitlinks());
         if (!commit.ok()) {
           return refusal("the version bump could not be committed: " + commit.detail(), commit.retryable());
         }
@@ -157,6 +168,68 @@ public class GitHostReleaseExecutor implements ReleaseExecutor {
 
   private static Outcome refusal(String detail, boolean retryable) {
     return retryable ? Outcome.refusedRetryable(detail) : Outcome.refused(detail);
+  }
+
+  /** What the banking arm decided: the pins to write, or the refusal that stops the release. */
+  private record Banked(Map<String, String> gitlinks, Outcome refusal) {}
+
+  /**
+   * A wrapper release banks its estate: every submodule {@code .gitmodules} declares, pinned at the
+   * head of its repository's default branch, as gitlink entries in the same commit as the version
+   * bump. The release itself is what moves the pins — nothing updates them between releases, which
+   * is the point: a fresh clone's {@code submodule update --init} lands on the estate as it was
+   * released, and the drift in between never touches a ref.
+   *
+   * <p>Empty for every ordinary repository — {@code wrapperCatalog} is only populated for the
+   * project's WRAPPER, so this arm costs nothing anywhere else. The paths are {@code .gitmodules}'s
+   * (read at the fold, the path authority), the names are matched against the catalog, and each
+   * head is asked of the git host at this moment: pins are facts about refs, and refs live there.
+   *
+   * <p>A declared submodule the catalog cannot name is skipped with a WARN and its existing pin
+   * stays as it is — a half-reconciled estate must not fail a release — but a head that cannot be
+   * <em>read</em> refuses it: writing a partial bank would silently pin part of the estate stale,
+   * which is worse than either outcome the caller can see.
+   */
+  private Banked bankGitlinks(Release release, String tip) {
+    if (release.wrapperCatalog() == null || release.wrapperCatalog().isEmpty()) {
+      return new Banked(Map.of(), null);
+    }
+    ReleaseGitHost.Answer<String> gitmodules = gitHost.file(release.repoId(), tip, ".gitmodules");
+    if (!gitmodules.ok()) {
+      return new Banked(
+          null,
+          refusal(
+              "the wrapper's .gitmodules could not be read, so its estate cannot be banked: "
+                  + gitmodules.detail(),
+              gitmodules.retryable()));
+    }
+    Map<String, String> gitlinks = new LinkedHashMap<>();
+    for (WrapperGitmodules.Entry entry : WrapperGitmodules.entries(gitmodules.value())) {
+      ReleaseExecutor.Submodule submodule = release.wrapperCatalog().get(entry.name());
+      if (submodule == null) {
+        LOG.warnf(
+            "The wrapper declares submodule %s at %s, which the catalog does not name; its pin"
+                + " stays as it is",
+            entry.name(), entry.path());
+        continue;
+      }
+      ReleaseGitHost.Answer<String> head =
+          gitHost.head(submodule.repoId(), submodule.mainBranch());
+      if (!head.ok()) {
+        return new Banked(
+            null,
+            refusal(
+                "the head of "
+                    + entry.name()
+                    + "'s "
+                    + submodule.mainBranch()
+                    + " could not be read, so the estate cannot be banked: "
+                    + head.detail(),
+                head.retryable()));
+      }
+      gitlinks.put(entry.path(), head.value());
+    }
+    return new Banked(Map.copyOf(gitlinks), null);
   }
 
   private static String summaryOf(Release release) {

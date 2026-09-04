@@ -1,6 +1,7 @@
 package eu.wohlben.qits.projects.control;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * The arm that performs a release once its gates have passed.
@@ -41,6 +42,11 @@ public interface ReleaseExecutor {
    *     success, <b>except</b> {@link #defaultBranch}, which is never deleted by anything
    * @param defaultBranch the repository's default branch, so the exclusion above is a fact rather
    *     than a guess at the string {@code "main"}
+   * @param wrapperCatalog non-empty only when the released repository is the project's WRAPPER:
+   *     the project's other repositories by registered name, so the executor can bank the
+   *     wrapper's gitlink pins at each submodule's current default-branch head. Read off the
+   *     catalog in the same transaction as the rest of the ask; empty means an ordinary release
+   *     and no banking arm at all.
    */
   record Release(
       String requestId,
@@ -52,7 +58,11 @@ public interface ReleaseExecutor {
       String summary,
       String requester,
       List<String> namedSources,
-      String defaultBranch) {}
+      String defaultBranch,
+      Map<String, Submodule> wrapperCatalog) {}
+
+  /** One catalog repository a wrapper's gitlink may pin: its storage id and its default branch. */
+  record Submodule(String repoId, String mainBranch) {}
 
   /** Release the fold. Never throws; a failure is an {@link Outcome}. */
   Outcome release(Release release);

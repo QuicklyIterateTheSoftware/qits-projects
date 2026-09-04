@@ -302,3 +302,5 @@ The native build needs a `native-image`, which `sdk env` provides from `.sdkmanr
 `GRAALVM_HOME` to something else: Quarkus does not fail when it cannot find one, it logs `Cannot
 find the native-image … Attempting to fall back to container build` and shells docker. Green either
 way, which is why it is worth grepping the log rather than trusting the exit code.
+
+Released through the new release-request flow on 2026-09-04, verifying the deploy path end to end.

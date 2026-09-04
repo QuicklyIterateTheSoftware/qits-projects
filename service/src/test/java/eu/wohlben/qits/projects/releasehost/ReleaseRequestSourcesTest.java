@@ -443,6 +443,68 @@ public class ReleaseRequestSourcesTest {
     assertEquals(1, announcer.announcedFor(id).size(), "the clean fold is a change like any other");
   }
 
+  /**
+   * The git host's 409. The target it names is the outcome's own word for it; what the request
+   * stores is the ref the domain computed, so this one needs no request id and can be staged before
+   * the create that hits it.
+   */
+  private static BackingBranchMerger.Outcome conflictingFold() {
+    return BackingBranchMerger.Outcome.conflict(
+        "refs/heads/release",
+        List.of(new BackingBranchMerger.Conflict("pom.xml", "refs/heads/work", "abc1234", "content")));
+  }
+
+  @Test
+  public void aConflictOnCreationIsClearedByAnUnchangedFoldThatStillDispatches() {
+    merger.answer(conflictingFold());
+    String id = create("work");
+    assertEquals("CONFLICTED", stateOf(id));
+    assertNull(mergedShaOf(id), "no ref moved, so this request has never had a fold to build");
+    assertEquals(List.of(), announcer.announcedFor(id));
+
+    // The fix resolves to the branch's existing tip: a real change to what was asked for, and the
+    // same sha all the same. NOTHING has ever built that sha — this request announced nothing when
+    // it was created — so with no event here no run is ever created and, since the vacuous pass
+    // went, the gate waits for ever. Measured live on request 7247b350, 2026-09-04.
+    String tip = RecordingBackingBranchMerger.freshSha();
+    merger.answer(BackingBranchMerger.Outcome.unchanged(tip));
+    headMoved("work");
+
+    given()
+        .get(base() + "/" + id)
+        .then()
+        .body("request.state", equalTo("PENDING"))
+        .body("request.conflict", equalTo(null))
+        .body("request.mergedSha", equalTo(tip));
+    assertEquals(1, announcer.announcedFor(id).size(), "clearing a conflict dispatches");
+    assertEquals(tip, announcer.announcedFor(id).get(0).mergedSha(), "onto the sha to be built");
+  }
+
+  @Test
+  public void aConflictClearedOntoAShaAVerdictAlreadyCoversAnnouncesNothing() {
+    String id = create("work");
+    String merged = mergedShaOf(id);
+    greenVerdict(merged);
+    assertEquals("PENDING", stateOf(id), "a run is still in flight, so the vouch is held");
+    merger.answer(conflictingFold());
+    headMoved("work");
+    assertEquals("CONFLICTED", stateOf(id));
+    announcer.reset();
+
+    // Back onto the sha a gating run has already answered for. The gate reads that verdict on the
+    // way out of the fold, so an event here would only ask for a second build of built content.
+    merger.answer(BackingBranchMerger.Outcome.unchanged(merged));
+    headMoved("work");
+    assertEquals(
+        List.of(), announcer.announcedFor(id), "the sha carries a verdict the gate can read");
+
+    // And the request is not stuck: what clears it is the verdict that was there all along.
+    activeBuilds.answer(Optional.of(0));
+    releaseRequests.sweep();
+    awaitState(id, "RELEASED");
+    assertEquals(merged, executor.calls().get(0).expectedSha());
+  }
+
   // -------------------------------------------------------------------------------------------
   // The implicit set moving
   // -------------------------------------------------------------------------------------------

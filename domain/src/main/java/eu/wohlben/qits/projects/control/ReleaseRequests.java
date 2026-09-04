@@ -73,7 +73,9 @@ import org.jboss.logging.Logger;
  * contained in the target: same sha, no new commit. Nothing is re-armed and no {@code
  * ReleaseRequestChanged} is dispatched, which is what makes a trigger with no content behind it
  * free. A fold that cannot be made at all is {@code CONFLICTED} — no ref moved, the conflict stored
- * for a person to act on, and <b>no event</b>; the next fold that succeeds clears it and dispatches.
+ * for a person to act on, and <b>no event</b>; the next fold that succeeds clears it and dispatches,
+ * <em>including</em> one answering {@code unchanged}, unless that sha already carries a gating
+ * verdict the gate can read.
  *
  * <h2>The build gate</h2>
  *
@@ -668,15 +670,36 @@ public class ReleaseRequests {
                 case UNCHANGED -> {
                   boolean wasConflicted = row.state == ReleaseRequest.State.CONFLICTED;
                   row.conflictDetail = null;
-                  if (wasConflicted) {
-                    // The fold is possible again and the tip is the answer, but it is the SAME tip
-                    // — nothing new to build. Back to PENDING against what is already there, and
-                    // the gate reads the verdicts that sha already has.
-                    row.state = ReleaseRequest.State.PENDING;
-                    row.detail = "The conflict is resolved; the fold is unchanged";
-                    row.mergedSha = outcome.sha();
+                  if (!wasConflicted) {
+                    return null;
                   }
-                  return null;
+                  // The fold is possible again and the tip is the answer, but it is the SAME tip —
+                  // nothing new to build. Back to PENDING against what is already there.
+                  row.state = ReleaseRequest.State.PENDING;
+                  row.detail = "The conflict is resolved; the fold is unchanged";
+                  row.mergedSha = outcome.sha();
+                  if (ledger.verdictsOf(row.repoId, row.mergedSha).stream()
+                      .anyMatch(CommitBuildStatusDto::gating)) {
+                    // A gating run has already answered for this exact sha, so evaluate() — which
+                    // remerge calls the moment this returns — reads it, and announcing would ask
+                    // for a second build of content already built. Same-datasource read, so it
+                    // costs this transaction nothing.
+                    return null;
+                  }
+                  // Nothing has EVER built this sha and nothing will: a request that went
+                  // CONFLICTED on creation never armed a run, and since the vacuous settle-window
+                  // pass went (2026-09-04) no verdict is no release, for ever. "Clears it and
+                  // dispatches" is the promise, and this is the half of it that was missing —
+                  // superseded is null because nothing moved, so no run is cancelled either.
+                  return new Folded(
+                      row.id,
+                      row.projectId,
+                      row.repoId,
+                      row.repoName,
+                      row.backingBranch(),
+                      row.mergedSha,
+                      null,
+                      now);
                 }
                 default -> {
                   String superseded = row.mergedSha;

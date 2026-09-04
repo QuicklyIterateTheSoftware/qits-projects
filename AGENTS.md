@@ -1249,9 +1249,10 @@ Anything that puts this route behind a poll faster than the window is polling th
 `-Dit.test` takes commas; `-Dtest=SKIPNONE` keeps the unit suite out of an IT-only run (run it
 separately before committing — the story classes share `domain`'s fixtures). `skipITs` stays `true`
 in the root pom because `PackagedSurfaceIT` is heavyweight, so the opt-in is per-run and per-class.
-`.config/qits/ci-event-userflows.yml` is the non-gating per-commit pipeline that runs exactly this
-list and publishes the bundle as the docs site `@userflows/qits-projects`; **a new story class has
-to be added to that list**, or it is written and never run.
+The userflow half of `.config/qits/ci-event-release-request.yml` runs exactly this list at every
+release-request fold and publishes the bundle as the docs site `@userflows/qits-projects`. It
+declares `gating: false`, so a red story shows the run red without holding the fold at the release
+gate; **a new story class has to be added to that list**, or it is written and never run.
 
 ## What is deliberately absent
 

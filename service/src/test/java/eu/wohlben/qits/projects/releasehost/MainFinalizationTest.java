@@ -44,6 +44,8 @@ public class MainFinalizationTest {
 
   @Inject RecordingBackingBranchMerger merger;
 
+  @Inject RecordingReleaseGitHost gitHost;
+
   @Inject FakeActiveBuilds activeBuilds;
 
   @Inject RecordingReleaseExecutor executor;
@@ -59,6 +61,7 @@ public class MainFinalizationTest {
     executor.reset();
     merger.reset();
     announcer.reset();
+    gitHost.reset();
     // A run is still active, so no fixture request settles itself mid-test: what is under test is
     // the merge to main, never the gate's timing.
     activeBuilds.answer(Optional.of(1));
@@ -234,14 +237,24 @@ public class MainFinalizationTest {
    * A release still waiting on its deployment is not owed anything, and the sweep must leave it
    * alone: merging it would put the commit on {@code main} with nothing having proved it, which is
    * the shape this epic removed.
+   *
+   * <p>The sweep does <em>look</em> at it — its catch-up re-asks the deployability question of every
+   * ungated row, which is what heals a release nothing ever forked on — so the tree is staged with
+   * the manifest that says "something deploys this". That is the only thing holding the merge back,
+   * and it is the assertion.
    */
   @Test
   public void theSweepDoesNotTouchATagWhoseDeploymentHasNotHappened() {
-    QuarkusTransaction.requiringNew().run(() -> pendingTag(freshTag()));
+    String tag = freshTag();
+    QuarkusTransaction.requiringNew().run(() -> pendingTag(tag));
+    gitHost.tree(
+        "refs/tags/" + tag,
+        java.util.Map.of("pom.xml", "irrelevant", ".config/qits/deployments.yml", "irrelevant"));
 
     finalization.sweep();
 
     assertEquals(List.of(), merger.foldsOf("refs/heads/main"));
+    assertNull(rowOf(tag).mergeRequestedAt, "a deployable release is gated by its deployment alone");
   }
 
   // -----------------------------------------------------------------------------------------------

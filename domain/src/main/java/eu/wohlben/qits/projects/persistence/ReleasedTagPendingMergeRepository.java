@@ -50,6 +50,19 @@ public class ReleasedTagPendingMergeRepository
     return list("mergeRequestedAt is not null and mergedAt is null order by mergeRequestedAt");
   }
 
+  /**
+   * Everything released and not yet gated at all — no deployment reported, no shortcut taken —
+   * oldest first. The publish phase's <b>catch-up</b> is the only caller: it re-asks the
+   * deployability question for each of these, which is what heals a tag whose fork never ran (this
+   * service died between the tag and the fork, or the tag predates the fork living here at all).
+   *
+   * <p>Bounded by construction: a row leaves this list the moment anything gates it, so the set is
+   * the releases genuinely in flight plus whatever is stuck — a handful, not a history.
+   */
+  public List<ReleasedTagPendingMerge> listUngated() {
+    return list("mergeRequestedAt is null and mergedAt is null order by releasedAt");
+  }
+
   /** The tags a page of release requests produced, for naming what reached {@code main}. */
   public List<ReleasedTagPendingMerge> listByRequests(List<String> requestIds) {
     if (requestIds.isEmpty()) {

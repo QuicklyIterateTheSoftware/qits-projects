@@ -23,7 +23,6 @@ import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,7 +34,6 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
@@ -77,20 +75,29 @@ import org.jboss.logging.Logger;
  *
  * <h2>The build gate</h2>
  *
- * <p>A PENDING request becomes READY when three things hold for its {@code mergedSha}, in this
- * order:
+ * <p><b>Exactly one thing meets it: a gating {@code BuildSuccessful} whose commit is this request's
+ * CURRENT fold.</b> A PENDING request becomes READY when, for its {@code mergedSha}:
  *
  * <ol>
  *   <li><b>No gating verdict is red.</b> One red gating run is a REJECTED request, immediately —
  *       nothing to wait for. Non-gating verdicts (the userflow pipelines) are read and ignored.
- *   <li><b>No run is still queued or running.</b> The ledger cannot see those (only terminal runs
- *       announce), so {@link ActiveBuilds} asks qits-ci; an answer that cannot be had keeps the
- *       request pending rather than guessing — the sweep asks again.
- *   <li><b>Something vouches for the sha, or nothing ever will.</b> A gating SUCCESS is the vouch.
- *       With no verdict at all the request waits {@code qits.projects.release-requests.settle}
- *       from the sha's arming and then passes vacuously — the CI-less repository's path, with the
- *       window covering the race where the push's runs have not been accepted yet.
+ *   <li><b>A gating verdict is green.</b> That is the vouch and there is no second way to earn it.
+ *       <b>No verdict is not a pass</b>: the request stays PENDING and the sweep asks again, for as
+ *       long as it takes. A repository whose pipeline never materializes therefore cannot release,
+ *       and that is what a release gate is <em>for</em>.
+ *   <li><b>No run is still queued or running</b>, where qits-ci can be asked. The ledger cannot see
+ *       those (only terminal runs announce), so {@link ActiveBuilds} asks; a second gating pipeline
+ *       still grinding on the same fold could still come back red, and a positive count holds the
+ *       request. An answer that cannot be had does <b>not</b> hold a vouched sha back — the green
+ *       gating verdict is the gate, the probe only ever narrows it.
  * </ol>
+ *
+ * <p><b>There was a fourth arm and it was a hole.</b> A sha nothing vouched for used to pass
+ * vacuously once a settle window had lapsed, on the theory that a repository with no CI must still
+ * be releasable. What it actually did — QA runs are created over the bus and executed by one serial
+ * runner, so the active-runs probe answers 0 while a run is still being accepted — was wave releases
+ * through in under two minutes, before their QA runs had executed at all (measured 2026-09-04). The
+ * window is gone, with the property that configured it.
  *
  * <p>A request with no {@code mergedSha} yet is gated on nothing and stays PENDING: the fold has not
  * been computed, so there is no content to have an opinion about.
@@ -150,12 +157,15 @@ public class ReleaseRequests {
   @Inject Instance<QaRunCancellations> cancellations;
 
   /**
-   * How long a request with no verdict at all waits after arming before passing vacuously — long enough that a
-   * push's runs have been accepted and would show as active, short enough that a CI-less
-   * repository's release is not meaningfully delayed.
+   * The publish phase, called on the worker the instant a release lands: a repository that declares
+   * no deployment has nothing to wait for and its tag is merged to {@code main} there and then.
+   *
+   * <p>The reverse edge — {@link ReleaseFinalization} injects this class to clear a tag out of the
+   * implicit source set — makes this a cycle between two {@code @ApplicationScoped} beans, which
+   * CDI's client proxies resolve. It is the honest shape: a release and its finalization are two
+   * halves of one lifecycle and each has to be able to start the other.
    */
-  @ConfigProperty(name = "qits.projects.release-requests.settle", defaultValue = "PT30S")
-  Duration settle;
+  @Inject ReleaseFinalization finalization;
 
   private ExecutorService worker;
 
@@ -476,9 +486,13 @@ public class ReleaseRequests {
 
   /**
    * The safety net under the event-driven path: re-evaluates every open request. It is what turns
-   * "could not ask qits-ci" and "settle window not over yet" into delays instead of stalls, what
+   * "could not ask qits-ci" and "the verdict has not landed yet" into delays instead of stalls, what
    * retries a FAILED execution — a <b>retryable</b> one only — and what re-folds a request whose
    * very first merge could not be made because the git host was unreachable.
+   *
+   * <p><b>It is also the only thing that will ever release a request whose verdict arrived while
+   * this service was down.</b> The gate now passes on a verdict and nothing else, so a missed
+   * consumption is a request that sits PENDING until something asks again — which is this.
    *
    * <p>A CONFLICTED request is deliberately <b>not</b> re-folded here. A conflict is a fact about
    * content that answers the same on every knock, and knocking anyway is the unbounded-loop defect
@@ -685,6 +699,20 @@ public class ReleaseRequests {
             });
   }
 
+  /**
+   * Say why a PENDING request is still pending, <b>only when the sentence changed</b>. The sweep
+   * re-evaluates every open request every 30 seconds and a request can wait for a whole pipeline,
+   * so stamping {@code updatedAt} on every tick would keep re-sorting the board (which is ordered by
+   * it) and write a row per request per tick for no news at all.
+   */
+  private static void waiting(ReleaseRequest row, String detail) {
+    if (detail.equals(row.detail)) {
+      return;
+    }
+    row.detail = detail;
+    row.updatedAt = Instant.now();
+  }
+
   /** The one place a request changes sha: gates invalidated, PENDING again, the window restarted. */
   private static void rearm(ReleaseRequest open, String why) {
     open.state = ReleaseRequest.State.PENDING;
@@ -792,28 +820,32 @@ public class ReleaseRequests {
                     row.updatedAt = Instant.now();
                     return false;
                   }
+                  boolean vouched =
+                      verdicts.stream().anyMatch(v -> v.gating() && "SUCCESS".equals(v.status()));
+                  if (!vouched) {
+                    // THE GATE. Nothing has vouched for this fold, so it does not pass — not after
+                    // a window, not because CI looks idle, not ever until a gating run says SUCCESS
+                    // for this exact commit. The sweep asks again; a repository whose pipeline never
+                    // materializes stays PENDING, which is the correct answer and not a stall.
+                    waiting(row, "Waiting for a gating CI verdict for " + shortSha(row.mergedSha));
+                    return false;
+                  }
                   Integer active =
                       activeBuilds.isResolvable()
                           ? activeBuilds.get().activeFor(row.repoId, row.mergedSha).orElse(null)
                           : null;
-                  if (active == null) {
-                    // Could not ask (or no probe configured): only the settle window may pass a
-                    // sha nothing vouches for, and a vouched sha still waits for it — without the
-                    // active answer, "no runs left" cannot be told from "runs still coming".
-                    if (Instant.now().isBefore(row.armedAt.plus(settle))) {
-                      return false;
-                    }
-                  } else if (active > 0) {
-                    return false;
-                  }
-                  boolean vouched =
-                      verdicts.stream().anyMatch(v -> v.gating() && "SUCCESS".equals(v.status()));
-                  if (!vouched && Instant.now().isBefore(row.armedAt.plus(settle))) {
+                  if (active != null && active > 0) {
+                    // Vouched, but qits-ci still has runs on this very fold: a second gating
+                    // pipeline can still come back red. Only a POSITIVE count holds — "could not
+                    // ask" (no probe, unreachable, unreadable) never overrides the vouch, or a
+                    // platform with no probe configured could never release a green commit.
+                    waiting(
+                        row,
+                        active + " CI run(s) are still in flight for " + shortSha(row.mergedSha));
                     return false;
                   }
                   row.state = ReleaseRequest.State.READY;
-                  row.detail =
-                      vouched ? null : "No CI verdict for this commit; passed after the settle window";
+                  row.detail = null;
                   row.updatedAt = Instant.now();
                   return true;
                 });
@@ -898,6 +930,13 @@ public class ReleaseRequests {
           ask.backingBranch(),
           outcome.version());
       remergeOpenOf(ask.repoId(), id, "the sibling release " + outcome.version() + " is in flight");
+      // THE PUBLISH PHASE'S FORK, on the release's own thread and the moment it lands: a repository
+      // that declares no deployment has nothing to wait for and its tag goes to main now. One that
+      // does deploy is left to DeploymentActive. Last, after the row exists and the request is
+      // RELEASED, because the fork reads that row; and never able to fail a release that already
+      // happened — a process that dies here leaves an ungated pending row, which is exactly what
+      // ReleaseFinalization's catch-up sweep is for.
+      finalization.onReleased(ask.repoId(), outcome.version());
     } else {
       settle(id, ReleaseRequest.State.FAILED, outcome.detail(), null, outcome.retryable());
       LOG.warnf(

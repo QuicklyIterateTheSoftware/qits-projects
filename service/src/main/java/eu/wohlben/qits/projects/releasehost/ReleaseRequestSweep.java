@@ -8,8 +8,10 @@ import jakarta.inject.Inject;
 
 /**
  * The safety net under the event-driven release requests: re-evaluates every open request on a
- * schedule, which is what turns "qits-ci could not be asked", "the settle window was still open"
- * and a FAILED execution into delays instead of stalls.
+ * schedule, which is what turns "qits-ci could not be asked", "the verdict had not landed yet" and a
+ * FAILED execution into delays instead of stalls. Since the gate passes on a gating verdict and
+ * nothing else, it is also the only thing that will ever release a request whose verdict arrived
+ * while this service was down.
  *
  * <p>quarkus-scheduler rides in with the eventstream jar, so this costs the deployable nothing new.
  * The interval is {@code qits.projects.release-requests.sweep-every}; the suite turns it {@code
@@ -32,9 +34,11 @@ public class ReleaseRequestSweep {
 
   /**
    * The publish phase's own belt: every merge to {@code main} this service owes and the git host has
-   * not applied yet. Its own scheduled method rather than a second line in the one above, so that a
-   * sweep of the open requests throwing cannot stop a released tag from reaching {@code main} — the
-   * two are separate concerns that happen to want the same interval.
+   * not applied yet, plus the catch-up that re-asks the deployability question of every released tag
+   * nothing has gated at all — which is what makes the non-deployable fork crash-safe and what heals
+   * a tag whose fork never ran. Its own scheduled method rather than a second line in the one above,
+   * so that a sweep of the open requests throwing cannot stop a released tag from reaching {@code
+   * main} — the two are separate concerns that happen to want the same interval.
    */
   @Scheduled(
       every = "{qits.projects.release-requests.sweep-every}",

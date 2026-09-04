@@ -73,12 +73,11 @@ public class EventWireReflectionTest {
             SCMRelease.class,
             BuildStatusListener.BuildVerdictPayload.class,
             DeploymentActiveListener.DeploymentActivePayload.class,
-            SoftwareReleaseListener.SoftwareReleasePayload.class,
             EventEnvelope.class,
             EventFrame.class),
         Set.of(registration.targets()),
-        "the four SCM records and the three bound consumption payloads in, RepositoryRenamed,"
-            + " ReleaseRequestChanged and SCMRelease out, the PUT body, the frame — a thirteenth"
+        "the four SCM records and the two bound consumption payloads in, RepositoryRenamed,"
+            + " ReleaseRequestChanged and SCMRelease out, the PUT body, the frame — a twelfth"
             + " wire type means a line here");
   }
 
@@ -170,8 +169,7 @@ public class EventWireReflectionTest {
       java.util.Map.of(
           "BuildSuccessful", BuildStatusListener.BuildVerdictPayload.class,
           "BuildFailed", BuildStatusListener.BuildVerdictPayload.class,
-          "DeploymentActive", DeploymentActiveListener.DeploymentActivePayload.class,
-          "SoftwareRelease", SoftwareReleaseListener.SoftwareReleasePayload.class);
+          "DeploymentActive", DeploymentActiveListener.DeploymentActivePayload.class);
 
   @Test
   public void everyDurableListenersSignatureNamesARegisteredType() {
@@ -225,15 +223,18 @@ public class EventWireReflectionTest {
   }
 
   /**
-   * The temporary half of the publish phase. Its absence is a library that releases, publishes and
-   * never finalizes its own {@code main} — and every later release request of it folding a tag that
-   * is already shipping, for ever.
+   * The publish phase's temporary half has NO listener of its own any more, and that is the fix of
+   * 2026-09-04 rather than an omission. It used to consume qits-ci's {@code SoftwareRelease}, an
+   * event only a repository carrying a {@code ci-event-release.yml} recipe ever emits, so every
+   * recipe-less repository — every SPA — released tags that never reached {@code main}. The
+   * deployability fork hangs off this service's OWN release now ({@code
+   * ReleaseFinalization.onReleased}, plus its catch-up sweep), which needs no subscription at all.
    */
   @Test
-  public void theSoftwareReleaseListenerIsDiscoverableAsADurableListener() {
+  public void theNonDeployableForkNeedsNoSubscriptionOfItsOwn() {
     assertTrue(
-        listeners.stream().anyMatch(SoftwareReleaseListener.class::isInstance),
-        "a removed listener is a silent one — and here it is every non-deployable repository");
+        listeners.stream().noneMatch(l -> l.consumerId().equals("projects-non-deployable-publish")),
+        "the SoftwareRelease-driven gate is gone; nothing should subscribe on its behalf");
   }
 
   @Test

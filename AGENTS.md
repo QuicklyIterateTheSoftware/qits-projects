@@ -204,17 +204,27 @@ HTTP server they never wanted, because vertx-http rides in with the jar. That is
   A conflict there is an ERROR on every attempt: `main` only advances through this path and every
   release folds the pending tags in, so a released tag that will not merge is an anomaly rather than
   traffic.
-- **`SoftwareReleaseListener` is the same phase's TEMPORARY second gate, and its whole content is
-  one question.** A library deploys nothing, so `DeploymentActive` never comes for it and its `main`
-  would never move again — so on the first artifact published out of a release, the released tag's
-  tree is read and a repository declaring no `.config/qits/deployments.yml` is finalized there and
-  then. **The fork lives in exactly one place** (`ReleaseFinalization.deployability`), it reads the
-  TREE and not the file (a tree listing separates "declares nothing" from "could not be asked";
-  `file` answers "failed" to both), and a repository that *does* declare a deployment is left
-  entirely alone — merging on publication would put the commit on `main` before the deployment, the
-  ordering this epic exists to fix. It goes when qits-maintenance becomes the lifecycle for
-  libraries and a consumer's bump becomes the deployment it already is. One throw and one only: a
-  git host that could not answer, which is the seam's own "ask me again".
+- **`ReleaseFinalization.onReleased` is the same phase's TEMPORARY second gate, and its whole
+  content is one question.** A library, an SPA and a docs repository deploy nothing, so
+  `DeploymentActive` never comes for them and their `main` would never move again — so **at the
+  release**, the released tag's tree is read and a repository declaring no
+  `.config/qits/deployments.yml` is finalized there and then. **The fork lives in exactly one place**
+  (`ReleaseFinalization.deployability`, reached only from `fork`), it reads the TREE and not the file
+  (a tree listing separates "declares nothing" from "could not be asked"; `file` answers "failed" to
+  both), and a repository that *does* declare a deployment is left entirely alone — merging early
+  would put the commit on `main` before the deployment, the ordering this epic exists to fix. It goes
+  when qits-maintenance becomes the lifecycle for libraries and a consumer's bump becomes the
+  deployment it already is.
+  **It hung off qits-ci's `SoftwareRelease` until 2026-09-04 and that was a gate only half the
+  platform could pass**: that event is emitted by a repository's `ci-event-release.yml` recipe, so
+  every recipe-less repository — every SPA — released tags that never reached `main` at all
+  (qits-deployments-platform-frontend 2026.904.151913, `merged_at` null, main one commit behind for
+  ever). A release is something this service performs itself, so the fork hangs off that now and
+  needs no subscription: `SoftwareReleaseListener` and its `projects-non-deployable-publish`
+  consumer are **gone**. It never throws (a tag exists by the time it runs; nothing after it may fail
+  the release), and crash-safety is the **catch-up** half of `ReleaseFinalization.sweep()`, which
+  re-asks the deployability question of every ungated `released_tag_pending_merge` row — one cheap
+  tree listing per release in flight, and the thing that heals anything stranded.
 - **`bus/EventWireReflection` is the native-image registration**, and `EventWireReflectionTest`
   guards its completeness against the registered listener beans. Read that class's javadoc before
   adding a wire type; the failure it prevents is invisible to every JVM test by construction.

@@ -36,9 +36,9 @@ import org.junit.jupiter.api.Test;
  * Every test therefore reads {@code mergedSha} off the request rather than choosing a sha, which is
  * also the assertion that the fold happened at all.
  *
- * <p>{@code qits.projects.release-requests.settle} is shortened to {@code PT2S} in the test
- * properties, so the vacuous arm is a two-second wait rather than thirty; every other case is
- * settled by a verdict and never touches the window.
+ * <p><b>Every case here is settled by a verdict or by nothing at all</b>, because since 2026-09-04
+ * there is nothing else that settles one: the settle window that used to pass an unvouched fold
+ * vacuously is gone, and so is the property that configured it.
  */
 @QuarkusTest
 public class ReleaseRequestFlowTest {
@@ -88,7 +88,7 @@ public class ReleaseRequestFlowTest {
    * <b>Open requests must not outlive this class</b>, the discipline {@code
    * ProjectReleaseRequestsTest} states and this class learned the hard way: {@code sweep()} walks
    * every open row in the database, so a request left PENDING by one test is a door call inside the
-   * next test that sweeps — and the vacuous-pass test counts those calls.
+   * next test that sweeps — and the tests below count those calls.
    */
   @AfterEach
   void dropTheFixturesRequests() {
@@ -210,25 +210,69 @@ public class ReleaseRequestFlowTest {
     awaitState(id, "RELEASED");
   }
 
+  /**
+   * <b>The gate gates.</b> A fold nothing has vouched for does not pass — not on the first
+   * evaluation, not on the tenth sweep, not after any wait, and pointedly not because qits-ci says
+   * it has no runs in flight for the commit.
+   *
+   * <p>That last clause is the whole of the 2026-09-04 fix. Until then a sha with no verdict passed
+   * <em>vacuously</em> once a settle window lapsed, and the window's own justification was that an
+   * accepted run would show as active by the time it ended. QA runs are created over the event bus
+   * and executed by one serial runner, so the probe answered 0 while the run was still being
+   * accepted, and releases went PENDING → RELEASED in under two minutes with their QA runs still
+   * queued behind them. A verdict is the only key to this door now, and a repository whose pipeline
+   * never materializes simply cannot release.
+   */
   @Test
-  public void aFoldNothingVouchesForPassesOnlyAfterTheSettleWindow() {
+  public void aFoldNothingVouchesForNeverPassesHoweverLongItWaits() {
+    activeBuilds.answer(Optional.of(0));
     String id = create("work");
-    assertEquals("PENDING", stateOf(id), "inside the settle window nothing passes vacuously");
+    assertEquals("PENDING", stateOf(id), "no verdict, no release");
 
-    // Still pending after an early sweep: the window is the floor, not a formality. (The sweep
-    // re-folds only a request that has never been folded — a fold per sweep would re-arm the
-    // window on every tick and nothing would ever pass it.)
-    releaseRequests.sweep();
-    assertEquals("PENDING", stateOf(id));
-
+    // Well past the window that used to pass it (PT2S in the test properties, when there was one).
     try {
-      Thread.sleep(2_300);
+      Thread.sleep(2_500);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     }
     releaseRequests.sweep();
+    releaseRequests.sweep();
+    releaseRequests.sweep();
+
+    assertEquals("PENDING", stateOf(id), "an idle CI is not a verdict and never becomes one");
+    assertEquals(0, executor.calls().size(), "and nothing was released on nobody's word");
+    String detail = given().get(base() + "/" + id).then().extract().path("request.detail");
+    assertTrue(detail.contains("Waiting for a gating CI verdict"), detail);
+
+    // And the one thing that does open it, on the very same request.
+    verdict("BuildSuccessful", mergedShaOf(id), "");
     awaitState(id, "RELEASED");
-    assertEquals(1, executor.calls().size(), "the vacuous pass reaches the door exactly once");
+  }
+
+  /**
+   * A green verdict for a fold this request has moved past is not the vouch it needs: the gate is
+   * correlated by merged sha in both directions, and a superseded sha's ledger row settles nothing.
+   * With the vacuous pass gone, the request simply stays PENDING for ever on such a verdict.
+   */
+  @Test
+  public void aGreenVerdictForASupersededFoldIsIgnoredForEver() {
+    activeBuilds.answer(Optional.of(0));
+    String id = create("work");
+    String superseded = mergedShaOf(id);
+
+    headMoved("work", sha());
+    String current = mergedShaOf(id);
+    assertTrue(!current.equals(superseded), "the push re-folded the request");
+
+    verdict("BuildSuccessful", superseded, "");
+    releaseRequests.sweep();
+    releaseRequests.sweep();
+    assertEquals("PENDING", stateOf(id), "the vouch is for content nobody will accept any more");
+    assertEquals(0, executor.calls().size());
+
+    verdict("BuildSuccessful", current, "");
+    awaitState(id, "RELEASED");
+    assertEquals(current, executor.calls().get(0).expectedSha());
   }
 
   private void headMoved(String branch, String sha) {

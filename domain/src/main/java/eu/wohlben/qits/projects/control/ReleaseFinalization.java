@@ -31,16 +31,23 @@ import org.jboss.logging.Logger;
  * owed and the sweep keeps asking, so a git host that was unreachable for an hour costs a delay
  * rather than a release that never lands on {@code main}.
  *
- * <h2>The one repository that has no deployment to wait for</h2>
+ * <h2>The repositories that have no deployment to wait for</h2>
  *
- * <p>A library deploys nothing, so the gate above would never come and its {@code main} would never
- * move again. {@link #onSoftwareRelease} is the shortcut: on the first artifact published out of a
- * release, the released tag's tree is read and a repository declaring no {@code
- * .config/qits/deployments.yml} is finalized there and then. <b>That fork lives in exactly one
- * place</b> — {@link #deployability} — and it is <b>temporary</b>, in the sense that its replacement
- * is already named: when qits-maintenance becomes the lifecycle for libraries the way
- * qits-deployments is for services, a consumer taking the new version <em>is</em> the deployment,
- * and this arm goes.
+ * <p>A library deploys nothing, and neither does a stand-alone SPA or a docs repository, so the gate
+ * above would never come and their {@code main} would never move again. {@link #onReleased} is the
+ * shortcut: <b>at the release</b>, the released tag's tree is read and a repository declaring no
+ * {@code .config/qits/deployments.yml} is finalized there and then. <b>That fork lives in exactly
+ * one place</b> — {@link #deployability}, reached only from {@link #fork} — and it is
+ * <b>temporary</b>, in the sense that its replacement is already named: when qits-maintenance
+ * becomes the lifecycle for libraries the way qits-deployments is for services, a consumer taking
+ * the new version <em>is</em> the deployment, and this arm goes.
+ *
+ * <p><b>It hangs off this service's own release and not off qits-ci's {@code SoftwareRelease}</b>,
+ * which is where it used to hang and why the arm quietly did nothing for half the platform: that
+ * event is emitted by a repository's {@code ci-event-release.yml} recipe, so a repository without
+ * one published no artifact event, was never forked on, and left its released tag stranded off
+ * {@code main} for ever. A release, by contrast, is something this service performs itself and
+ * therefore always knows about.
  *
  * <p>The two gates cannot both fire for one tag: a repository that declares a deployment is left
  * entirely to {@code DeploymentActive}, and the stamped {@code merge_requested_at} settles the race
@@ -131,17 +138,26 @@ public class ReleaseFinalization {
   }
 
   /**
-   * A release of {@code repoId} was published, which is the terminal gate for a repository that
-   * <b>deploys nothing</b> — and the one place the platform decides which kind of repository this
-   * is.
+   * <b>A release landed, so decide which kind of repository it belongs to.</b> Called on the release
+   * worker the instant {@code ReleaseRequests} has recorded the tag, and again by the catch-up for
+   * any released tag nothing has decided about yet.
    *
-   * <p><b>TEMPORARY, and the shape of what replaces it is known.</b> A library's release has no
-   * deployment to wait for, so nothing would ever finalize its {@code main} and its next release
-   * request would keep folding a tag that is already shipping. The published artifact is the closest
-   * thing it has to "it is live", so that is what gates it — until qits-maintenance becomes the
-   * lifecycle for libraries the way qits-deployments is for services, treating a consumer's bump to
-   * the new version as the deployment it actually is. When that lands, this arm goes and {@code
-   * onDeploymentActive} is the only gate again.
+   * <p><b>It hangs off the RELEASE, not off a published artifact</b> — and that move is this
+   * method's whole point (2026-09-04). It used to be {@code onSoftwareRelease}, driven by qits-ci's
+   * per-artifact publication event, which sounded like the closest thing a library has to "it is
+   * live" and was in fact a gate only some repositories can pass: {@code SoftwareRelease} is emitted
+   * by a repository's {@code ci-event-release.yml} recipe, and every repository without one — every
+   * SPA, for a start — announced nothing, so its released tag never reached {@code main} and its
+   * default branch fell one commit behind for ever (qits-deployments-platform-frontend
+   * 2026.904.151913, measured). A release is a fact this service produces itself, so this is now
+   * hung off that.
+   *
+   * <p><b>TEMPORARY, and the shape of what replaces it is known.</b> A library deploys nothing, so
+   * the {@code DeploymentActive} gate would never come and its {@code main} would never move again;
+   * until qits-maintenance becomes the lifecycle for libraries the way qits-deployments is for
+   * services — a consumer taking the new version <em>is</em> the deployment — the release itself has
+   * to stand in for it. When that lands, this arm goes and {@code onDeploymentActive} is the only
+   * gate again.
    *
    * <p>Deployability is read at the released tag, not at {@code main}: {@code
    * .config/qits/deployments.yml} is the platform's own declaration of "this is deployed", and the
@@ -149,15 +165,11 @@ public class ReleaseFinalization {
    * left alone</b> — its {@code DeploymentActive} is the gate and merging here would put the commit
    * on {@code main} before the deployment, which is precisely the ordering this epic exists to fix.
    *
-   * <p>One release publishes several artifacts and therefore several of these events. The first one
-   * decides; the rest find the gate stamped and ask the git host nothing.
-   *
-   * @throws IllegalStateException when deployability cannot be determined <b>right now</b> — an
-   *     unreachable git host. It is the seam's own retry: the event stays owed and the next catch-up
-   *     asks again, which is the only thing that can fix it. A tag the git host does not know is not
-   *     that case and settles with a WARN.
+   * <p><b>It never throws.</b> The caller is a release that has already happened and must not be
+   * failed by anything after the tag; a git host that could not answer leaves the row ungated, which
+   * is precisely what {@link #sweep()}'s catch-up picks up.
    */
-  public void onSoftwareRelease(String repoId, String version) {
+  public void onReleased(String repoId, String version) {
     if (repoId == null || repoId.isBlank() || version == null || version.isBlank()) {
       return;
     }
@@ -171,60 +183,83 @@ public class ReleaseFinalization {
                         .map(ReleaseFinalization::owedOf)
                         .orElse(null));
     if (owed == null) {
-      // Either this service did not release that tag, or it is already merged, or the gate has
-      // already been passed — by the deployment, or by this release's first published artifact.
-      LOG.debugf("Nothing to gate for %s of %s on its publication", version, repoId);
+      // Either this service did not release that tag, or it is already merged, or something has
+      // already gated it — the deployment, or an earlier pass of this very method.
+      LOG.debugf("Nothing to gate for %s of %s on its release", version, repoId);
       return;
     }
-    switch (deployability(repoId, version.trim())) {
-      case DEPLOYS -> {
-        // The DeploymentActive path owns this one, exclusively. Saying so at DEBUG rather than
-        // silently, because "nothing happened" is the correct outcome and an unreadable one.
-        LOG.debugf(
-            "%s declares a deployment, so its release %s reaches main when that deployment does",
-            repoId, version);
-      }
+    fork(owed, true);
+  }
+
+  /**
+   * The fork itself, and the ONLY copy of it: deploys nothing → {@code main} now; deploys → the
+   * deployment gates it; could not tell → nothing, and the catch-up asks again.
+   *
+   * @param loud whether an unanswerable git host is worth a WARN. It is on the release path, where
+   *     it is news; it is not on the catch-up, which re-asks about the same row every sweep and
+   *     would otherwise turn one unreadable tag into a log nobody reads.
+   */
+  private void fork(Owed owed, boolean loud) {
+    switch (deployability(owed.repoId(), owed.tagName())) {
+      case DEPLOYS ->
+          // The DeploymentActive path owns this one, exclusively. Saying so at DEBUG rather than
+          // silently, because "nothing happened" is the correct outcome and an unreadable one.
+          LOG.debugf(
+              "%s declares a deployment, so its release %s reaches main when that deployment does",
+              owed.repoId(), owed.tagName());
       case DEPLOYS_NOTHING -> {
         gate(
             owed,
-            "the repository declares no deployment, so publishing " + version + " is as live as"
-                + " that release gets");
+            "the repository declares no "
+                + DEPLOYMENTS_MANIFEST
+                + ", so nothing will ever deploy "
+                + owed.tagName());
         merge(owed.id());
       }
-      case UNREADABLE ->
-          // Warned where it was read. The released tag stays visibly unfinished — merge_requested_at
-          // null beside a null merged_at — and a deployment, or a person, can still complete it. A
-          // throw here would be this consumer asking the same unanswerable question for ever.
-          LOG.warnf(
-              "Whether %s of %s deploys anything cannot be established; its publication settles"
-                  + " without finalizing main",
-              version, repoId);
-      case UNKNOWN_FOR_NOW ->
-          throw new IllegalStateException(
-              "Could not read "
-                  + DEPLOYMENTS_MANIFEST
-                  + " at refs/tags/"
-                  + version
-                  + " of "
-                  + repoId
-                  + "; the publication of this release stays owed and the next catch-up asks"
-                  + " again");
+      case UNREADABLE, UNKNOWN_FOR_NOW -> {
+        // The released tag stays visibly unfinished — merge_requested_at null beside a null
+        // merged_at — and the catch-up, a deployment, or a person can still complete it.
+        String sentence =
+            "Whether "
+                + owed.tagName()
+                + " of "
+                + owed.repoId()
+                + " deploys anything cannot be established; it stays ungated and the catch-up will"
+                + " ask again";
+        if (loud) {
+          LOG.warn(sentence);
+        } else {
+          LOG.debug(sentence);
+        }
+      }
     }
   }
 
   /**
-   * The belt under every gate: re-attempts each merge this service owes {@code main}.
+   * The belt under every gate, in two arms.
    *
-   * <p>It is what turns an unreachable git host, a merge that raced a concurrent writer and a
-   * conflict somebody has since resolved into delays instead of stalls. <b>It selects on {@code
-   * merge_requested_at} and nothing else</b>: a released tag whose deployment has not happened is
-   * not owed anything, and sweeping it would be this class merging on no gate at all.
+   * <p><b>The catch-up</b> re-asks the deployability question for every released tag nothing has
+   * gated yet. It is what makes the fork crash-safe — a process that died between the tag and the
+   * fork loses nothing but time — and it is what heals a tag whose fork never ran at all, which is
+   * every non-deployable release made while this decision hung off {@code SoftwareRelease}. A
+   * repository that does declare a deployment is looked at and left alone on every pass, which is
+   * one cheap tree listing per release in flight.
+   *
+   * <p><b>The retry</b> re-attempts each merge this service already owes {@code main}, turning an
+   * unreachable git host, a merge that raced a concurrent writer and a conflict somebody has since
+   * resolved into delays instead of stalls. <b>It selects on {@code merge_requested_at} and nothing
+   * else</b>: a released tag whose deployment has not happened is not owed anything, and sweeping it
+   * would be this class merging on no gate at all.
    */
   public void sweep() {
     List<String> owed =
         QuarkusTransaction.requiringNew()
             .call(() -> pendingTags.listOwedMerges().stream().map(row -> row.id).toList());
     owed.forEach(this::merge);
+    List<Owed> ungated =
+        QuarkusTransaction.requiringNew()
+            .call(() -> pendingTags.listUngated().stream().map(ReleaseFinalization::owedOf).toList());
+    ungated.forEach(row -> fork(row, false));
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -412,14 +447,17 @@ public class ReleaseFinalization {
    * decision here. A tree listing separates them: a successful listing without the path is an
    * answer, and an unsuccessful one is not an answer at all.
    *
-   * <p>A refusal that is <b>not</b> about the moment — a tag the git host does not know — is
-   * deliberately {@link Deployability#UNKNOWN} too, but its caller settles rather than retries: the
-   * same bytes would fail identically forever, the released tag stays visibly unfinished, and a
-   * deployment can still complete it.
+   * <p>A refusal that is <b>not</b> about the moment — a tag the git host does not know — is kept
+   * apart as {@link Deployability#UNREADABLE} even though {@link #fork} treats the two alike today:
+   * the same bytes really would fail identically forever, and only the volume of the retry
+   * distinguishes them. Neither is ever read as an answer.
+   *
+   * <p><b>Its failures are logged at DEBUG</b>, because the catch-up asks about the same row on
+   * every sweep; {@link #fork} is what says something once, on the path where it is news.
    */
   private Deployability deployability(String repoId, String version) {
     if (!gitHosts.isResolvable()) {
-      LOG.warnf(
+      LOG.debugf(
           "No git host is configured, so whether %s deploys anything cannot be read", repoId);
       return Deployability.UNKNOWN_FOR_NOW;
     }
@@ -428,11 +466,11 @@ public class ReleaseFinalization {
       tree = gitHosts.get().tree(repoId, "refs/tags/" + version);
     } catch (RuntimeException e) {
       // The port says it must not throw; a throw is a port bug and must not be read as an answer.
-      LOG.warnf(e, "The git host threw reading the tree of %s at %s", repoId, version);
+      LOG.debugf(e, "The git host threw reading the tree of %s at %s", repoId, version);
       return Deployability.UNKNOWN_FOR_NOW;
     }
     if (!tree.ok()) {
-      LOG.warnf(
+      LOG.debugf(
           "Could not read the tree of %s at refs/tags/%s (%s): %s",
           repoId, version, tree.retryable() ? "retryable" : "final", tree.detail());
       return tree.retryable() ? Deployability.UNKNOWN_FOR_NOW : Deployability.UNREADABLE;

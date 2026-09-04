@@ -4,9 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import eu.wohlben.qits.eventstream.control.EventFrame;
+import eu.wohlben.qits.projects.control.ReleaseFinalization;
 import eu.wohlben.qits.projects.control.ReleaseGitHost;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
@@ -26,17 +26,24 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * <b>The non-deployable shortcut: a library's release reaches {@code main} when it is published.</b>
+ * <b>The non-deployable shortcut: a repository that deploys nothing reaches {@code main} at its own
+ * release.</b>
  *
- * <p>The claim worth pinning is the negative one — <b>a repository that declares a deployment is
- * left entirely alone here</b>. Merging on publication would put the commit on {@code main} before
- * the deployment that justifies it, which is the ordering this whole epic exists to fix, and the
- * only thing standing between the two behaviours is one file's presence in the released tree.
+ * <p>Two claims, and the negative one is the older: <b>a repository that declares a deployment is
+ * left entirely alone</b>, because merging at the release would put the commit on {@code main}
+ * before the deployment that justifies it, which is the ordering this epic exists to fix. The only
+ * thing standing between the two behaviours is one file's presence in the released tree.
+ *
+ * <p>The newer claim is <b>where the fork hangs</b> (2026-09-04). It used to hang off qits-ci's
+ * {@code SoftwareRelease} — an event only a repository carrying a {@code ci-event-release.yml}
+ * recipe ever emits — so every recipe-less repository, every SPA among them, released tags that
+ * never reached {@code main} at all. It hangs off this service's own release now, which is a fact it
+ * always has, and the catch-up sweep is what heals everything stranded in the meantime.
  */
 @QuarkusTest
 public class NonDeployablePublishTest {
 
-  @Inject eu.wohlben.qits.projects.bus.SoftwareReleaseListener publications;
+  @Inject ReleaseFinalization finalization;
 
   @Inject eu.wohlben.qits.projects.bus.DeploymentActiveListener deployments;
 
@@ -76,6 +83,11 @@ public class NonDeployablePublishTest {
             });
   }
 
+  /**
+   * Nothing of this fixture may outlive the class: the finalization sweep walks every ungated and
+   * every owed row in the database, so a row left behind is a git-host call inside somebody else's
+   * test.
+   */
   @AfterEach
   void dropTheFixture() {
     QuarkusTransaction.requiringNew()
@@ -87,17 +99,34 @@ public class NonDeployablePublishTest {
   }
 
   @Test
-  public void aRepositoryThatDeclaresNoDeploymentReachesMainOnPublication() {
+  public void aRepositoryThatDeclaresNoDeploymentReachesMainAtItsRelease() {
     String tag = freshTag();
     String releasedSha = pendingTag(tag);
     treeAtTag(tag, "pom.xml", "README.md");
 
-    published(tag, "maven", "eu.wohlben.qits:qits-thing");
+    finalization.onReleased(repoId, tag);
 
     List<RecordingBackingBranchMerger.Fold> intoMain = merger.foldsOf("refs/heads/main");
-    assertEquals(1, intoMain.size(), "a library has no deployment to wait for");
+    assertEquals(1, intoMain.size(), "nothing deploys this, so nothing else will ever gate it");
     assertEquals(List.of(releasedSha), intoMain.get(0).sources());
     assertNotNull(rowOf(tag).mergedAt);
+  }
+
+  /**
+   * The SPA case, which is the one that was broken: a frontend repository publishes no artifact
+   * event at all, so the old {@code SoftwareRelease} gate never fired for it and its tag sat off
+   * {@code main} for ever. It declares no deployment either, so it takes exactly the arm above.
+   */
+  @Test
+  public void aRepositoryThatPublishesNoArtifactEventIsFinalizedAllTheSame() {
+    String tag = freshTag();
+    pendingTag(tag);
+    treeAtTag(tag, "package.json", "angular.json", "src/main.ts");
+
+    finalization.onReleased(repoId, tag);
+
+    assertEquals(1, merger.foldsOf("refs/heads/main").size());
+    assertNotNull(rowOf(tag).mergedAt, "a released SPA tag must not sit off main for ever");
   }
 
   @Test
@@ -106,12 +135,12 @@ public class NonDeployablePublishTest {
     pendingTag(tag);
     treeAtTag(tag, "pom.xml", ".config/qits/deployments.yml");
 
-    published(tag, "docker", "qits/qits-thing");
+    finalization.onReleased(repoId, tag);
 
     assertEquals(
         List.of(),
         merger.foldsOf("refs/heads/main"),
-        "publishing an image is not the same statement as that image serving");
+        "a release is not the same statement as what it released serving");
     assertNull(
         rowOf(tag).mergeRequestedAt, "and the tag is not even gated: the deployment gates it");
 
@@ -123,59 +152,98 @@ public class NonDeployablePublishTest {
   }
 
   /**
-   * One release publishes several artifacts and qits-ci announces one event each. The first decides;
-   * the rest must not even ask the git host — which is what the scripted tree failure proves, since
-   * a read that happened would be a retryable answer and would throw.
+   * The fork is made once. A second telling — the release path and the catch-up racing, a replayed
+   * anything — must not even ask the git host, which is what the scripted tree failure proves: a
+   * read that happened would answer "retryable" and nothing would merge.
    */
   @Test
-  public void severalPublishedArtifactsOfOneReleaseMergeOnceAndReadTheTreeOnce() {
+  public void theSecondTellingOfOneReleaseAsksTheGitHostNothing() {
     String tag = freshTag();
     pendingTag(tag);
     treeAtTag(tag, "pom.xml");
 
-    published(tag, "maven", "eu.wohlben.qits:qits-thing");
+    finalization.onReleased(repoId, tag);
     gitHost.failTreeWith(ReleaseGitHost.Answer.failedRetryable("nobody may ask a second time"));
 
-    assertDoesNotThrow(() -> published(tag, "npm", "@qits/thing"));
-    assertDoesNotThrow(() -> published(tag, "docker", "qits/thing"));
+    assertDoesNotThrow(() -> finalization.onReleased(repoId, tag));
+    finalization.sweep();
 
     assertEquals(1, merger.foldsOf("refs/heads/main").size(), "one release, one merge to main");
   }
 
+  /**
+   * <b>The catch-up.</b> A git host that could not say whether the repository deploys leaves the tag
+   * ungated rather than guessing — and the release, which has already happened, is never failed by
+   * it. The sweep is what asks again, and it is the same sweep that heals every tag stranded by the
+   * gate this fork replaced.
+   */
   @Test
-  public void aGitHostThatCannotSayWhetherItDeploysLeavesTheEventOwed() {
+  public void aGitHostThatCannotAnswerLeavesTheTagUngatedAndTheCatchUpHealsIt() {
     String tag = freshTag();
     pendingTag(tag);
     gitHost.failTreeWith(ReleaseGitHost.Answer.failedRetryable("qits-githost answered 503"));
 
-    assertThrows(
-        RuntimeException.class,
-        () -> published(tag, "maven", "eu.wohlben.qits:qits-thing"),
-        "a throw is how this seam says 'ask me again': answering the question wrongly either"
-            + " finalizes main ahead of a deployment or never finalizes it at all");
+    assertDoesNotThrow(
+        () -> finalization.onReleased(repoId, tag),
+        "a tag exists by now; nothing after it may fail the release that made it");
 
     assertEquals(List.of(), merger.foldsOf("refs/heads/main"));
     assertNull(rowOf(tag).mergeRequestedAt);
 
-    // The catch-up offers it again once the git host is back, and it lands.
     gitHost.reset();
     treeAtTag(tag, "pom.xml");
-    published(tag, "maven", "eu.wohlben.qits:qits-thing");
+    finalization.sweep();
 
+    assertNotNull(rowOf(tag).mergedAt, "the catch-up asked again and it landed");
+  }
+
+  /**
+   * A released tag whose fork never ran at all — the process died between the two, or the release
+   * predates the fork living here — is exactly what the catch-up is for, and it needs no event and
+   * no operator.
+   */
+  @Test
+  public void theCatchUpFinalizesAReleaseNothingEverForkedOn() {
+    String tag = freshTag();
+    String releasedSha = pendingTag(tag);
+    treeAtTag(tag, "package.json");
+
+    finalization.sweep();
+
+    assertEquals(List.of(releasedSha), merger.foldsOf("refs/heads/main").get(0).sources());
     assertNotNull(rowOf(tag).mergedAt);
   }
 
   /**
-   * A refusal that is not about the moment — a tag this git host does not know — is settled instead:
-   * the same bytes would fail identically forever, and the released tag stays visibly unfinished for
-   * a deployment or a person to complete.
+   * And the catch-up's own negative: a deployable release still waiting on its deployment is looked
+   * at on every sweep and left exactly where it is. Merging it would be this class advancing {@code
+   * main} on no gate at all.
+   */
+  @Test
+  public void theCatchUpLeavesADeployableTagWaitingForItsDeployment() {
+    String tag = freshTag();
+    pendingTag(tag);
+    treeAtTag(tag, "pom.xml", ".config/qits/deployments.yml");
+
+    finalization.sweep();
+    finalization.sweep();
+
+    assertEquals(List.of(), merger.foldsOf("refs/heads/main"));
+    assertNull(rowOf(tag).mergeRequestedAt);
+    assertNull(rowOf(tag).mergedAt);
+  }
+
+  /**
+   * A refusal that is not about the moment — a tag this git host does not know — finalizes nothing
+   * either: the released tag stays visibly unfinished for a deployment, a later sweep or a person to
+   * complete, and is never read as "this repository deploys nothing".
    */
   @Test
   public void aTagTheGitHostDoesNotKnowSettlesWithoutFinalizingAnything() {
     String tag = freshTag();
     pendingTag(tag);
 
-    assertDoesNotThrow(() -> published(tag, "maven", "eu.wohlben.qits:qits-thing"));
+    assertDoesNotThrow(() -> finalization.onReleased(repoId, tag));
 
     assertEquals(List.of(), merger.foldsOf("refs/heads/main"));
     assertNull(rowOf(tag).mergeRequestedAt);
@@ -183,10 +251,10 @@ public class NonDeployablePublishTest {
   }
 
   @Test
-  public void aPublicationOfSomethingThisServiceNeverReleasedAsksTheGitHostNothing() {
+  public void aVersionThisServiceNeverReleasedAsksTheGitHostNothing() {
     gitHost.failTreeWith(ReleaseGitHost.Answer.failedRetryable("nobody should be asking"));
 
-    assertDoesNotThrow(() -> published("2026.101.10101", "maven", "somebody:else"));
+    assertDoesNotThrow(() -> finalization.onReleased(repoId, "2026.101.10101"));
 
     assertEquals(List.of(), merger.foldsOf("refs/heads/main"));
   }
@@ -231,30 +299,6 @@ public class NonDeployablePublishTest {
                 ReleasedTagPendingMerge.<ReleasedTagPendingMerge>find(
                         "repoId = ?1 and tagName = ?2", repoId, tag)
                     .firstResult());
-  }
-
-  private void published(String version, String packageType, String packageName) {
-    publications.onFrame(
-        new EventFrame(
-            UUID.randomUUID().toString(),
-            "SoftwareRelease",
-            Instant.now(),
-            "{\"repository\":\""
-                + repoId
-                + "\",\"repoId\":\""
-                + repoId
-                + "\",\"projectId\":\""
-                + projectId
-                + "\",\"version\":\""
-                + version
-                + "\",\"packageType\":\""
-                + packageType
-                + "\",\"packageName\":\""
-                + packageName
-                + "\"}",
-            null,
-            null,
-            null));
   }
 
   private void deploymentActive(String application, String version) {

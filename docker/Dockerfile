@@ -197,12 +197,19 @@ ENV QITS_MAVEN_CENTRAL_URL=$QITS_MAVEN_CENTRAL_URL
 # nowhere else — not a layer, not the image history. That is why they are not build args: this image
 # is pullable, and a build arg is recorded where anyone who pulls it can read it.
 # `.qits-maven-settings.xml` reads the two variables as the `qits-maven-network` server.
+# The `RUN` reads the two mounted files itself: docker 26's BuildKit has no `env=` mount option.
+# FILE form (`/run/secrets/<id>`, read into the command's own environment), not the `env=` mount
+# form: env= needs a dockerfile frontend the builder chooses, while the bare file mount is served
+# identically by every frontend version — and under the platform builder the frontend is the
+# builder's, not this file's, to pick.
 #
-# Absent secrets leave both variables unset, which is the state every build is in today and the
+# Absent secrets leave both variables empty, which is the state every build is in today and the
 # state a host-side `docker build` is in permanently: Maven sends credentials only when a repository
 # answers 401, and the registry does not yet.
-RUN --mount=type=secret,id=qits-client-id,env=QITS_MAVEN_AUTH_USR \
-    --mount=type=secret,id=qits-client-secret,env=QITS_MAVEN_AUTH_PSW \
+RUN --mount=type=secret,id=qits-client-id \
+    --mount=type=secret,id=qits-client-secret \
+    export QITS_MAVEN_AUTH_USR="$(cat /run/secrets/qits-client-id 2>/dev/null || true)"; \
+    export QITS_MAVEN_AUTH_PSW="$(cat /run/secrets/qits-client-secret 2>/dev/null || true)"; \
     d=service/src/main/webui/dist/qits-spa-projects/browser; \
     test -f "$d/index.html" || { \
       echo "No built client at $d." >&2; \
@@ -231,7 +238,7 @@ RUN --mount=type=secret,id=qits-client-id,env=QITS_MAVEN_AUTH_USR \
 # The service module's CycloneDX document, exported so the release step can PUT it to the artifacts
 # store. A stage rather than a layer of the runtime image, and BEFORE the runtime stage on purpose:
 # the last stage is what a plain `docker build` builds, and that must stay the image. The release
-# step reaches this one with `--target sbom --output type=local` using the SAME args and secrets as
+# step reaches this one with `--opt target=sbom --output type=local` using the SAME args and secrets as
 # the image build, so every layer above is a cache hit and the export costs seconds. `makeBom` rides
 # on the mvnw invocation above rather than a second one, for the same cache reason — one RUN, one
 # layer, one truth.

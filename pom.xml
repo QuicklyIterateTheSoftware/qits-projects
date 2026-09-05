@@ -97,7 +97,7 @@
              green build that resolved nothing is not evidence that it could, which is the whole
              reason to name a release here. qits-githost cut one on 2026-08-12 and this is it. -->
         <qits.eventstream.version>2026.904.82646</qits.eventstream.version>
-        <qits.githost-events.version>2026.905.30338</qits.githost-events.version>
+        <qits.githost-events.version>2026.904.83221</qits.githost-events.version>
 
         <!-- qits-containers' client jar: the orchestrator that owns every container this service
              starts, now that it holds no docker socket. Framework-free — one class, four answers,

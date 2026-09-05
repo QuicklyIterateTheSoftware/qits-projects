@@ -3,9 +3,12 @@ package eu.wohlben.qits.projects.api;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 
+import eu.wohlben.qits.projects.persistence.RepositoryRepository;
 import eu.wohlben.qits.projects.testsupport.GitFixtures;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
+import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,8 +19,39 @@ public class RepositoryControllerTest {
 
   private final String fixtureUrl;
 
+  /**
+   * The catalogue tests reach the row directly to make the one state no REST path can create — a
+   * repository with no archetype at all. See {@code aRepositoryWithNoArchetypeIsListedWithANullOne}.
+   */
+  @Inject RepositoryRepository repositoryRepository;
+
   public RepositoryControllerTest() throws Exception {
     fixtureUrl = GitFixtures.path("testing-repo.git");
+  }
+
+  private String createProject(String name) {
+    return given()
+        .contentType(ContentType.JSON)
+        .body(new ProjectController.CreateProjectRequest(name, null, null, null, ProjectRequests.DNS))
+        .when()
+        .post("/projects/api/projects")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .extract()
+        .path("project.id");
+  }
+
+  /** A blank repository on the platform's own host, taking its archetype from the name's suffix. */
+  private String createBlankRepository(String projectId, String name) {
+    return given()
+        .contentType(ContentType.JSON)
+        .body(new ProjectController.CreateProjectRepositoryRequest(null, name, null, null))
+        .when()
+        .post("/projects/api/projects/" + projectId + "/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .extract()
+        .path("repository.id");
   }
 
   private String createProjectAndRepository() {
@@ -368,6 +402,62 @@ public class RepositoryControllerTest {
         .then()
         .statusCode(Response.Status.OK.getStatusCode())
         .body("repository.id", equalTo(repoId));
+  }
+
+  /**
+   * The catalogue carries each repository's archetype, so a consumer keyed on the kind learns every
+   * repository's in ONE read. That consumer is qits-maintenance's release-train reader; before this
+   * field it would have had to ask {@code /repositories/{repoId}} once per row, or re-derive the
+   * kind from the name's role suffix in another repository, free to drift from this column.
+   *
+   * <p>The enum travels <b>by name</b> — the same string {@code RepositoryDto.archetype} has always
+   * answered on the by-id read, and the same string the MCP listing answers.
+   */
+  @Test
+  public void theCatalogueCarriesEachRepositorysArchetype() {
+    String projectId = createProject("Catalogue Archetype");
+    String daemonId = createBlankRepository(projectId, "catalogue-daemon");
+    String libraryId = createBlankRepository(projectId, "catalogue-javalib");
+
+    given()
+        .when()
+        .get("/projects/api/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        .body("repositories.find { it.id == '" + daemonId + "' }.name", equalTo("catalogue-daemon"))
+        .body("repositories.find { it.id == '" + daemonId + "' }.archetype", equalTo("DAEMON"))
+        .body("repositories.find { it.id == '" + libraryId + "' }.archetype", equalTo("LIBRARY"));
+  }
+
+  /**
+   * A row whose name declares no role suffix answers a <b>null</b> archetype rather than a guess,
+   * and is listed all the same — the same ruling the {@code name} column already carries one field
+   * over. A consumer parses the key leniently: null and absent mean the identical thing.
+   *
+   * <p>The row is made by nulling the column directly, because no REST path can mint one: {@code
+   * POST …/repositories} refuses a request that states neither an archetype nor a name carrying a
+   * suffix. The wrapper reconcile is what produces these in the field — a {@code
+   * components/<component>/<name>} entry whose name declares nothing ({@code
+   * WrapperReconcileService}, via {@code RepositoryArchetype.fromRepositoryName}).
+   */
+  @Test
+  public void aRepositoryWithNoArchetypeIsListedWithANullOne() {
+    String projectId = createProject("Catalogue No Archetype");
+    String repoId = createBlankRepository(projectId, "catalogue-unsuffixed-service");
+
+    QuarkusTransaction.requiringNew()
+        .run(() -> repositoryRepository.findById(repoId).archetype = null);
+
+    given()
+        .when()
+        .get("/projects/api/repositories")
+        .then()
+        .statusCode(Response.Status.OK.getStatusCode())
+        // Present in the answer — a kind nobody stated is not a reason to drop the row.
+        .body(
+            "repositories.find { it.id == '" + repoId + "' }.name",
+            equalTo("catalogue-unsuffixed-service"))
+        .body("repositories.find { it.id == '" + repoId + "' }.archetype", nullValue());
   }
 
   // SEAM (migration-plan.md §6, repository <-> workspace). Fourteen tests stood here, all over

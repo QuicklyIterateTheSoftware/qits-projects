@@ -790,6 +790,8 @@ components:
           type: string
         mainBranch:
           type: string
+        archetype:
+          $ref: "#/components/schemas/RepositoryArchetype"
     RepositoryDto:
       type: object
       properties:
@@ -2842,9 +2844,10 @@ paths:
   /projects/api/repositories:
     get:
       summary: Every repository with its public coordinates
-      description: "The machine-readable catalogue: row id, project, addressable name\
-        \ and main branch, sorted by project then name. A repository that owns no\
-        \ name is listed with a null name."
+      description: "The machine-readable catalogue: row id, project, addressable name,\
+        \ main branch and archetype, sorted by project then name. A repository that\
+        \ owns no name is listed with a null name; one whose name declares no role\
+        \ suffix carries a null archetype."
       responses:
         "200":
           description: OK
@@ -3725,4 +3728,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.905.163712
+  version: 2026.905.192321

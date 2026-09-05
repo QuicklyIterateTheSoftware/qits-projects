@@ -2125,7 +2125,10 @@ public class RepositoryService {
    * <p><b>Who asks.</b> qits-ci's trigger engine, deciding which repositories a pipeline could run
    * for. It used to enumerate the git host's own {@code GET /git}, which answers storage ids and
    * nothing else; a listing that carries the public identity is what lets that route be locked to
-   * this service alone.
+   * this service alone. qits-maintenance's release-train reader asks too, and it is why every row
+   * now carries its {@code archetype} — see {@link RepositoryCoordinatesDto}. The column is read
+   * straight off the row, so a row whose name declares no role suffix answers null here rather than
+   * a guess.
    *
    * <p><b>A row with no alias is listed with a null name, never dropped.</b> An unnamed repository
    * is a fact about this service's state and the caller is the one that decides to skip it; omitting
@@ -2151,7 +2154,8 @@ public class RepositoryService {
                             repo.id,
                             repo.project.id,
                             repositoryNameRepository.nameFor(repo).orElse(null),
-                            repo.mainBranch))
+                            repo.mainBranch,
+                            repo.archetype))
                 .sorted(
                     Comparator.comparing(RepositoryCoordinatesDto::projectId)
                         .thenComparing(

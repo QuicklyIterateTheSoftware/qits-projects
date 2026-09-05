@@ -80,6 +80,20 @@ public class RefinementContainerFactory {
     return imageRepo + ":" + imageVersion;
   }
 
+  /**
+   * The two halves apart, for the launch-pin route ({@code GET /projects/api/pins}) — the same
+   * accessor pair {@code AgentContainerFactory} carries and for its reason: the pin must name what a
+   * start would pull, read from the field a start reads, never from a second declaration of the key.
+   */
+  public String imageRepo() {
+    return imageRepo;
+  }
+
+  /** The refinement image's calver tag; see {@link #imageRepo()}. */
+  public String imageVersion() {
+    return imageVersion;
+  }
+
   /** The same shared network, credential volume and build caches the agent factory mounts. */
   @ConfigProperty(name = "qits.projects.agent-network", defaultValue = "qits-net")
   String network;

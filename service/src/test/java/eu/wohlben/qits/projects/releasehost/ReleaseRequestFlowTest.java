@@ -1,7 +1,9 @@
 package eu.wohlben.qits.projects.releasehost;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -14,12 +16,15 @@ import eu.wohlben.qits.projects.control.ReleaseExecutor;
 import eu.wohlben.qits.projects.control.ReleaseRequests;
 import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
+import eu.wohlben.qits.projects.entity.ReleasedTagPendingMerge;
 import eu.wohlben.qits.projects.entity.Repository;
+import eu.wohlben.qits.projects.testsupport.RecordingReleasedBranchWorkspaces;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -58,6 +63,8 @@ public class ReleaseRequestFlowTest {
 
   @Inject RecordingReleaseRequestAnnouncer announcer;
 
+  @Inject RecordingReleasedBranchWorkspaces releasedBranchWorkspaces;
+
   private String repoId;
   private String projectId;
 
@@ -67,6 +74,7 @@ public class ReleaseRequestFlowTest {
     executor.reset();
     merger.reset();
     announcer.reset();
+    releasedBranchWorkspaces.reset();
     repoId = "release-repo-" + UUID.randomUUID();
     projectId = "release-project-" + UUID.randomUUID();
     QuarkusTransaction.requiringNew()
@@ -94,7 +102,13 @@ public class ReleaseRequestFlowTest {
   @AfterEach
   void dropTheFixturesRequests() {
     QuarkusTransaction.requiringNew()
-        .run(() -> ReleaseRequest.delete("projectId = ?1", projectId));
+        .run(
+            () -> {
+              ReleaseRequest.delete("projectId = ?1", projectId);
+              // The released tags this class's releases record are swept by the finalization belt,
+              // which has no scope either — same discipline, one table over.
+              ReleasedTagPendingMerge.delete("repoId = ?1", repoId);
+            });
   }
 
   private String base() {
@@ -532,5 +546,220 @@ public class ReleaseRequestFlowTest {
         .body("request.sources.size()", equalTo(0))
         .body("request.mergedSha", nullValue())
         .body("request.mergedToMainAt", nullValue());
+  }
+
+  // -----------------------------------------------------------------------------------------------
+  // The repository's own list
+  // -----------------------------------------------------------------------------------------------
+
+  /**
+   * <b>The repository list takes the same state vocabulary the project-wide one does</b>, and the
+   * default is the open work plus the last ten releases rather than everything ever asked for.
+   *
+   * <p>That is a deliberate loss and it is worth naming: a WITHDRAWN request used to appear here,
+   * because this route had no filter at all rather than because anything decided it belonged. It is
+   * one query parameter away in either spelling.
+   */
+  @Test
+  public void theDefaultDropsAWithdrawnRequestAndEitherFilterFindsItAgain() {
+    activeBuilds.answer(Optional.of(1));
+    String id = create("moot");
+    given()
+        .contentType(ContentType.JSON)
+        .body("{\"reason\":\"moot\"}")
+        .post(base() + "/" + id + "/withdraw")
+        .then()
+        .statusCode(200);
+
+    assertTrue(!idsAt("").contains(id), "withdrawn is not open work and is not a recent release");
+    assertTrue(idsAt("?state=all").contains(id), "the whole history still holds it");
+    assertTrue(idsAt("?state=WITHDRAWN").contains(id), "and so does its own state");
+
+    // A typo must never read as "nothing has been asked for here" — the project route's posture,
+    // now on this one too.
+    given()
+        .get(base() + "?state=widthrawn")
+        .then()
+        .statusCode(400)
+        .body("message", containsString("widthrawn"))
+        .body("message", containsString("WITHDRAWN"));
+  }
+
+  /**
+   * <b>What the tag points at, on the request that made it.</b> {@code releasedSha} is not {@code
+   * mergedSha}: the release commits the rewritten manifests onto the fold and tags <em>that</em>
+   * commit, so the two are a parent and its child — and the sha a reader needs to open the release
+   * in the code browser is the second one. It rides on the single read and on the list alike, out of
+   * the batch read that already fetched the released tag for {@code mergedToMainAt}.
+   */
+  @Test
+  public void aReleasedRequestSaysWhatItsTagPointsAt() {
+    activeBuilds.answer(Optional.of(0));
+    String id = create("work");
+    String merged = mergedShaOf(id);
+    verdict("BuildSuccessful", merged, "");
+    awaitState(id, "RELEASED");
+
+    given()
+        .get(base() + "/" + id)
+        .then()
+        .body("request.version", equalTo("2026.831.90000"))
+        .body("request.releasedSha", equalTo("released-sha-0"))
+        .body("request.mergedSha", equalTo(merged));
+
+    given()
+        .get(base())
+        .then()
+        .statusCode(200)
+        .body("requests.find { it.id == '" + id + "' }.releasedSha", equalTo("released-sha-0"));
+  }
+
+  /** A request that has released nothing has no tag, so both of the tag's fields are null. */
+  @Test
+  public void anUnreleasedRequestNamesNoReleasedSha() {
+    activeBuilds.answer(Optional.of(1));
+    String id = create("work");
+
+    given()
+        .get(base() + "/" + id)
+        .then()
+        .body("request.releasedSha", nullValue())
+        .body("request.mergedToMainAt", nullValue());
+  }
+
+  /**
+   * The commits read's own wiring, at the one shape that needs no repository behind it: a request
+   * whose first fold has not landed has nothing to list and says so, rather than reaching a mirror
+   * for a sha that does not exist. What the range itself answers is {@code MergeRangeCommitsTest}'s,
+   * against a real repository.
+   */
+  @Test
+  public void aRequestWithNoFoldYetAnswersTheCommitsReadWithASentence() {
+    activeBuilds.answer(Optional.of(1));
+    String id = create("work");
+    QuarkusTransaction.requiringNew()
+        .run(() -> ReleaseRequest.update("mergedSha = null where id = ?1", id));
+
+    given()
+        .get(base() + "/" + id + "/commits")
+        .then()
+        .statusCode(200)
+        .body("mergedSha", nullValue())
+        .body("commits", hasSize(0))
+        .body("detail", equalTo("Nothing has been folded yet"));
+
+    // And the scope is part of the address: another repository's route does not answer for it.
+    given()
+        .get("/projects/api/repositories/somebody-else/release-requests/" + id + "/commits")
+        .then()
+        .statusCode(404);
+  }
+
+  private List<String> idsAt(String query) {
+    return given().get(base() + query).then().statusCode(200).extract().path("requests.id");
+  }
+
+  // -----------------------------------------------------------------------------------------
+  // The workspaces standing on the branches a release deleted
+  // -----------------------------------------------------------------------------------------
+
+  /** The port is asked after the request is settled, so the calls are polled like the state is. */
+  private List<RecordingReleasedBranchWorkspaces.Resolved> awaitResolutions(int expected) {
+    long deadline = System.currentTimeMillis() + 10_000;
+    List<RecordingReleasedBranchWorkspaces.Resolved> last = List.of();
+    while (System.currentTimeMillis() < deadline) {
+      last = releasedBranchWorkspaces.calls();
+      if (last.size() >= expected) {
+        return last;
+      }
+      try {
+        Thread.sleep(50);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        fail("interrupted");
+      }
+    }
+    fail("expected " + expected + " workspace resolutions; saw " + last);
+    return last;
+  }
+
+  /**
+   * <b>Exactly the branches the executor deleted, and the default branch is not one of them.</b>
+   * The release deletes each named source through a git-host primitive that fires no event, so this
+   * call is the only thing that can tell qits-workspaces a workspace's branch is gone — and it must
+   * name the same set, from the same two fields, or it either misses a reap or asks for the main
+   * workspace to be torn down.
+   */
+  @Test
+  public void aReleaseAsksForTheWorkspacesOfEveryBranchItDeletedButNotTheDefaultOne() {
+    activeBuilds.answer(Optional.of(0));
+    String id = create("work");
+    given()
+        .contentType(ContentType.JSON)
+        .body("{\"branch\":\"work-two\"}")
+        .post(base() + "/" + id + "/sources")
+        .then()
+        .statusCode(200);
+
+    verdict("BuildSuccessful", mergedShaOf(id), "");
+    awaitState(id, "RELEASED");
+
+    List<RecordingReleasedBranchWorkspaces.Resolved> resolutions = awaitResolutions(2);
+    assertEquals(2, resolutions.size(), "one per released branch and no more: " + resolutions);
+    assertEquals(
+        List.of("work", "work-two"),
+        resolutions.stream().map(RecordingReleasedBranchWorkspaces.Resolved::branch).toList(),
+        "main is a named source of every request and is never deleted, so it is never resolved");
+    for (RecordingReleasedBranchWorkspaces.Resolved resolution : resolutions) {
+      assertEquals(repoId, resolution.repoId(), "the catalog id, which is what workspaces keys on");
+      assertEquals("2026.831.90000", resolution.version());
+      assertEquals("released-sha-0", resolution.releasedSha());
+    }
+  }
+
+  /** Nothing was deleted, so there is nothing to reap — and no call to make. */
+  @Test
+  public void aReleaseThatDidNotHappenAsksForNoWorkspaceResolution() {
+    executor.answer(ReleaseExecutor.Outcome.refused("409: ALREADY_INTEGRATED"));
+    String id = create("work");
+    verdict("BuildSuccessful", mergedShaOf(id), "");
+    awaitState(id, "FAILED");
+
+    // The worker is asynchronous: give a wrongly-made call time to show up.
+    try {
+      Thread.sleep(300);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    assertEquals(List.of(), releasedBranchWorkspaces.calls());
+  }
+
+  /**
+   * <b>The belt.</b> The port's contract is that an implementation never throws; this one does
+   * anyway, and the release stays released — not FAILED, not settled a second time, and the worker
+   * survives to run the next one.
+   */
+  @Test
+  public void aThrowingWorkspaceResolutionLeavesTheReleaseReleased() {
+    releasedBranchWorkspaces.failWith(true);
+    activeBuilds.answer(Optional.of(0));
+    String id = create("work");
+    verdict("BuildSuccessful", mergedShaOf(id), "");
+    awaitState(id, "RELEASED");
+    awaitResolutions(1);
+
+    try {
+      Thread.sleep(300);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    assertEquals("RELEASED", stateOf(id), "a reap that blew up is not a release that failed");
+    given().get(base() + "/" + id).then().body("request.version", equalTo("2026.831.90000"));
+
+    // And the worker is still there.
+    releasedBranchWorkspaces.failWith(false);
+    String next = create("work-after");
+    verdict("BuildSuccessful", mergedShaOf(next), "");
+    awaitState(next, "RELEASED");
   }
 }

@@ -19,6 +19,8 @@ import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,7 +30,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The project-wide release-request list: every repository of one project in one read, defaulting to
- * the requests that can still move.
+ * the requests that can still move plus the handful that have just landed.
  *
  * <p>Requests are made through the real repository-scoped route, so what this asserts about scoping
  * rests on the {@code projectId} the creation path actually denormalises onto the row rather than on
@@ -143,6 +145,30 @@ public class ProjectReleaseRequestsTest {
         .statusCode(200);
   }
 
+  /**
+   * A landed release, written straight to the table. The state machine's own way there is asserted
+   * in {@code ReleaseRequestFlowTest}; what this class is about is the reading, and eleven releases
+   * driven through the gate would be eleven door calls to make one list.
+   */
+  private String released(String repoId, String summary, Instant when) {
+    return QuarkusTransaction.requiringNew()
+        .call(
+            () -> {
+              ReleaseRequest row = new ReleaseRequest();
+              row.id = UUID.randomUUID().toString();
+              row.repoId = repoId;
+              row.projectId = projectId;
+              row.summary = summary;
+              row.state = ReleaseRequest.State.RELEASED;
+              row.version = "2026.903." + Math.abs(summary.hashCode() % 900000 + 100000);
+              row.createdAt = when;
+              row.armedAt = when;
+              row.updatedAt = when;
+              row.persist();
+              return row.id;
+            });
+  }
+
   private List<String> idsAt(String query) {
     return given().get(projectBase() + query).then().statusCode(200).extract().path("requests.id");
   }
@@ -163,6 +189,53 @@ public class ProjectReleaseRequestsTest {
         ids.contains(elsewhere), "another project's request is not this project's business");
     assertFalse(ids.contains(settled), "a withdrawn request is not open work");
     assertEquals(2, ids.size(), "exactly the two open ones");
+  }
+
+  /**
+   * <b>The default is the open work plus the last ten releases</b>, and the tail is what makes the
+   * page readable: a request that lands is no longer waiting on anybody, so it leaves the open set —
+   * and a worklist that dropped it there and then made the one event people actually come to check
+   * the one thing it never showed. Ten and not the history, so a project with a year of releases
+   * costs the same read as one with three.
+   */
+  @Test
+  public void theDefaultCarriesTheLastTenReleasesBehindTheOpenWork() {
+    String open = create(serviceRepoId, "still-open");
+    List<String> releases = new ArrayList<>();
+    for (int index = 0; index < 11; index++) {
+      // Oldest first, so the one that must fall off the tail is releases.get(0).
+      releases.add(released(serviceRepoId, "release " + index, Instant.now().minusSeconds(600 - index)));
+    }
+
+    List<String> ids = idsAt("");
+
+    assertEquals(11, ids.size(), "the open request and exactly ten releases: " + ids);
+    assertEquals(open, ids.get(0), "the open request moved last, and the list is by what moved last");
+    assertFalse(
+        ids.contains(releases.get(0)),
+        "the eleventh-oldest release is off the tail, which is what makes this a page");
+    assertEquals(
+        releases.subList(1, 11).reversed(),
+        ids.subList(1, 11),
+        "and the ten that are on it are most recently released first");
+  }
+
+  /** The tail is the DEFAULT's alone: a named state is a narrowing and never gets a tail bolted on. */
+  @Test
+  public void namingAStateAnswersThatStateAndNothingBesideIt() {
+    create(serviceRepoId, "narrowing-open");
+    String release = released(frontendRepoId, "a release", Instant.now());
+
+    given()
+        .get(projectBase() + "?state=RELEASED")
+        .then()
+        .statusCode(200)
+        .body("requests.id", contains(release));
+    given()
+        .get(projectBase() + "?state=PENDING")
+        .then()
+        .statusCode(200)
+        .body("requests.id", not(hasItem(release)));
   }
 
   @Test

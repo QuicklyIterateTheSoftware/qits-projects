@@ -59,8 +59,8 @@ public class RepositoryController {
   public static record ListRepositoriesRequest() {
     /**
      * @param repositories every repository this service holds, sorted by project then name. A row
-     *     with no registered name is present with a null {@code name} — see {@link
-     *     RepositoryCoordinatesDto}.
+     *     with no registered name is present with a null {@code name}, and one whose name declares
+     *     no role suffix with a null {@code archetype} — see {@link RepositoryCoordinatesDto}.
      */
     public record Response(List<RepositoryCoordinatesDto> repositories) {}
   }
@@ -80,14 +80,21 @@ public class RepositoryController {
    * <p>A read that fails is a 5xx and never an empty list: "no repositories" is an answer a caller
    * acts on. {@code RepositoryService#listCoordinates} holds it through a postgres cutover for the
    * same reason.
+   *
+   * <p><b>The answer carries each repository's archetype</b>, which is what makes one read enough
+   * for a consumer keyed on the kind — qits-maintenance's release-train reader. It is an added
+   * optional field and nothing had to change to keep reading this route: an existing client ignores
+   * the key, and a null archetype is a row whose name declares no role suffix.
    */
   @GET
   @jakarta.annotation.security.RolesAllowed({"qits:admin", "qits:system"})
   @Operation(
       summary = "Every repository with its public coordinates",
       description =
-          "The machine-readable catalogue: row id, project, addressable name and main branch, sorted"
-              + " by project then name. A repository that owns no name is listed with a null name.")
+          "The machine-readable catalogue: row id, project, addressable name, main branch and"
+              + " archetype, sorted by project then name. A repository that owns no name is listed"
+              + " with a null name; one whose name declares no role suffix carries a null"
+              + " archetype.")
   public ListRepositoriesRequest.Response list() {
     return new ListRepositoriesRequest.Response(repositoryService.listCoordinates());
   }

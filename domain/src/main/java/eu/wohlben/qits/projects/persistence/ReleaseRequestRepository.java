@@ -88,9 +88,43 @@ public class ReleaseRequestRepository implements PanacheRepositoryBase<ReleaseRe
     return list("repoId = ?1 and state in ?2 order by createdAt", repoId, OPEN);
   }
 
-  /** One repository's requests, newest first. */
-  public List<ReleaseRequest> listByRepo(String repoId) {
-    return list("repoId = ?1 order by createdAt desc", repoId);
+  /**
+   * One repository's requests in the named states, newest first. The state set is the caller's,
+   * because "which requests" is a question about the reading and not about the repository — see
+   * {@code ReleaseRequests.statesFor} for the vocabulary and for what an absent one means.
+   */
+  public List<ReleaseRequest> listByRepo(
+      String repoId, Collection<ReleaseRequest.State> states) {
+    if (states.isEmpty()) {
+      return List.of();
+    }
+    return list("repoId = ?1 and state in ?2 order by createdAt desc", repoId, states);
+  }
+
+  /**
+   * The repository's last {@code limit} releases, most recently moved first — the tail the default
+   * reading adds to the open set, so that a list which is otherwise "what is still waiting" also
+   * says what has just landed.
+   *
+   * <p>Ordered and paged by {@code updatedAt} rather than by {@code createdAt}: what makes a release
+   * recent is when it <em>released</em>, and a request asked for a week ago that landed this morning
+   * is the one somebody is looking for. It is a page and not a filter on purpose — a repository with
+   * a year of releases must cost the same read as one with three.
+   */
+  public List<ReleaseRequest> listRecentReleased(String repoId, int limit) {
+    return find("repoId = ?1 and state = ?2 order by updatedAt desc", repoId, ReleaseRequest.State.RELEASED)
+        .page(0, limit)
+        .list();
+  }
+
+  /** {@link #listRecentReleased} across every repository of one project. */
+  public List<ReleaseRequest> listRecentReleasedByProject(String projectId, int limit) {
+    return find(
+            "projectId = ?1 and state = ?2 order by updatedAt desc",
+            projectId,
+            ReleaseRequest.State.RELEASED)
+        .page(0, limit)
+        .list();
   }
 
   /**

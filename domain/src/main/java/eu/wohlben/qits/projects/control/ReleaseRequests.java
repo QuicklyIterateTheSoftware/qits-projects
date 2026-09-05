@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.control;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.projects.dto.CommitBuildStatusDto;
 import eu.wohlben.qits.projects.dto.MergeConflictDto;
+import eu.wohlben.qits.projects.dto.ReleaseRequestCommitsDto;
 import eu.wohlben.qits.projects.dto.ReleaseRequestDto;
 import eu.wohlben.qits.projects.dto.ReleaseRequestSourceDto;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
@@ -27,6 +28,7 @@ import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -148,6 +150,13 @@ public class ReleaseRequests {
 
   @Inject BuildStatusLedger ledger;
 
+  /**
+   * The mirror-backed git reader, for the one question this class answers out of a repository rather
+   * than out of its own tables: what a fold brought in. Not an {@code Instance} — it is this
+   * module's own bean and not a port, and the mirror it reads is cloned on first use.
+   */
+  @Inject CommitService commits;
+
   @Inject ObjectMapper json;
 
   @Inject Instance<ActiveBuilds> activeBuilds;
@@ -159,6 +168,8 @@ public class ReleaseRequests {
   @Inject Instance<ReleaseRequestAnnouncer> announcers;
 
   @Inject Instance<QaRunCancellations> cancellations;
+
+  @Inject Instance<ReleasedBranchWorkspaces> releasedBranchWorkspaces;
 
   /**
    * The publish phase, called on the worker the instant a release lands: a repository that declares
@@ -325,16 +336,30 @@ public class ReleaseRequests {
                   row.repoName,
                   sources.listByRequest(id),
                   implicitFor(row.repoId),
-                  pendingTags.findByRequest(id).map(tag -> tag.mergedAt).orElse(null));
+                  pendingTags.findByRequest(id).orElse(null));
             });
   }
 
-  /** One repository's requests, newest first. */
-  public List<ReleaseRequestDto> listByRepo(String repoId) {
+  /**
+   * One repository's requests, newest first — <b>the open ones plus the last {@value
+   * #RECENT_RELEASED} releases</b> when nobody names a state, and exactly what {@link #statesFor}
+   * makes of the word when somebody does.
+   *
+   * <p>Ordered by {@code createdAt} because this list is the repository's own record, read as "what
+   * has been asked for here" — the project-wide list is the worklist and orders by what moved last.
+   * The two reads are merged in memory rather than in SQL, which is what lets the tail be a page:
+   * the open set is bounded by the flow and the tail by {@value #RECENT_RELEASED}.
+   */
+  public List<ReleaseRequestDto> listByRepo(String repoId, String state) {
+    Selection selection = statesFor(state);
     return QuarkusTransaction.requiringNew()
         .call(
             () -> {
-              List<ReleaseRequest> rows = requests.listByRepo(repoId);
+              List<ReleaseRequest> rows = new ArrayList<>(requests.listByRepo(repoId, selection.states()));
+              if (selection.recentReleased()) {
+                rows.addAll(requests.listRecentReleased(repoId, RECENT_RELEASED));
+              }
+              rows.sort(Comparator.comparing((ReleaseRequest row) -> row.createdAt).reversed());
               return decorate(rows, Map.of());
             });
   }
@@ -343,11 +368,12 @@ public class ReleaseRequests {
    * A whole project's requests, across every repository it owns, most recently moved first — the
    * one read that answers "what is waiting on me here" without walking the repositories.
    *
-   * <p><b>Open by default, because that is the question.</b> With no {@code state} the answer is
-   * {@link ReleaseRequestRepository#OPEN} — the requests that can still move. {@code all} answers
-   * every state, and a state's own name narrows to it. A word naming none is a {@link
-   * BadRequestException} rather than an empty list, so a typo in the filter never reads as "nothing
-   * is pending" — the same posture the epic board's status filter takes.
+   * <p><b>Open by default, plus what has just landed.</b> With no {@code state} the answer is {@link
+   * ReleaseRequestRepository#OPEN} — the requests that can still move — followed by the project's
+   * last {@value #RECENT_RELEASED} releases, so that a release leaving the worklist does not also
+   * leave the page. {@code all} answers every state, and a state's own name narrows to it. A word
+   * naming none is a {@link BadRequestException} rather than an empty list, so a typo in the filter
+   * never reads as "nothing is pending" — the same posture the epic board's status filter takes.
    *
    * <p>Each row is named with the repository's <b>current</b> alias rather than the one recorded
    * when the request was made: a rename moves the name and leaves the row's snapshot behind, and a
@@ -356,10 +382,63 @@ public class ReleaseRequests {
    * snapshot, and then null — the caller shows the id.
    */
   public List<ReleaseRequestDto> listByProject(String projectId, String state) {
-    List<ReleaseRequest.State> states = statesFor(state);
+    Selection selection = statesFor(state);
     return QuarkusTransaction.requiringNew()
         .call(
-            () -> decorate(requests.listByProject(projectId, states), names.namesByRepository(projectId)));
+            () -> {
+              List<ReleaseRequest> rows =
+                  new ArrayList<>(requests.listByProject(projectId, selection.states()));
+              if (selection.recentReleased()) {
+                rows.addAll(requests.listRecentReleasedByProject(projectId, RECENT_RELEASED));
+              }
+              rows.sort(Comparator.comparing((ReleaseRequest row) -> row.updatedAt).reversed());
+              return decorate(rows, names.namesByRepository(projectId));
+            });
+  }
+
+  /**
+   * What this request's fold brought in — the commits of {@code mergedSha^1..mergedSha}, which is
+   * the octopus's own range and therefore exactly what the participants contributed over the branch
+   * it was folded onto.
+   *
+   * <p>Scoped by repository as well as by id, so a request read through the wrong repository's route
+   * is a 404 rather than somebody else's answer. (The bare {@link #get} is deliberately left as it
+   * is: it is the machine peers' read and has always been keyed on the id alone.)
+   *
+   * <p><b>Three empties, three sentences, and no error among them.</b> A request that has not been
+   * folded yet has nothing to list; a fold the repository no longer holds — a withdrawn request's
+   * backing branch is deleted, and history predating the mirror was never there — is a fact about
+   * the repository and not a failure of this read; and a fold that added nothing over its target is
+   * a real, if unusual, release. Every one of them answers 200 with the reason on {@code detail}.
+   */
+  public ReleaseRequestCommitsDto mergedCommits(String repoId, String requestId) {
+    ReleaseRequest row =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () ->
+                    requests
+                        .findByIdOptional(requestId)
+                        .filter(candidate -> candidate.repoId.equals(repoId))
+                        .orElseThrow(
+                            () ->
+                                new NotFoundException(
+                                    "Release request not found: " + requestId)));
+    if (row.mergedSha == null) {
+      return new ReleaseRequestCommitsDto(null, List.of(), "Nothing has been folded yet");
+    }
+    CommitService.MergeRange range = commits.listMergeRange(repoId, row.mergedSha);
+    if (!range.present()) {
+      return new ReleaseRequestCommitsDto(
+          row.mergedSha, List.of(), "The fold is no longer in the repository's history");
+    }
+    if (range.commits().isEmpty()) {
+      return new ReleaseRequestCommitsDto(
+          row.mergedSha,
+          List.of(),
+          "The fold brought nothing in: every source was already contained in what it was folded"
+              + " onto");
+    }
+    return new ReleaseRequestCommitsDto(row.mergedSha, range.commits(), null);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -963,11 +1042,48 @@ public class ReleaseRequests {
       // happened — a process that dies here leaves an ungated pending row, which is exactly what
       // ReleaseFinalization's catch-up sweep is for.
       finalization.onReleased(ask.repoId(), outcome.version());
+      resolveWorkspacesOnReleasedBranches(ask, outcome);
     } else {
       settle(id, ReleaseRequest.State.FAILED, outcome.detail(), null, outcome.retryable());
       LOG.warnf(
           "Release request %s was not released (%s): %s",
           id, outcome.retryable() ? "will retry" : "final until re-armed", outcome.detail());
+    }
+  }
+
+  /**
+   * The branches this release just deleted, told to whoever may have a workspace standing on one.
+   *
+   * <p><b>Exactly the set the executor deleted</b>, read from the same two fields it reads: the
+   * request's named sources <em>minus</em> the repository's default branch, which nothing deletes
+   * and no release consumes. The backing branch is deliberately not among them — it is this flow's
+   * own scratch ref, created by the fold, and no workspace was ever made on one.
+   *
+   * <p>Last, after the row is RELEASED and after {@link ReleaseFinalization#onReleased}, and wrapped
+   * so that <b>nothing here can reach the release path</b>. The port promises not to throw; the belt
+   * is the same one round {@link ReleaseExecutor} above and states the same thing — a throw is a
+   * port bug, and a workspace that was not reaped must never turn a release that happened into a
+   * failure or settle it a second time. See {@link ReleasedBranchWorkspaces} for the absence this
+   * call exists to cover.
+   */
+  private void resolveWorkspacesOnReleasedBranches(
+      ReleaseExecutor.Release ask, ReleaseExecutor.Outcome outcome) {
+    if (!releasedBranchWorkspaces.isResolvable()) {
+      return;
+    }
+    try {
+      ReleasedBranchWorkspaces workspaces = releasedBranchWorkspaces.get();
+      Set<String> released = new LinkedHashSet<>(ask.namedSources());
+      released.remove(ask.defaultBranch());
+      for (String branch : released) {
+        workspaces.branchReleased(
+            ask.repoId(), branch, outcome.version(), outcome.releasedSha());
+      }
+    } catch (RuntimeException e) {
+      // The port says it must not throw; a throw is a port bug and must not touch a settled release.
+      LOG.warnf(
+          e, "Could not resolve the workspaces of the branches released by request %s",
+          ask.requestId());
     }
   }
 
@@ -1043,21 +1159,45 @@ public class ReleaseRequests {
   private static final String ALL_STATES = "all";
 
   /**
-   * The states a {@code state} query means. Absent or blank is the open set; {@code all} is every
-   * state (spelled as the full set rather than as "no filter", so one query shape serves both); a
-   * state name, in any case, is itself.
+   * How many releases the default reading carries behind the open ones. Ten, because the tail is
+   * context and not history: it says what has just landed on the page whose question is what has
+   * not, and a number that grew with the repository would turn a worklist back into a log.
    */
-  private static List<ReleaseRequest.State> statesFor(String state) {
+  static final int RECENT_RELEASED = 10;
+
+  /**
+   * What a {@code state} query selects: a set of states, and whether the recently released tail
+   * rides along behind them.
+   *
+   * <p>The tail is a second query rather than a state in the set, and it has to be: "the last ten
+   * RELEASED" is a page, not a predicate, and folding it into the {@code state in (…)} read would
+   * answer every release the repository has ever made.
+   */
+  private record Selection(List<ReleaseRequest.State> states, boolean recentReleased) {}
+
+  /**
+   * The states a {@code state} query means, and what else rides with them. <b>Absent or blank is the
+   * open set plus the last {@value #RECENT_RELEASED} releases</b> — the question both lists exist to
+   * answer is "what is happening here", and a page that dropped a release the moment it landed made
+   * the most interesting event in the flow the one thing it never showed. {@code all} is every state
+   * (spelled as the full set rather than as "no filter", so one query shape serves both); a state
+   * name, in any case, is itself, and narrows to exactly it.
+   *
+   * <p><b>WITHDRAWN left the default reading when the tail arrived</b>, and that is the intended
+   * trade: it was never in the open set, so it only ever appeared on the repository list because
+   * that list had no filter at all. It is one {@code state=WITHDRAWN} or one {@code state=all} away.
+   */
+  private static Selection statesFor(String state) {
     if (state == null || state.isBlank()) {
-      return ReleaseRequestRepository.OPEN;
+      return new Selection(ReleaseRequestRepository.OPEN, true);
     }
     String wanted = state.trim();
     if (ALL_STATES.equalsIgnoreCase(wanted)) {
-      return List.of(ReleaseRequest.State.values());
+      return new Selection(List.of(ReleaseRequest.State.values()), false);
     }
     for (ReleaseRequest.State candidate : ReleaseRequest.State.values()) {
       if (candidate.name().equalsIgnoreCase(wanted)) {
-        return List.of(candidate);
+        return new Selection(List.of(candidate), false);
       }
     }
     throw new BadRequestException(
@@ -1069,13 +1209,21 @@ public class ReleaseRequests {
                 .collect(Collectors.joining(", "))
             + ", or '"
             + ALL_STATES
-            + "' for every state; leaving it off answers the open ones.");
+            + "' for every state; leaving it off answers the open ones plus the last "
+            + RECENT_RELEASED
+            + " released.");
   }
 
   /**
    * Names a list of rows without a query per row: one read of every named source in the page, one
    * read of each distinct repository's pending tags, and one read of the released tags the page's
-   * own requests produced — which is where {@code mergedToMainAt} comes from.
+   * own requests produced — which is where {@code releasedSha} and {@code mergedToMainAt} both come
+   * from.
+   *
+   * <p>That last read is kept <b>unfiltered</b>: a row whose {@code mergedAt} is still null is the
+   * release in flight, and it carries the sha the tag points at just as an already-merged one does.
+   * Filtering it out is what used to make the answer say "there is no such release" for exactly the
+   * releases somebody is watching.
    */
   private List<ReleaseRequestDto> decorate(
       List<ReleaseRequest> rows, Map<String, String> currentNames) {
@@ -1088,10 +1236,9 @@ public class ReleaseRequests {
             .map(row -> row.repoId)
             .distinct()
             .collect(Collectors.toMap(repoId -> repoId, this::implicitFor));
-    Map<String, Instant> reachedMain =
+    Map<String, ReleasedTagPendingMerge> released =
         pendingTags.listByRequests(ids).stream()
-            .filter(tag -> tag.mergedAt != null)
-            .collect(Collectors.toMap(tag -> tag.releaseRequestId, tag -> tag.mergedAt, (a, b) -> a));
+            .collect(Collectors.toMap(tag -> tag.releaseRequestId, tag -> tag, (a, b) -> a));
     return rows.stream()
         .map(
             row ->
@@ -1100,7 +1247,7 @@ public class ReleaseRequests {
                     currentNames.getOrDefault(row.repoId, row.repoName),
                     named.getOrDefault(row.id, List.of()),
                     implicit.getOrDefault(row.repoId, List.of()),
-                    reachedMain.get(row.id)))
+                    released.get(row.id)))
         .toList();
   }
 
@@ -1108,12 +1255,17 @@ public class ReleaseRequests {
     return pendingTags.listPending(repoId);
   }
 
+  /**
+   * @param released this request's own released tag, or null where it produced none — an unreleased
+   *     request, and a release made before {@code released_tag_pending_merge} existed. Both of its
+   *     fields on the answer are therefore null together with it.
+   */
   private ReleaseRequestDto dto(
       ReleaseRequest row,
       String repoName,
       List<ReleaseRequestSource> named,
       List<ReleasedTagPendingMerge> implicit,
-      Instant mergedToMainAt) {
+      ReleasedTagPendingMerge released) {
     List<ReleaseRequestSourceDto> all = new ArrayList<>();
     for (ReleaseRequestSource source : named) {
       all.add(
@@ -1141,7 +1293,8 @@ public class ReleaseRequests {
         row.detail,
         conflictOf(row),
         row.version,
-        mergedToMainAt,
+        released == null ? null : released.releasedSha,
+        released == null ? null : released.mergedAt,
         row.retryable,
         row.createdAt,
         row.updatedAt);

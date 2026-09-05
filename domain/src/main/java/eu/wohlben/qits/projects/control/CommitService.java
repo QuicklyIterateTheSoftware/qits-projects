@@ -203,6 +203,35 @@ public class CommitService {
   }
 
   /**
+   * Lists the files a commit changed relative to its diff base. The base is the explicit {@code
+   * parent} when given, otherwise the commit's own first parent ({@code --root} so a root commit
+   * still reports its added files). {@code parent} in the result is the resolved base ({@code null}
+   * for a root commit).
+   */
+  public CommitChangesDto listChanges(String repoId, String commit, String parent) {
+    requireRef(commit, "commit");
+    String base = normalizeParent(parent);
+    RepoMirror mirror = requireMirror(repoId);
+
+    List<String> cmd =
+        new ArrayList<>(List.of("git", "diff-tree", "-r", "--no-commit-id", "--name-status", "-M"));
+    if (base != null) {
+      cmd.add(base);
+    } else {
+      cmd.add("--root");
+    }
+    cmd.add(commit);
+    cmd.add("--"); // terminate options so refs/paths can't be read as flags
+
+    try {
+      String output = git.exec(mirror.gitDir().toFile(), cmd.toArray(String[]::new));
+      return new CommitChangesDto(commit, base, parseChanges(output));
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git diff-tree failed: " + e.getMessage());
+    }
+  }
+
+  /**
    * The unified diff of a single {@code path} in {@code commit}, relative to the same base as
    * {@link #listChanges}. The diff text is empty when the file has no textual change (binary or
    * pure rename).

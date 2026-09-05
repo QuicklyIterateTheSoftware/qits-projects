@@ -1,6 +1,9 @@
 package eu.wohlben.qits.projects.api;
 
+import eu.wohlben.qits.projects.control.ReleaseArtifacts;
 import eu.wohlben.qits.projects.control.ReleaseRequests;
+import eu.wohlben.qits.projects.dto.ReleaseArtifactsDto;
+import eu.wohlben.qits.projects.dto.ReleaseRequestCommitsDto;
 import eu.wohlben.qits.projects.dto.ReleaseRequestDto;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.inject.Inject;
@@ -30,6 +33,12 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
  * — an API that let a caller drop one would let somebody release a step backwards from what is
  * already shipping.
  *
+ * <p><b>Two reads hang off a single request and neither is a column.</b> {@code …/commits} is the
+ * fold's own range, read out of the repository's mirror, and {@code …/artifacts} is what the
+ * released tag's tree declares was published. Both exist because "the release landed" is the
+ * beginning of a person's question rather than the end of it, and both answer 200 with a sentence
+ * where they cannot answer with a list — see their operations below.
+ *
  * <p><b>Two callers, two roles, on every route</b>: a person driving a release from a browser, and
  * the machine peers the door split brings (qits-workspaces creating requests on behalf of its
  * callers, the train's scripts). A method-level {@code @RolesAllowed} <b>replaces</b> the
@@ -42,6 +51,8 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 public class ReleaseRequestController {
 
   @Inject ReleaseRequests releaseRequests;
+
+  @Inject ReleaseArtifacts releaseArtifacts;
 
   @Inject SecurityIdentity identity;
 
@@ -166,4 +177,37 @@ public class ReleaseRequestController {
     return new GetReleaseRequest.Response(releaseRequests.get(requestId));
   }
 
+  @GET
+  @Path("/{requestId}/commits")
+  @Operation(
+      summary = "The commits this request's fold brought in",
+      description =
+          "The range mergedSha^1..mergedSha — the first parent of an octopus merge is the branch it"
+              + " was folded onto, so what is left is exactly what the request's sources"
+              + " contributed. It stays the same answer after the release reaches main. The version"
+              + " bump is not in the list: the release commits the rewritten manifests ON TOP of the"
+              + " fold. An empty list is never an error — detail says whether nothing has been"
+              + " folded yet, the fold is no longer in the repository's history, or the fold"
+              + " genuinely added nothing.")
+  public ReleaseRequestCommitsDto commits(
+      @PathParam("repoId") String repoId, @PathParam("requestId") String requestId) {
+    return releaseRequests.mergedCommits(repoId, requestId);
+  }
+
+  @GET
+  @Path("/{requestId}/artifacts")
+  @Operation(
+      summary = "What this release published, and whether anything deploys it",
+      description =
+          "Read out of the released tag's own tree: deployable is whether it declares"
+              + " .config/qits/deployments.yml, and artifacts is what its release recipe declares"
+              + " plus the userflow bundle its QA pipeline publishes (at the fold's sha, not at the"
+              + " version). A request that has not released answers 200 with version null and a"
+              + " detail saying so; a git host that cannot be asked and a recipe that will not parse"
+              + " do the same. A repository that declares no recipe published nothing, and says so"
+              + " with an empty list and no detail at all.")
+  public ReleaseArtifactsDto artifacts(
+      @PathParam("repoId") String repoId, @PathParam("requestId") String requestId) {
+    return releaseArtifacts.of(repoId, requestId);
+  }
 }

@@ -139,6 +139,55 @@ public class CommitService {
   }
 
   /**
+   * What a merge commit brought in, and whether the commit is still there to be asked.
+   *
+   * @param present whether the mirror holds the merge object at all. False is an ordinary answer
+   *     rather than a failure: a release request that was withdrawn has had its backing branch
+   *     deleted, and a fold nothing references is pruned by the git host's own housekeeping.
+   * @param commits the commits in the range, newest first; empty on a fold that added nothing
+   */
+  public record MergeRange(boolean present, List<CommitDto> commits) {}
+
+  /**
+   * The commits a merge commit brought in: {@code git log <sha>^1..<sha>}.
+   *
+   * <p><b>The first parent is the point.</b> An octopus fold's parents are, in order, the branch it
+   * was folded onto and then each participant; so {@code ^1} is the target as it stood at the fold
+   * and the range is exactly what the other heads contributed. Asking any other way — against {@code
+   * main} as it is now, say — would answer differently every time somebody else pushed, and would
+   * answer nothing at all once the release itself reached {@code main}.
+   *
+   * <p><b>A missing object is an answer, never a 500.</b> The fold is probed with {@code cat-file
+   * -e} first, because {@code git log} against an unknown rev exits non-zero the same way a real
+   * failure does and the caller must be able to tell "that commit is gone" from "the read broke".
+   */
+  public MergeRange listMergeRange(String repoId, String mergedSha) {
+    requireRef(mergedSha, "commit");
+    RepoMirror mirror = requireMirror(repoId);
+    try {
+      GitExecutor.ExecResult probe =
+          git.execAllowNonZero(
+              mirror.gitDir().toFile(), "git", "cat-file", "-e", mergedSha + "^{commit}");
+      if (probe.exitCode() != 0) {
+        return new MergeRange(false, List.of());
+      }
+      // `--` terminates option parsing so the range is never read as a flag.
+      String output =
+          git.exec(
+              mirror.gitDir().toFile(),
+              "git",
+              "log",
+              "--name-only",
+              LOG_FORMAT,
+              mergedSha + "^1.." + mergedSha,
+              "--");
+      return new MergeRange(true, parseCommits(output));
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Git log failed: " + e.getMessage());
+    }
+  }
+
+  /**
    * Lists the files a commit changed relative to its diff base. The base is the explicit {@code
    * parent} when given, otherwise the commit's own first parent ({@code --root} so a root commit
    * still reports its added files). {@code parent} in the result is the resolved base ({@code null}

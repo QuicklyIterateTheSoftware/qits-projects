@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.releasehost;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -544,6 +545,34 @@ public class ReleaseRequestFlowTest {
         .then()
         .body("request.releasedSha", nullValue())
         .body("request.mergedToMainAt", nullValue());
+  }
+
+  /**
+   * The commits read's own wiring, at the one shape that needs no repository behind it: a request
+   * whose first fold has not landed has nothing to list and says so, rather than reaching a mirror
+   * for a sha that does not exist. What the range itself answers is {@code MergeRangeCommitsTest}'s,
+   * against a real repository.
+   */
+  @Test
+  public void aRequestWithNoFoldYetAnswersTheCommitsReadWithASentence() {
+    activeBuilds.answer(Optional.of(1));
+    String id = create("work");
+    QuarkusTransaction.requiringNew()
+        .run(() -> ReleaseRequest.update("mergedSha = null where id = ?1", id));
+
+    given()
+        .get(base() + "/" + id + "/commits")
+        .then()
+        .statusCode(200)
+        .body("mergedSha", nullValue())
+        .body("commits", hasSize(0))
+        .body("detail", equalTo("Nothing has been folded yet"));
+
+    // And the scope is part of the address: another repository's route does not answer for it.
+    given()
+        .get("/projects/api/repositories/somebody-else/release-requests/" + id + "/commits")
+        .then()
+        .statusCode(404);
   }
 
   private List<String> idsAt(String query) {

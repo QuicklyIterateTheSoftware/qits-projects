@@ -3,6 +3,7 @@ package eu.wohlben.qits.projects.control;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.projects.dto.CommitBuildStatusDto;
 import eu.wohlben.qits.projects.dto.MergeConflictDto;
+import eu.wohlben.qits.projects.dto.ReleaseRequestCommitsDto;
 import eu.wohlben.qits.projects.dto.ReleaseRequestDto;
 import eu.wohlben.qits.projects.dto.ReleaseRequestSourceDto;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
@@ -144,6 +145,13 @@ public class ReleaseRequests {
   @Inject RepositoryNameRepository names;
 
   @Inject BuildStatusLedger ledger;
+
+  /**
+   * The mirror-backed git reader, for the one question this class answers out of a repository rather
+   * than out of its own tables: what a fold brought in. Not an {@code Instance} — it is this
+   * module's own bean and not a port, and the mirror it reads is cloned on first use.
+   */
+  @Inject CommitService commits;
 
   @Inject ObjectMapper json;
 
@@ -380,6 +388,51 @@ public class ReleaseRequests {
               rows.sort(Comparator.comparing((ReleaseRequest row) -> row.updatedAt).reversed());
               return decorate(rows, names.namesByRepository(projectId));
             });
+  }
+
+  /**
+   * What this request's fold brought in — the commits of {@code mergedSha^1..mergedSha}, which is
+   * the octopus's own range and therefore exactly what the participants contributed over the branch
+   * it was folded onto.
+   *
+   * <p>Scoped by repository as well as by id, so a request read through the wrong repository's route
+   * is a 404 rather than somebody else's answer. (The bare {@link #get} is deliberately left as it
+   * is: it is the machine peers' read and has always been keyed on the id alone.)
+   *
+   * <p><b>Three empties, three sentences, and no error among them.</b> A request that has not been
+   * folded yet has nothing to list; a fold the repository no longer holds — a withdrawn request's
+   * backing branch is deleted, and history predating the mirror was never there — is a fact about
+   * the repository and not a failure of this read; and a fold that added nothing over its target is
+   * a real, if unusual, release. Every one of them answers 200 with the reason on {@code detail}.
+   */
+  public ReleaseRequestCommitsDto mergedCommits(String repoId, String requestId) {
+    ReleaseRequest row =
+        QuarkusTransaction.requiringNew()
+            .call(
+                () ->
+                    requests
+                        .findByIdOptional(requestId)
+                        .filter(candidate -> candidate.repoId.equals(repoId))
+                        .orElseThrow(
+                            () ->
+                                new NotFoundException(
+                                    "Release request not found: " + requestId)));
+    if (row.mergedSha == null) {
+      return new ReleaseRequestCommitsDto(null, List.of(), "Nothing has been folded yet");
+    }
+    CommitService.MergeRange range = commits.listMergeRange(repoId, row.mergedSha);
+    if (!range.present()) {
+      return new ReleaseRequestCommitsDto(
+          row.mergedSha, List.of(), "The fold is no longer in the repository's history");
+    }
+    if (range.commits().isEmpty()) {
+      return new ReleaseRequestCommitsDto(
+          row.mergedSha,
+          List.of(),
+          "The fold brought nothing in: every source was already contained in what it was folded"
+              + " onto");
+    }
+    return new ReleaseRequestCommitsDto(row.mergedSha, range.commits(), null);
   }
 
   // ---------------------------------------------------------------------------------------------

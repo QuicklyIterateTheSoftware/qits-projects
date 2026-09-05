@@ -648,6 +648,41 @@ components:
       properties:
         refinement:
           $ref: "#/components/schemas/RefinementDto"
+    ReleaseArtifactDto:
+      type: object
+      properties:
+        type:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+    ReleaseArtifactsDto:
+      type: object
+      properties:
+        version:
+          type: string
+        releasedSha:
+          type: string
+        deployable:
+          type: boolean
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReleaseArtifactDto"
+        detail:
+          type: string
+    ReleaseRequestCommitsDto:
+      type: object
+      properties:
+        mergedSha:
+          type: string
+        commits:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommitDto"
+        detail:
+          type: string
     ReleaseRequestDto:
       type: object
       properties:
@@ -676,6 +711,8 @@ components:
         conflict:
           $ref: "#/components/schemas/MergeConflictDto"
         version:
+          type: string
+        releasedSha:
           type: string
         mergedToMainAt:
           $ref: "#/components/schemas/Instant"
@@ -1893,9 +1930,10 @@ paths:
     get:
       summary: "The project's release requests, across all of its repositories"
       description: "Most recently moved first. With no state the answer is the open\
-        \ requests — the work still waiting on somebody. Pass state=all for the whole\
-        \ history, or a state name (PENDING, READY, RELEASED, REJECTED, FAILED, CONFLICTED,\
-        \ WITHDRAWN) to narrow to one."
+        \ requests — the work still waiting on somebody — plus the last 10 released,\
+        \ so that a release does not leave the page the moment it lands. Pass state=all\
+        \ for the whole history, or a state name (PENDING, READY, RELEASED, REJECTED,\
+        \ FAILED, CONFLICTED, WITHDRAWN) to narrow to one."
       parameters:
       - name: projectId
         in: path
@@ -3220,10 +3258,20 @@ paths:
         - qits:admin
   /projects/api/repositories/{repoId}/release-requests:
     get:
+      summary: This repository's release requests
+      description: "Newest first. With no state the answer is the open requests —\
+        \ everything that can still move — plus the last 10 released, so that a release\
+        \ does not vanish off the page the moment it lands. Pass state=all for the\
+        \ whole history (WITHDRAWN included), or a state name (PENDING, READY, RELEASED,\
+        \ REJECTED, FAILED, CONFLICTED, WITHDRAWN) to narrow to one."
       parameters:
       - name: repoId
         in: path
         required: true
+        schema:
+          type: string
+      - name: state
+        in: query
         schema:
           type: string
       responses:
@@ -3237,7 +3285,6 @@ paths:
           description: Not Authorized
         "403":
           description: Not Allowed
-      summary: List
       tags:
       - Release Request Controller
       security:
@@ -3309,6 +3356,83 @@ paths:
         "403":
           description: Not Allowed
       summary: Get
+      tags:
+      - Release Request Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+  /projects/api/repositories/{repoId}/release-requests/{requestId}/artifacts:
+    get:
+      summary: "What this release published, and whether anything deploys it"
+      description: "Read out of the released tag's own tree: deployable is whether\
+        \ it declares .config/qits/deployments.yml, and artifacts is what its release\
+        \ recipe declares plus the userflow bundle its QA pipeline publishes (at the\
+        \ fold's sha, not at the version). A request that has not released answers\
+        \ 200 with version null and a detail saying so; a git host that cannot be\
+        \ asked and a recipe that will not parse do the same. A repository that declares\
+        \ no recipe published nothing, and says so with an empty list and no detail\
+        \ at all."
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseArtifactsDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Release Request Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+  /projects/api/repositories/{repoId}/release-requests/{requestId}/commits:
+    get:
+      summary: The commits this request's fold brought in
+      description: "The range mergedSha^1..mergedSha — the first parent of an octopus\
+        \ merge is the branch it was folded onto, so what is left is exactly what\
+        \ the request's sources contributed. It stays the same answer after the release\
+        \ reaches main. The version bump is not in the list: the release commits the\
+        \ rewritten manifests ON TOP of the fold. An empty list is never an error\
+        \ — detail says whether nothing has been folded yet, the fold is no longer\
+        \ in the repository's history, or the fold genuinely added nothing."
+      parameters:
+      - name: repoId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseRequestCommitsDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
       tags:
       - Release Request Controller
       security:
@@ -3563,4 +3687,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.903.111721
+  version: 2026.904.161524

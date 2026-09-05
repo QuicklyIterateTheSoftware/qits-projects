@@ -11,6 +11,7 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import org.eclipse.microprofile.openapi.annotations.Operation;
@@ -135,9 +136,23 @@ public class ReleaseRequestController {
     public record Response(List<ReleaseRequestDto> requests) {}
   }
 
+  /**
+   * @param state which requests to answer, in the vocabulary the project-wide route uses: omitted
+   *     means the open ones plus the last ten released, {@code all} means every state, and a state's
+   *     own name narrows to it. A word naming no state is a 400.
+   */
   @GET
-  public ListReleaseRequests.Response list(@PathParam("repoId") String repoId) {
-    return new ListReleaseRequests.Response(releaseRequests.listByRepo(repoId));
+  @Operation(
+      summary = "This repository's release requests",
+      description =
+          "Newest first. With no state the answer is the open requests — everything that can still"
+              + " move — plus the last 10 released, so that a release does not vanish off the page"
+              + " the moment it lands. Pass state=all for the whole history (WITHDRAWN included), or"
+              + " a state name (PENDING, READY, RELEASED, REJECTED, FAILED, CONFLICTED, WITHDRAWN)"
+              + " to narrow to one.")
+  public ListReleaseRequests.Response list(
+      @PathParam("repoId") String repoId, @QueryParam("state") String state) {
+    return new ListReleaseRequests.Response(releaseRequests.listByRepo(repoId, state));
   }
 
   public static record GetReleaseRequest() {
@@ -150,4 +165,5 @@ public class ReleaseRequestController {
       @PathParam("repoId") String repoId, @PathParam("requestId") String requestId) {
     return new GetReleaseRequest.Response(releaseRequests.get(requestId));
   }
+
 }

@@ -24,6 +24,12 @@ import java.util.List;
  * <p>{@code conflict} is populated on a CONFLICTED request and null on every other, so a caller
  * never has to ask a second question to find out what to resolve.
  *
+ * <p><b>{@code releasedSha} is what the tag points at</b> — the commit the version bump produced,
+ * which is the fold plus the rewritten manifests and is therefore <em>not</em> {@code mergedSha}. It
+ * is what a reader needs to open the release in the code browser, and it is the sha the merge to
+ * {@code main} is made from. Null on every request that has not released, and null on a release made
+ * before the column existed (V13): a platform cannot invent what it did not record.
+ *
  * <p><b>{@code mergedToMainAt} is the end of the lifecycle</b>, and it is the only place a reader
  * can see it: a release is a tag and {@code main} is finalized after the deployment succeeds, so a
  * RELEASED request whose {@code version} is set and whose {@code mergedToMainAt} is null is a
@@ -50,6 +56,7 @@ public record ReleaseRequestDto(
     String detail,
     MergeConflictDto conflict,
     String version,
+    String releasedSha,
     Instant mergedToMainAt,
     boolean retryable,
     Instant createdAt,

@@ -15,13 +15,14 @@ import java.util.List;
 @ApplicationScoped
 public class RecordingReleaseAnnouncer implements ReleaseAnnouncer {
 
-  /** The five payload fields, plus the time the envelope would carry. */
+  /** The six payload fields, plus the time the envelope would carry. */
   public record Announced(
       String projectId,
       String repoId,
       String repoName,
       String branch,
       String version,
+      String commitSha,
       Instant occurredAt) {}
 
   private final List<Announced> announced = Collections.synchronizedList(new ArrayList<>());
@@ -41,7 +42,9 @@ public class RecordingReleaseAnnouncer implements ReleaseAnnouncer {
       String repoName,
       String branch,
       String version,
+      String commitSha,
       Instant occurredAt) {
-    announced.add(new Announced(projectId, repoId, repoName, branch, version, occurredAt));
+    announced.add(
+        new Announced(projectId, repoId, repoName, branch, version, commitSha, occurredAt));
   }
 }

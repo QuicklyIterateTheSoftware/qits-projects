@@ -42,7 +42,9 @@ public class SCMReleaseAnnouncer implements ReleaseAnnouncer {
       String repoName,
       String branch,
       String version,
+      String commitSha,
       Instant occurredAt) {
-    bus.publish(new SCMRelease(projectId, repoId, repoName, branch, version, occurredAt));
+    bus.publish(
+        new SCMRelease(projectId, repoId, repoName, branch, version, commitSha, occurredAt));
   }
 }

@@ -18,6 +18,13 @@ import java.time.Instant;
  * the one that asked — so the publisher changed and the payload deliberately did not. Every existing
  * consumer selects on the same five fields.
  *
+ * <p><b>{@code commitSha} is the one field that has been ADDED since</b>, and additively: the five
+ * keep their names and their order, the new one is nullable, and the canonical serializer omits it
+ * when absent — so a consumer written against the old shape reads the new event unchanged, and a
+ * consumer written against the new shape has to tolerate its absence, because replays and any older
+ * publisher carry none. It is what the tag points at, and it is what turns a release event from
+ * something a pipeline can only be told about into something a pipeline can check out.
+ *
  * <p><b>It does not mean an artifact exists.</b> Nothing is built, published or installable at this
  * moment — that statement is qits-ci's {@code SoftwareRelease}, emitted once per artifact when a
  * repository's release pipeline goes green. Between the two sits that pipeline. A consumer reading
@@ -40,6 +47,10 @@ public interface ReleaseAnnouncer {
    *     selection can address</b>, which the id is not: a row id is minted per platform instance.
    * @param branch the branch that was released — the request's backing branch, {@code release/<id>}
    * @param version the release stamp, {@code YYYY.MMDD.HHMMSS}, which is also the tag's name
+   * @param commitSha <b>what the tag points at</b> — {@link ReleaseExecutor.Outcome#releasedSha()},
+   *     the version-bump commit, or the fold itself where nothing renders a version. Nullable, and
+   *     an implementation must publish without it rather than refuse: it is the coordinate that lets
+   *     a release pipeline check the released tree out, never a condition of the release.
    * @param occurredAt when the tag was accepted, which is when the release happened
    */
   void onReleased(
@@ -48,5 +59,6 @@ public interface ReleaseAnnouncer {
       String repoName,
       String branch,
       String version,
+      String commitSha,
       Instant occurredAt);
 }

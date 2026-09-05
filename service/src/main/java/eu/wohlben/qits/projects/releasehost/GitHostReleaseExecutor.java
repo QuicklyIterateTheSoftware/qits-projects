@@ -144,7 +144,7 @@ public class GitHostReleaseExecutor implements ReleaseExecutor {
           // Everything past here is after the fact: the tag exists and the release happened, so
           // neither a failed branch delete nor a failed announcement may turn it into a failure.
           deleteConsumedBranches(release);
-          announce(release, version, releasedAt);
+          announce(release, version, tagged, releasedAt);
           return Outcome.released(version, tagged);
         }
         case ALREADY_EXISTS -> {
@@ -256,8 +256,17 @@ public class GitHostReleaseExecutor implements ReleaseExecutor {
     }
   }
 
-  /** Fire and forget, outside everything, and never able to fail a release that already happened. */
-  private void announce(Release release, String version, Instant releasedAt) {
+  /**
+   * Fire and forget, outside everything, and never able to fail a release that already happened.
+   *
+   * <p>{@code tagged} is the commit the tag was created at — the bump commit, or the fold where
+   * nothing renders a version — and it rides out as the event's {@code commitSha}. It is the same
+   * value {@link ReleaseExecutor.Outcome#released} returns and the same one {@code
+   * ReleasedTagPendingMerge.releasedSha} records, deliberately: three statements about one release
+   * that a reader can join, where before this the bus half named a tag and no commit and a release
+   * pipeline had to go and find the commit itself.
+   */
+  private void announce(Release release, String version, String tagged, Instant releasedAt) {
     if (!announcers.isResolvable()) {
       return;
     }
@@ -270,6 +279,7 @@ public class GitHostReleaseExecutor implements ReleaseExecutor {
               release.repoName(),
               release.backingBranch(),
               version,
+              tagged,
               releasedAt);
     } catch (RuntimeException e) {
       LOG.warnf(e, "Could not announce the release of %s as %s", release.repoId(), version);

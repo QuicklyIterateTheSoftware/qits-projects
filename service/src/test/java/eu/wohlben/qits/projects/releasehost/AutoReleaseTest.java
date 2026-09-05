@@ -272,7 +272,7 @@ public class AutoReleaseTest {
         "the named source and the backing branch, and nothing else");
     assertFalse(gitHost.deletedBranches().contains("main"));
 
-    // 6. SCMRelease, the instant the tag was accepted, with the five payload fields.
+    // 6. SCMRelease, the instant the tag was accepted, with the six payload fields.
     assertEquals(1, releases.announced().size());
     RecordingReleaseAnnouncer.Announced announced = releases.announced().get(0);
     assertEquals(projectId, announced.projectId());
@@ -280,6 +280,13 @@ public class AutoReleaseTest {
     assertEquals("release/" + id, announced.branch(), "what was released is the fold's branch");
     assertEquals(version, announced.version());
     assertNotNull(announced.occurredAt());
+    // The coordinate that makes this event checkoutable, and it is the BUMP commit rather than the
+    // fold: `branch` above names a ref this same operation deleted, and `version` names a tag and
+    // not a commit, so before this field a release pipeline could only clone main and go looking.
+    assertEquals(
+        commit.sha(),
+        announced.commitSha(),
+        "the event says what the tag points at, and it agrees with the pending row");
 
     // And this service's own half: the tag joins the repository's implicit source set until
     // something merges it to main, so every other open request is a superset of what is shipping.
@@ -304,6 +311,11 @@ public class AutoReleaseTest {
     assertEquals(1, gitHost.tags().size());
     assertEquals(mergedSha, gitHost.tags().get(0).sha(), "the fold itself is what the tag names");
     assertEquals(1, releases.announced().size());
+    assertEquals(
+        mergedSha,
+        releases.announced().get(0).commitSha(),
+        "a stackless release has no commit before its tag, so the fold IS the checkout target —"
+            + " the event carries one either way");
   }
 
   // ---------------------------------------------------------------------------------------------

@@ -126,6 +126,12 @@ public class EventWireReflectionTest {
    * moved and the event did not. {@code QitsEvent.signature()} is the simple class name, so the
    * package this record lives in is invisible on the wire — and a rename here would silently mint a
    * second event nobody subscribes to.
+   *
+   * <p><b>The component LIST is pinned, and qits-ci holds a transcription of it.</b> {@code
+   * ScmReleaseContractTest} over there declares a local record whose components are copied from this
+   * one and runs it through the same {@code CanonicalJson}; nothing in either build can see the
+   * other, so this assertion and that transcription are the two ends of the contract. A change here
+   * is a change there, in the same campaign — which {@code commitSha} was.
    */
   @Test
   public void theReplicatedReleaseEventKeepsTheWireNameAndTheFiveFieldsItAlwaysHad() {
@@ -133,13 +139,65 @@ public class EventWireReflectionTest {
     assertEquals(
         java.util.List.of(
             "eventId", "projectId", "repository", "repositoryName", "branch", "version",
-            "occurredAt"),
+            "commitSha", "occurredAt"),
         java.util.Arrays.stream(SCMRelease.class.getRecordComponents())
             .map(java.lang.reflect.RecordComponent::getName)
             .toList(),
-        "field-for-field with qits-workspaces' record, order included — eventId and occurredAt are"
-            + " components the canonical mix-in keeps out of the payload, leaving exactly the five"
-            + " every existing consumer selects on");
+        "the five qits-workspaces' record carried, in their order, plus commitSha — eventId and"
+            + " occurredAt are components the canonical mix-in keeps out of the payload, leaving"
+            + " the six a consumer selects on");
+  }
+
+  /**
+   * <b>Additive means the wire form of an old release is byte-identical.</b> The five original
+   * fields are what every existing consumer selects on, and the new component may not disturb one of
+   * them; and because {@code CanonicalJson} includes {@code NON_NULL} only, an event published
+   * without a {@code commitSha} — a replay from before this field, or any publisher that has not
+   * grown it — carries no such key at all rather than a null. That absence is the compatibility arm
+   * qits-ci's trigger engine falls back on, so it is pinned here at the source rather than only
+   * asserted at the consumer.
+   */
+  @Test
+  public void aReleaseWithoutACommitShaIsTheOlderPayloadExactly() throws Exception {
+    var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    var withSha =
+        mapper.readTree(
+            eu.wohlben.qits.eventstream.control.CanonicalJson.payload(
+                new SCMRelease(
+                    "p-1",
+                    "r-1",
+                    "qits-ci-service",
+                    "release/9f2c1a7e",
+                    "2026.905.60215",
+                    "71663ccdceb65ce46f4cf44c8cb3a016de5ff6af",
+                    java.time.Instant.parse("2026-09-05T06:02:15Z"))));
+    var without =
+        mapper.readTree(
+            eu.wohlben.qits.eventstream.control.CanonicalJson.payload(
+                new SCMRelease(
+                    "p-1",
+                    "r-1",
+                    "qits-ci-service",
+                    "release/9f2c1a7e",
+                    "2026.905.60215",
+                    null,
+                    java.time.Instant.parse("2026-09-05T06:02:15Z"))));
+
+    assertEquals(
+        "71663ccdceb65ce46f4cf44c8cb3a016de5ff6af",
+        withSha.get("commitSha").asText(),
+        "the new coordinate is on the wire when there is one");
+    assertTrue(
+        !without.has("commitSha"),
+        "NON_NULL: an absent commit sha is an absent KEY, which is what a pre-field replay looks"
+            + " like and what the consumer's fallback is written against");
+    for (String field :
+        java.util.List.of("branch", "projectId", "repository", "repositoryName", "version")) {
+      assertEquals(
+          withSha.get(field),
+          without.get(field),
+          field + " moved with commitSha, so the addition is not additive after all");
+    }
   }
 
   /**

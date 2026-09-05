@@ -104,9 +104,18 @@ public class IdpAgentCredentials implements AgentCredentials {
     try {
       body =
           objectMapper.writeValueAsString(
-              Map.of("contextKind", CONTEXT_KIND, "contextId", projectId));
+              Map.of(
+                  "contextKind",
+                  CONTEXT_KIND,
+                  "contextId",
+                  projectId,
+                  // What this context is ABOUT, not merely which context it is. qits-idp turns it
+                  // into a `project` claim on every token the pair mints; an idp that predates the
+                  // member ignores it, which is what lets this ship before the issuer does.
+                  "claims",
+                  Map.of(PROJECT_CLAIM, projectId)));
     } catch (IOException e) {
-      // A two-entry map of strings. Unreachable, and not retryable if it ever were.
+      // A three-entry map of strings and one nested map. Unreachable, and not retryable if it were.
       throw new AgentCredentialException("Could not build the commission request", false, e);
     }
     HttpResponse<String> response =

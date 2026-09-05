@@ -604,13 +604,26 @@ handed no token does not bind its API at all.
 
 **One idp client per container, and its lifetime is the container's.** `AgentCommissions` gets it
 from qits-idp's commission API — `POST /idp/api/clients` with `{"contextKind":"agent-container",
-"contextId":"<projectId>"}`, HTTP Basic with **this service's own** oidc client id and secret,
+"contextId":"<projectId>","claims":{"project":"<projectId>"}}`, HTTP Basic with **this service's
+own** oidc client id and secret,
 because a caller there already holds an idp credential and that is how the API authenticates one.
 `idphost/IdpAgentCredentials` is the adapter and `agenthost/AgentCredentials` the seam; the adapter
 is `@DefaultBean`, so the suite's `FakeAgentCredentials` wins the injection and no test reaches an
 idp. Everything is read from the keys the oidc-client block already ships
 (`client-enabled`, `client-id`, `credentials.secret`, `auth-server-url`) — there is no second address
 and no second credential to configure.
+
+**The `claims` member is the scope, and it is not the same fact as `contextId`.** The context id
+says which container this credential belongs to — what the reconcile compares against live places —
+and the claim says what the credential may act on, which qits-idp puts on every token the pair mints
+and every resource service reads back (`QitsClaims.PROJECT`). qits-ci's manual trigger uses exactly
+this to decide which repositories a caller may have evaluated, so an agent reaches its own project's
+pipelines and nobody else's. For the agent harness the two are the same string, because an agent
+container's context *is* a project; for the refinement harness beside it they are not, which is why
+`RefinementCredentials.commission` takes both. Neither ever states `"*"` — qits-idp refuses a
+commission that widens itself, and asking would be asking for the thing the scoping exists to stop
+granting. A refinement whose project cannot be named is commissioned unscoped, as every credential
+here was before.
 
 Four things bite.
 
@@ -1249,9 +1262,10 @@ Anything that puts this route behind a poll faster than the window is polling th
 `-Dit.test` takes commas; `-Dtest=SKIPNONE` keeps the unit suite out of an IT-only run (run it
 separately before committing — the story classes share `domain`'s fixtures). `skipITs` stays `true`
 in the root pom because `PackagedSurfaceIT` is heavyweight, so the opt-in is per-run and per-class.
-`.config/qits/ci-event-userflows.yml` is the non-gating per-commit pipeline that runs exactly this
-list and publishes the bundle as the docs site `@userflows/qits-projects`; **a new story class has
-to be added to that list**, or it is written and never run.
+The userflow half of `.config/qits/ci-event-release-request.yml` runs exactly this list at every
+release-request fold and publishes the bundle as the docs site `@userflows/qits-projects`. It
+declares `gating: false`, so a red story shows the run red without holding the fold at the release
+gate; **a new story class has to be added to that list**, or it is written and never run.
 
 ## What is deliberately absent
 

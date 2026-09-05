@@ -92,6 +92,23 @@ public class AgentContainerFactory {
   }
 
   /**
+   * The two halves of that reference, readable apart from the reference {@link #image()} joins them
+   * into. They exist for the launch-pin route ({@code GET /projects/api/pins}), which has to name the
+   * repository and the tag separately and must not re-declare either config key: the image a pin
+   * names and the image a launch pulls are the same value or the pin is worthless. Splitting {@link
+   * #image()} back on a colon would not do — the repo half carries the registry's own {@code
+   * host:port}.
+   */
+  public String imageRepo() {
+    return imageRepo;
+  }
+
+  /** The agent image's calver tag; see {@link #imageRepo()}. */
+  public String imageVersion() {
+    return imageVersion;
+  }
+
+  /**
    * The shared Docker network every agent container joins (and qits-projects is on), so the daemon
    * can dial this service's control socket by DNS name with no host-port publishing. It is the
    * bootstrap's to create and the orchestrator's to join; nothing here makes one.

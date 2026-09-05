@@ -10,6 +10,7 @@ import eu.wohlben.qits.projects.entity.ReleaseRequest;
 import eu.wohlben.qits.projects.entity.ReleaseRequestSource;
 import eu.wohlben.qits.projects.entity.ReleasedTagPendingMerge;
 import eu.wohlben.qits.projects.entity.Repository;
+import eu.wohlben.qits.projects.entity.RepositoryArchetype;
 import eu.wohlben.qits.projects.error.BadRequestException;
 import eu.wohlben.qits.projects.error.DomainException;
 import eu.wohlben.qits.projects.error.NotFoundException;
@@ -28,6 +29,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -73,7 +75,9 @@ import org.jboss.logging.Logger;
  * contained in the target: same sha, no new commit. Nothing is re-armed and no {@code
  * ReleaseRequestChanged} is dispatched, which is what makes a trigger with no content behind it
  * free. A fold that cannot be made at all is {@code CONFLICTED} — no ref moved, the conflict stored
- * for a person to act on, and <b>no event</b>; the next fold that succeeds clears it and dispatches.
+ * for a person to act on, and <b>no event</b>; the next fold that succeeds clears it and dispatches,
+ * <em>including</em> one answering {@code unchanged}, unless that sha already carries a gating
+ * verdict the gate can read.
  *
  * <h2>The build gate</h2>
  *
@@ -743,15 +747,36 @@ public class ReleaseRequests {
                 case UNCHANGED -> {
                   boolean wasConflicted = row.state == ReleaseRequest.State.CONFLICTED;
                   row.conflictDetail = null;
-                  if (wasConflicted) {
-                    // The fold is possible again and the tip is the answer, but it is the SAME tip
-                    // — nothing new to build. Back to PENDING against what is already there, and
-                    // the gate reads the verdicts that sha already has.
-                    row.state = ReleaseRequest.State.PENDING;
-                    row.detail = "The conflict is resolved; the fold is unchanged";
-                    row.mergedSha = outcome.sha();
+                  if (!wasConflicted) {
+                    return null;
                   }
-                  return null;
+                  // The fold is possible again and the tip is the answer, but it is the SAME tip —
+                  // nothing new to build. Back to PENDING against what is already there.
+                  row.state = ReleaseRequest.State.PENDING;
+                  row.detail = "The conflict is resolved; the fold is unchanged";
+                  row.mergedSha = outcome.sha();
+                  if (ledger.verdictsOf(row.repoId, row.mergedSha).stream()
+                      .anyMatch(CommitBuildStatusDto::gating)) {
+                    // A gating run has already answered for this exact sha, so evaluate() — which
+                    // remerge calls the moment this returns — reads it, and announcing would ask
+                    // for a second build of content already built. Same-datasource read, so it
+                    // costs this transaction nothing.
+                    return null;
+                  }
+                  // Nothing has EVER built this sha and nothing will: a request that went
+                  // CONFLICTED on creation never armed a run, and since the vacuous settle-window
+                  // pass went (2026-09-04) no verdict is no release, for ever. "Clears it and
+                  // dispatches" is the promise, and this is the half of it that was missing —
+                  // superseded is null because nothing moved, so no run is cancelled either.
+                  return new Folded(
+                      row.id,
+                      row.projectId,
+                      row.repoId,
+                      row.repoName,
+                      row.backingBranch(),
+                      row.mergedSha,
+                      null,
+                      now);
                 }
                 default -> {
                   String superseded = row.mergedSha;
@@ -973,7 +998,8 @@ public class ReleaseRequests {
                       row.summary,
                       row.requester,
                       sources.listByRequest(row.id).stream().map(source -> source.name).toList(),
-                      mainOf(row.repoId));
+                      mainOf(row.repoId),
+                      wrapperCatalogOf(row.repoId, row.projectId));
                 });
     if (ask == null) {
       return;
@@ -1289,6 +1315,38 @@ public class ReleaseRequests {
         .map(repository -> repository.mainBranch)
         .filter(branch -> branch != null && !branch.isBlank())
         .orElse(DEFAULT_MAIN);
+  }
+
+  /**
+   * The project's other repositories by registered name, and only for a WRAPPER release — the
+   * catalog the executor banks the wrapper's gitlink pins from. Empty for every ordinary
+   * repository, which is what turns the banking arm off without a flag: an estate of nothing is
+   * nothing to pin.
+   *
+   * <p>The wrapper itself is excluded — a superproject does not pin itself — and a repository the
+   * name table has no row for is simply absent, because a gitlink needs the name {@code
+   * .gitmodules} declares and an unnamed row cannot be matched to one.
+   */
+  private Map<String, ReleaseExecutor.Submodule> wrapperCatalogOf(String repoId, String projectId) {
+    boolean wrapper =
+        repositories
+            .findByIdOptional(repoId)
+            .map(repository -> repository.archetype == RepositoryArchetype.PROJECT)
+            .orElse(false);
+    if (!wrapper || projectId == null) {
+      return Map.of();
+    }
+    Map<String, ReleaseExecutor.Submodule> catalog = new LinkedHashMap<>();
+    names
+        .namesByRepository(projectId)
+        .forEach(
+            (siblingId, name) -> {
+              if (siblingId.equals(repoId)) {
+                return;
+              }
+              catalog.put(name, new ReleaseExecutor.Submodule(siblingId, mainOf(siblingId)));
+            });
+    return Map.copyOf(catalog);
   }
 
   private String conflictJson(String target, List<BackingBranchMerger.Conflict> conflicts) {

@@ -27,7 +27,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public class RecordingReleaseGitHost implements ReleaseGitHost {
 
   /** One commit as it was asked for. */
-  public record Commit(String ref, String message, Map<String, String> files, String sha) {}
+  public record Commit(
+      String ref,
+      String message,
+      Map<String, String> files,
+      Map<String, String> gitlinks,
+      String sha) {}
 
   /** One tag as it was asked for, and what the host said. */
   public record Tag(String name, String sha, String message, TagResult result) {}
@@ -42,6 +47,10 @@ public class RecordingReleaseGitHost implements ReleaseGitHost {
 
   /** Tag names the host already holds — the version-uniqueness refusal, staged. */
   private final List<String> taken = Collections.synchronizedList(new ArrayList<>());
+
+  /** Branch heads by {@code <repoId>@<branch>} — what a wrapper release banks its pins from. */
+  private final Map<String, Answer<String>> heads =
+      Collections.synchronizedMap(new LinkedHashMap<>());
 
   private final AtomicInteger commitCounter = new AtomicInteger();
 
@@ -67,6 +76,16 @@ public class RecordingReleaseGitHost implements ReleaseGitHost {
   /** A tag name the host already holds, so the next attempt at it answers {@code tag-exists}. */
   public void alreadyTagged(String name) {
     taken.add(name);
+  }
+
+  /** Stage a branch head, as {@code head} will answer it. */
+  public void headOf(String repoId, String branch, String sha) {
+    heads.put(repoId + "@" + branch, Answer.of(sha));
+  }
+
+  /** Stage a branch whose head read fails — the arm that must refuse a partial bank. */
+  public void headUnreadable(String repoId, String branch, Answer<String> answer) {
+    heads.put(repoId + "@" + branch, answer);
   }
 
   /**
@@ -163,20 +182,37 @@ public class RecordingReleaseGitHost implements ReleaseGitHost {
 
   @Override
   public Answer<String> commit(
-      String repoId, String ref, String message, Map<String, String> files) {
+      String repoId,
+      String ref,
+      String message,
+      Map<String, String> files,
+      Map<String, String> gitlinks) {
     Answer<String> failure = commitFailure.get();
     if (failure != null) {
       return failure;
     }
     // The tip a commit lands on is the newest tree this fake holds, which is what the executor's
     // own sequencing produces: it reads a tree, bumps it and commits onto the branch that tree is.
+    // A gitlink is not readable content, so it joins the recorded commit and never the tree.
     String parent = newestSha();
     Map<String, String> tree = new LinkedHashMap<>(trees.getOrDefault(parent, Map.of()));
     tree.putAll(files);
     String sha = "bumped-" + commitCounter.incrementAndGet();
     trees.put(sha, tree);
-    commits.add(new Commit(ref, message, Map.copyOf(files), sha));
+    commits.add(
+        new Commit(
+            ref,
+            message,
+            Map.copyOf(files),
+            gitlinks == null ? Map.of() : Map.copyOf(gitlinks),
+            sha));
     return Answer.of(sha);
+  }
+
+  @Override
+  public Answer<String> head(String repoId, String branch) {
+    Answer<String> staged = heads.get(repoId + "@" + branch);
+    return staged != null ? staged : Answer.failed("no-such-branch: " + branch + " of " + repoId);
   }
 
   @Override

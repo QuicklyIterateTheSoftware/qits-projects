@@ -481,6 +481,24 @@ components:
           $ref: "#/components/schemas/Instant"
         detail:
           type: string
+    LaunchPin:
+      type: object
+      properties:
+        image:
+          type: string
+        version:
+          type: string
+        launches:
+          type: string
+    LaunchPins:
+      type: object
+      properties:
+        generatedAt:
+          $ref: "#/components/schemas/Instant"
+        pins:
+          type: array
+          items:
+            $ref: "#/components/schemas/LaunchPin"
     ListResponse:
       type: object
       properties:
@@ -1573,6 +1591,26 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+  /projects/api/pins:
+    get:
+      summary: The container images a launch by this service would pull right now
+      responses:
+        "200":
+          description: "The effective launch pins, image order"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaunchPins"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Pins Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
   /projects/api/projects:
     get:
       responses:
@@ -3687,4 +3725,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.904.161524
+  version: 2026.905.73500

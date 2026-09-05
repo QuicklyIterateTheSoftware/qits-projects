@@ -15,6 +15,8 @@ import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
 import eu.wohlben.qits.projects.entity.ReleasedTagPendingMerge;
 import eu.wohlben.qits.projects.entity.Repository;
+import eu.wohlben.qits.projects.entity.RepositoryArchetype;
+import eu.wohlben.qits.projects.entity.RepositoryName;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
@@ -270,7 +272,7 @@ public class AutoReleaseTest {
         "the named source and the backing branch, and nothing else");
     assertFalse(gitHost.deletedBranches().contains("main"));
 
-    // 6. SCMRelease, the instant the tag was accepted, with the five payload fields.
+    // 6. SCMRelease, the instant the tag was accepted, with the six payload fields.
     assertEquals(1, releases.announced().size());
     RecordingReleaseAnnouncer.Announced announced = releases.announced().get(0);
     assertEquals(projectId, announced.projectId());
@@ -278,6 +280,13 @@ public class AutoReleaseTest {
     assertEquals("release/" + id, announced.branch(), "what was released is the fold's branch");
     assertEquals(version, announced.version());
     assertNotNull(announced.occurredAt());
+    // The coordinate that makes this event checkoutable, and it is the BUMP commit rather than the
+    // fold: `branch` above names a ref this same operation deleted, and `version` names a tag and
+    // not a commit, so before this field a release pipeline could only clone main and go looking.
+    assertEquals(
+        commit.sha(),
+        announced.commitSha(),
+        "the event says what the tag points at, and it agrees with the pending row");
 
     // And this service's own half: the tag joins the repository's implicit source set until
     // something merges it to main, so every other open request is a superset of what is shipping.
@@ -302,11 +311,115 @@ public class AutoReleaseTest {
     assertEquals(1, gitHost.tags().size());
     assertEquals(mergedSha, gitHost.tags().get(0).sha(), "the fold itself is what the tag names");
     assertEquals(1, releases.announced().size());
+    assertEquals(
+        mergedSha,
+        releases.announced().get(0).commitSha(),
+        "a stackless release has no commit before its tag, so the fold IS the checkout target —"
+            + " the event carries one either way");
   }
 
   // ---------------------------------------------------------------------------------------------
   // tag-exists: the platform's version-uniqueness guarantee
   // ---------------------------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------------------------
+  // The wrapper's estate
+  // ---------------------------------------------------------------------------------------------
+
+  private static final String LIB_HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  private static final String SVC_HEAD = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  private String libId;
+  private String svcId;
+
+  /**
+   * The fixture repository becomes the project's WRAPPER with two named siblings — and one
+   * declared submodule the catalog does not know, which must be skipped rather than pinned or
+   * refused.
+   */
+  private Map<String, String> wrapperEstate() {
+    libId = "estate-lib-" + UUID.randomUUID();
+    svcId = "estate-svc-" + UUID.randomUUID();
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              Repository wrapper = Repository.findById(repoId);
+              wrapper.archetype = RepositoryArchetype.PROJECT;
+              Project project = Project.findById(projectId);
+              alias(project, sibling(project, libId, "main"), "qits-thing-javalib");
+              alias(project, sibling(project, svcId, "trunk"), "qits-thing-service");
+            });
+    gitHost.headOf(libId, "main", LIB_HEAD);
+    gitHost.headOf(svcId, "trunk", SVC_HEAD);
+    Map<String, String> tree = new LinkedHashMap<>();
+    tree.put(
+        ".gitmodules",
+        """
+        [submodule "qits-thing-javalib"]
+        \tpath = components/qits-thing/qits-thing-javalib
+        \turl = ../qits-thing-javalib.git
+        [submodule "qits-thing-service"]
+        \tpath = components/qits-thing/qits-thing-service
+        \turl = ../qits-thing-service.git
+        [submodule "qits-thing-stray"]
+        \tpath = components/qits-thing/qits-thing-stray
+        \turl = ../qits-thing-stray.git
+        """);
+    tree.put("README.md", "the estate");
+    return tree;
+  }
+
+  private static Repository sibling(Project project, String id, String mainBranch) {
+    Repository repository = new Repository();
+    repository.id = id;
+    repository.project = project;
+    repository.mainBranch = mainBranch;
+    repository.persist();
+    return repository;
+  }
+
+  private static void alias(Project project, Repository repository, String name) {
+    RepositoryName alias = new RepositoryName();
+    alias.project = project;
+    alias.repository = repository;
+    alias.name = name;
+    alias.persist();
+  }
+
+  @Test
+  public void aWrapperReleaseBanksItsEstateAsGitlinkPinsInTheReleaseCommit() {
+    String id = releaseARequest(wrapperEstate());
+    awaitState(id, "RELEASED");
+
+    assertEquals(1, gitHost.commits().size(), "the estate is one commit, the last before the tag");
+    RecordingReleaseGitHost.Commit commit = gitHost.commits().get(0);
+    assertEquals(Map.of(), commit.files(), "the wrapper renders no version; the commit is the pins");
+    assertEquals(
+        Map.of(
+            "components/qits-thing/qits-thing-javalib", LIB_HEAD,
+            "components/qits-thing/qits-thing-service", SVC_HEAD),
+        commit.gitlinks(),
+        "each declared submodule at its default branch's head; the stray one is skipped");
+    assertEquals(commit.sha(), gitHost.tags().get(0).sha(), "the tag names the banked estate");
+  }
+
+  @Test
+  public void anUnreadableSubmoduleHeadRefusesTheBankRatherThanPinningPartOfTheEstate() {
+    Map<String, String> tree = wrapperEstate();
+    gitHost.headUnreadable(
+        svcId, "trunk", ReleaseGitHost.Answer.failedRetryable("qits-githost answered 503"));
+    String id = releaseARequest(tree);
+    awaitState(id, "FAILED");
+
+    String detail = given().get(base() + "/" + id).then().extract().path("request.detail");
+    assertTrue(detail.contains("cannot be banked"), detail);
+    given()
+        .get(base() + "/" + id)
+        .then()
+        .body("request.retryable", org.hamcrest.Matchers.equalTo(true));
+    assertEquals(List.of(), gitHost.createdTags(), "half a bank must not release");
+    assertEquals(List.of(), gitHost.commits(), "and nothing was committed either");
+  }
 
   @Test
   public void aTakenVersionIsRestampedAndTheSecondAttemptRebumpsTheManifests() {

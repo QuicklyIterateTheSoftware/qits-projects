@@ -29,6 +29,14 @@ public interface AgentCredentials {
   /** The context kind every commission this harness makes carries. Storage, on idp's rows. */
   String CONTEXT_KIND = "agent-container";
 
+  /**
+   * The claim name qits-idp scopes a commissioned credential by, and the one every resource service
+   * reads it back under ({@code QitsClaims.PROJECT}). Spelled as a constant for that library's
+   * reason: a typo in a claim name reads as "no claim", which is a credential that quietly keeps the
+   * wider grant rather than a failure anybody sees.
+   */
+  String PROJECT_CLAIM = "project";
+
   /** A freshly commissioned credential. The secret is answered once and never again. */
   record Commissioned(String clientId, String secret) {}
 
@@ -43,6 +51,14 @@ public interface AgentCredentials {
 
   /**
    * Commission a credential for this project's agent container.
+   *
+   * <p><b>The project is both halves of what qits-idp is told.</b> It is the {@code contextId} — the
+   * name of the container this credential belongs to, which the reconcile compares against live
+   * places — and it is the {@link #PROJECT_CLAIM} the commission states, which is the scope every
+   * resource service judges the credential on. The two happen to be the same string here and are
+   * different facts: an agent container's context IS a project, and what it may act on is that
+   * project. qits-ci's manual trigger reads the claim to decide which repositories a caller may have
+   * evaluated, so an agent reaches its own project's pipelines and nobody else's.
    *
    * <p>Throws {@link AgentCredentialException} and never answers null: a container that should hold
    * a credential and does not is a container whose reads will be refused later, a long way from

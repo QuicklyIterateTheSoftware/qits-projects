@@ -122,17 +122,39 @@ public class HttpReleaseGitHost implements ReleaseGitHost {
         });
   }
 
+  @Override
+  public Answer<String> head(String repoId, String branch) {
+    return call(
+        builder -> builder.GET(),
+        "/branches/" + branch,
+        repoId,
+        body -> {
+          String sha = MAPPER.readTree(body).path("sha").asText(null);
+          return sha == null || sha.isBlank()
+              ? Answer.failedRetryable(
+                  "qits-githost answered 200 to a branch read with no sha: " + clip(body))
+              : Answer.of(sha);
+        });
+  }
+
   // -----------------------------------------------------------------------------------------------
   // Writes
   // -----------------------------------------------------------------------------------------------
 
   @Override
   public Answer<String> commit(
-      String repoId, String ref, String message, Map<String, String> files) {
+      String repoId,
+      String ref,
+      String message,
+      Map<String, String> files,
+      Map<String, String> gitlinks) {
     Map<String, Object> body = new LinkedHashMap<>();
     body.put("ref", ref);
     body.put("message", message);
     body.put("files", files);
+    if (gitlinks != null && !gitlinks.isEmpty()) {
+      body.put("gitlinks", gitlinks);
+    }
     body.put("author", AUTHOR);
     return call(
         builder -> builder.POST(json(body)),

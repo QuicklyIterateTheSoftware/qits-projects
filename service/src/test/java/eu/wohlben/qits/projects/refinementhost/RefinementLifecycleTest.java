@@ -239,6 +239,12 @@ public class RefinementLifecycleTest {
     // what discard must then hand back.
     commissions.forFreshContainer(service.get(id.longValue()));
     assertEquals(1, credentials.liveCount());
+    // The commission names WHICH context (the refinement) and what it is ABOUT (the project). The
+    // second is the scope qits-idp turns into a `project` claim, and it is not the refinement id.
+    assertEquals(
+        projectId,
+        credentials.scopeFor(id.longValue()),
+        "a refinement's credential is scoped to its project");
 
     given()
         .when()

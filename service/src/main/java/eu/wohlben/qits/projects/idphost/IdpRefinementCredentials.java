@@ -2,6 +2,7 @@ package eu.wohlben.qits.projects.idphost;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.projects.agenthost.AgentCredentialException;
+import eu.wohlben.qits.projects.agenthost.AgentCredentials;
 import eu.wohlben.qits.projects.refinementhost.RefinementCredentials;
 import io.quarkus.arc.DefaultBean;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -72,13 +73,33 @@ public class IdpRefinementCredentials implements RefinementCredentials {
     return true;
   }
 
+  /**
+   * The commission body, with the scope on it when there is one.
+   *
+   * <p><b>A refinement whose project cannot be named is commissioned unscoped</b>, which is what
+   * every refinement credential was before scoping existed — the same reading the agent harness's
+   * containers take of a fact the registry could not supply. It is never sent as {@code "*"}:
+   * qits-idp refuses a commission that widens itself, and asking for the wildcard would be asking
+   * for the thing this scoping exists to stop granting.
+   */
+  private static Map<String, Object> claimed(Map<String, String> context, String projectId) {
+    Map<String, Object> body = new java.util.LinkedHashMap<>(context);
+    String project = projectId == null ? "" : projectId.trim();
+    if (!project.isEmpty()) {
+      body.put("claims", Map.of(AgentCredentials.PROJECT_CLAIM, project));
+    }
+    return body;
+  }
+
   @Override
-  public Commissioned commission(long refinementId) {
+  public Commissioned commission(long refinementId, String projectId) {
     String body;
     try {
       body =
           objectMapper.writeValueAsString(
-              Map.of("contextKind", CONTEXT_KIND, "contextId", Long.toString(refinementId)));
+              claimed(
+                  Map.of("contextKind", CONTEXT_KIND, "contextId", Long.toString(refinementId)),
+                  projectId));
     } catch (IOException e) {
       throw new AgentCredentialException("Could not build the commission request", false, e);
     }

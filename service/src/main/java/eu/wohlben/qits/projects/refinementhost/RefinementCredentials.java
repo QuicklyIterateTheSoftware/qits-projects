@@ -32,8 +32,15 @@ public interface RefinementCredentials {
    * Commission a credential for this refinement's container. Throws
    * {@code AgentCredentialException} rather than answering null — the failure belongs at the
    * ensure that could not produce one.
+   *
+   * <p><b>The two arguments carry different facts and that is why there are two.</b> The refinement
+   * id is the {@code contextId} — which container this credential belongs to, and what the reconcile
+   * compares against live refinements — while {@code projectId} is the scope: the {@code project}
+   * claim qits-idp puts on every token the pair mints, and what a resource service judges it on.
+   * Unlike the agent harness, where the context and the scope are the same string, a refinement's
+   * are not.
    */
-  Commissioned commission(long refinementId);
+  Commissioned commission(long refinementId, String projectId);
 
   /** Give a credential back. Best-effort and never throws. */
   void decommission(String clientId);

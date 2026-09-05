@@ -72,8 +72,23 @@ public interface ReleaseGitHost {
    *
    * @param ref the full {@code refs/heads/…} name
    * @param files path → the file's whole new content
+   * @param gitlinks path → the full commit sha a submodule entry pins, written as a gitlink (mode
+   *     160000) tree entry. Empty everywhere but a wrapper release, which banks its estate here.
    */
-  Answer<String> commit(String repoId, String ref, String message, Map<String, String> files);
+  Answer<String> commit(
+      String repoId,
+      String ref,
+      String message,
+      Map<String, String> files,
+      Map<String, String> gitlinks);
+
+  /**
+   * Where a branch of a repository stands right now — the sha its {@code refs/heads/<branch>}
+   * points at. The cross-repository read a wrapper release banks its gitlinks from: each
+   * submodule's default-branch head, asked of the host that owns the refs rather than guessed from
+   * anything cached here. A branch the host does not know is a failed answer, not a null.
+   */
+  Answer<String> head(String repoId, String branch);
 
   /**
    * What tagging said. {@link TagResult#ALREADY_EXISTS} is the one that is not a failure: it is the

@@ -160,6 +160,8 @@ public class ReleaseRequests {
 
   @Inject Instance<QaRunCancellations> cancellations;
 
+  @Inject Instance<ReleasedBranchWorkspaces> releasedBranchWorkspaces;
+
   /**
    * The publish phase, called on the worker the instant a release lands: a repository that declares
    * no deployment has nothing to wait for and its tag is merged to {@code main} there and then.
@@ -963,11 +965,48 @@ public class ReleaseRequests {
       // happened — a process that dies here leaves an ungated pending row, which is exactly what
       // ReleaseFinalization's catch-up sweep is for.
       finalization.onReleased(ask.repoId(), outcome.version());
+      resolveWorkspacesOnReleasedBranches(ask, outcome);
     } else {
       settle(id, ReleaseRequest.State.FAILED, outcome.detail(), null, outcome.retryable());
       LOG.warnf(
           "Release request %s was not released (%s): %s",
           id, outcome.retryable() ? "will retry" : "final until re-armed", outcome.detail());
+    }
+  }
+
+  /**
+   * The branches this release just deleted, told to whoever may have a workspace standing on one.
+   *
+   * <p><b>Exactly the set the executor deleted</b>, read from the same two fields it reads: the
+   * request's named sources <em>minus</em> the repository's default branch, which nothing deletes
+   * and no release consumes. The backing branch is deliberately not among them — it is this flow's
+   * own scratch ref, created by the fold, and no workspace was ever made on one.
+   *
+   * <p>Last, after the row is RELEASED and after {@link ReleaseFinalization#onReleased}, and wrapped
+   * so that <b>nothing here can reach the release path</b>. The port promises not to throw; the belt
+   * is the same one round {@link ReleaseExecutor} above and states the same thing — a throw is a
+   * port bug, and a workspace that was not reaped must never turn a release that happened into a
+   * failure or settle it a second time. See {@link ReleasedBranchWorkspaces} for the absence this
+   * call exists to cover.
+   */
+  private void resolveWorkspacesOnReleasedBranches(
+      ReleaseExecutor.Release ask, ReleaseExecutor.Outcome outcome) {
+    if (!releasedBranchWorkspaces.isResolvable()) {
+      return;
+    }
+    try {
+      ReleasedBranchWorkspaces workspaces = releasedBranchWorkspaces.get();
+      Set<String> released = new LinkedHashSet<>(ask.namedSources());
+      released.remove(ask.defaultBranch());
+      for (String branch : released) {
+        workspaces.branchReleased(
+            ask.repoId(), branch, outcome.version(), outcome.releasedSha());
+      }
+    } catch (RuntimeException e) {
+      // The port says it must not throw; a throw is a port bug and must not touch a settled release.
+      LOG.warnf(
+          e, "Could not resolve the workspaces of the branches released by request %s",
+          ask.requestId());
     }
   }
 

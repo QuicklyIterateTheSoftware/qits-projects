@@ -2,6 +2,7 @@ package eu.wohlben.qits.projects.releasehost;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -455,5 +456,81 @@ public class ReleaseRequestFlowTest {
         .post(base() + "/" + id + "/withdraw")
         .then()
         .statusCode(409);
+  }
+
+  /**
+   * <b>A repository whose only request has had nothing happen to it yet still lists.</b>
+   *
+   * <p><b>Why this is pinned, and what it is not.</b> On 2026-09-04 the repository-scoped listing
+   * of qits-bootstrap-cli answered 500 while other repositories answered 200, and the suspicion was
+   * the batch decoration: {@code listByRepo} names a whole page in three queries where {@code get}
+   * names one row in three, and a request with no fold, no verdict and no released tag is the row
+   * with the most nulls in it. The telemetry says otherwise — the two failed reads carried {@code
+   * JDBCConnectionException: Unable to acquire JDBC Connection}, in the same second as the outbox
+   * sweeper, the request sweep and a per-id GET of another repository's request, while this
+   * component's database was cutting over. The listing was fine; the database was not there.
+   *
+   * <p>So this asserts the property that was accused rather than a fix: the batch path tolerates a
+   * row with <b>every nullable column null and no child rows at all</b> — no named source, no
+   * implicit tag, no merged sha, no version, no conflict, no detail, no requester, no repository
+   * name — and answers it identically to the single-row path. The two paths share {@code dto} and
+   * differ in how they gather what they hand it, which is exactly the difference a page of one
+   * empty row exercises.
+   */
+  @Test
+  public void aRequestWithEveryNullableFieldNullListsAndReadsTheSame() {
+    String id = UUID.randomUUID().toString();
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              ReleaseRequest row = new ReleaseRequest();
+              row.id = id;
+              row.repoId = repoId;
+              row.projectId = projectId;
+              // Everything the schema lets be null, spelled out rather than left to the default,
+              // because the list of them IS the case: a reader who adds a column should see this
+              // and decide whether it belongs here too.
+              row.repoName = null;
+              row.mergedSha = null;
+              row.conflictDetail = null;
+              row.requester = null;
+              row.detail = null;
+              row.version = null;
+              row.state = ReleaseRequest.State.PENDING;
+              row.retryable = false;
+              row.armedAt = Instant.now();
+              row.summary = "nothing has happened to this one yet";
+              row.createdAt = Instant.now();
+              row.updatedAt = Instant.now();
+              row.persist();
+            });
+
+    given()
+        .get(base())
+        .then()
+        .statusCode(200)
+        .body("requests.size()", equalTo(1))
+        .body("requests[0].id", equalTo(id))
+        .body("requests[0].state", equalTo("PENDING"))
+        .body("requests[0].backingBranch", equalTo("release/" + id))
+        .body("requests[0].sources.size()", equalTo(0))
+        .body("requests[0].repoName", nullValue())
+        .body("requests[0].mergedSha", nullValue())
+        .body("requests[0].version", nullValue())
+        .body("requests[0].mergedToMainAt", nullValue())
+        .body("requests[0].conflict", nullValue())
+        .body("requests[0].detail", nullValue())
+        .body("requests[0].requester", nullValue());
+
+    // The same row through the single-row path, which is what answered 200 while the listing was
+    // accused. Both are asserted so a future divergence is a failure here rather than a 500 there.
+    given()
+        .get(base() + "/" + id)
+        .then()
+        .statusCode(200)
+        .body("request.id", equalTo(id))
+        .body("request.sources.size()", equalTo(0))
+        .body("request.mergedSha", nullValue())
+        .body("request.mergedToMainAt", nullValue());
   }
 }

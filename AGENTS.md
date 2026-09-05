@@ -70,6 +70,12 @@ no split package, plus `eu.wohlben.qits.epics.*` in `epics/`:
 - `service/…/idphost/` — qits-idp's commission API, the same adapter shape one directory over: the
   seam is `agenthost/AgentCredentials` and the whole of what lives here is one `@DefaultBean` HTTP
   client. See "The commissioned credential".
+- `service/…/workspacehost/` — qits-workspaces, and one `@DefaultBean` HTTP client again: the seam is
+  `control/ReleasedBranchWorkspaces` and the whole of what lives here is the POST a release makes,
+  after it has already landed, to say that a branch it deleted is gone. A package of its own rather
+  than a class in `releasehost/` because **it is not a release verb** — qits-workspaces' release door
+  left on 2026-09-03 and stays gone; what travels here is a workspace-lifecycle fact. Do not grow a
+  second verb here on the grounds that the address is configured again.
 - `epics/` — untouched by the extraction beyond its `<parent>`: its own package, its own error
   types, its own datasource, its own physical database (`qits_epics`) and its own Flyway lineage. It
   depends on neither `domain` nor any auth module, and it should stay that way — it is the module

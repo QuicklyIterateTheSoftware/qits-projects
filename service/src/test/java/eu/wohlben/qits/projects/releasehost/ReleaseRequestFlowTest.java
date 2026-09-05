@@ -18,6 +18,7 @@ import eu.wohlben.qits.projects.entity.Project;
 import eu.wohlben.qits.projects.entity.ReleaseRequest;
 import eu.wohlben.qits.projects.entity.ReleasedTagPendingMerge;
 import eu.wohlben.qits.projects.entity.Repository;
+import eu.wohlben.qits.projects.testsupport.RecordingReleasedBranchWorkspaces;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
@@ -62,6 +63,8 @@ public class ReleaseRequestFlowTest {
 
   @Inject RecordingReleaseRequestAnnouncer announcer;
 
+  @Inject RecordingReleasedBranchWorkspaces releasedBranchWorkspaces;
+
   private String repoId;
   private String projectId;
 
@@ -71,6 +74,7 @@ public class ReleaseRequestFlowTest {
     executor.reset();
     merger.reset();
     announcer.reset();
+    releasedBranchWorkspaces.reset();
     repoId = "release-repo-" + UUID.randomUUID();
     projectId = "release-project-" + UUID.randomUUID();
     QuarkusTransaction.requiringNew()
@@ -653,5 +657,109 @@ public class ReleaseRequestFlowTest {
 
   private List<String> idsAt(String query) {
     return given().get(base() + query).then().statusCode(200).extract().path("requests.id");
+  }
+
+  // -----------------------------------------------------------------------------------------
+  // The workspaces standing on the branches a release deleted
+  // -----------------------------------------------------------------------------------------
+
+  /** The port is asked after the request is settled, so the calls are polled like the state is. */
+  private List<RecordingReleasedBranchWorkspaces.Resolved> awaitResolutions(int expected) {
+    long deadline = System.currentTimeMillis() + 10_000;
+    List<RecordingReleasedBranchWorkspaces.Resolved> last = List.of();
+    while (System.currentTimeMillis() < deadline) {
+      last = releasedBranchWorkspaces.calls();
+      if (last.size() >= expected) {
+        return last;
+      }
+      try {
+        Thread.sleep(50);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        fail("interrupted");
+      }
+    }
+    fail("expected " + expected + " workspace resolutions; saw " + last);
+    return last;
+  }
+
+  /**
+   * <b>Exactly the branches the executor deleted, and the default branch is not one of them.</b>
+   * The release deletes each named source through a git-host primitive that fires no event, so this
+   * call is the only thing that can tell qits-workspaces a workspace's branch is gone — and it must
+   * name the same set, from the same two fields, or it either misses a reap or asks for the main
+   * workspace to be torn down.
+   */
+  @Test
+  public void aReleaseAsksForTheWorkspacesOfEveryBranchItDeletedButNotTheDefaultOne() {
+    activeBuilds.answer(Optional.of(0));
+    String id = create("work");
+    given()
+        .contentType(ContentType.JSON)
+        .body("{\"branch\":\"work-two\"}")
+        .post(base() + "/" + id + "/sources")
+        .then()
+        .statusCode(200);
+
+    verdict("BuildSuccessful", mergedShaOf(id), "");
+    awaitState(id, "RELEASED");
+
+    List<RecordingReleasedBranchWorkspaces.Resolved> resolutions = awaitResolutions(2);
+    assertEquals(2, resolutions.size(), "one per released branch and no more: " + resolutions);
+    assertEquals(
+        List.of("work", "work-two"),
+        resolutions.stream().map(RecordingReleasedBranchWorkspaces.Resolved::branch).toList(),
+        "main is a named source of every request and is never deleted, so it is never resolved");
+    for (RecordingReleasedBranchWorkspaces.Resolved resolution : resolutions) {
+      assertEquals(repoId, resolution.repoId(), "the catalog id, which is what workspaces keys on");
+      assertEquals("2026.831.90000", resolution.version());
+      assertEquals("released-sha-0", resolution.releasedSha());
+    }
+  }
+
+  /** Nothing was deleted, so there is nothing to reap — and no call to make. */
+  @Test
+  public void aReleaseThatDidNotHappenAsksForNoWorkspaceResolution() {
+    executor.answer(ReleaseExecutor.Outcome.refused("409: ALREADY_INTEGRATED"));
+    String id = create("work");
+    verdict("BuildSuccessful", mergedShaOf(id), "");
+    awaitState(id, "FAILED");
+
+    // The worker is asynchronous: give a wrongly-made call time to show up.
+    try {
+      Thread.sleep(300);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    assertEquals(List.of(), releasedBranchWorkspaces.calls());
+  }
+
+  /**
+   * <b>The belt.</b> The port's contract is that an implementation never throws; this one does
+   * anyway, and the release stays released — not FAILED, not settled a second time, and the worker
+   * survives to run the next one.
+   */
+  @Test
+  public void aThrowingWorkspaceResolutionLeavesTheReleaseReleased() {
+    releasedBranchWorkspaces.failWith(true);
+    activeBuilds.answer(Optional.of(0));
+    String id = create("work");
+    verdict("BuildSuccessful", mergedShaOf(id), "");
+    awaitState(id, "RELEASED");
+    awaitResolutions(1);
+
+    try {
+      Thread.sleep(300);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    assertEquals("RELEASED", stateOf(id), "a reap that blew up is not a release that failed");
+    given().get(base() + "/" + id).then().body("request.version", equalTo("2026.831.90000"));
+
+    // And the worker is still there.
+    releasedBranchWorkspaces.failWith(false);
+    String next = create("work-after");
+    verdict("BuildSuccessful", mergedShaOf(next), "");
+    awaitState(next, "RELEASED");
   }
 }

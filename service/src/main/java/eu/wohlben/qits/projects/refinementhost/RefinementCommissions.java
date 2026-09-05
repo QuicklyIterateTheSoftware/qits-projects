@@ -51,7 +51,8 @@ public class RefinementCommissions {
       return Optional.empty();
     }
     handBack(refinement);
-    RefinementCredentials.Commissioned commissioned = commissionPatiently(refinement.id);
+    RefinementCredentials.Commissioned commissioned =
+        commissionPatiently(refinement.id, refinement.projectId);
     QuarkusTransaction.requiringNew()
         .run(
             () ->
@@ -104,7 +105,8 @@ public class RefinementCommissions {
     LOG.infof("Decommissioned the client %s of refinement %s", held, refinement.id);
   }
 
-  private RefinementCredentials.Commissioned commissionPatiently(Long refinementId) {
+  private RefinementCredentials.Commissioned commissionPatiently(
+      Long refinementId, String projectId) {
     Instant giveUpAt = Instant.now().plus(commissionPatience);
     Duration pause =
         RETRY_PAUSE.compareTo(commissionPatience) > 0 ? commissionPatience : RETRY_PAUSE;
@@ -112,7 +114,7 @@ public class RefinementCommissions {
     while (true) {
       attempts++;
       try {
-        return credentials.commission(refinementId);
+        return credentials.commission(refinementId, projectId);
       } catch (AgentCredentialException e) {
         if (!e.retryable() || !Instant.now().isBefore(giveUpAt) || !sleep(pause)) {
           throw new AgentCredentialException(

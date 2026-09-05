@@ -71,6 +71,11 @@ class IdpAgentCredentialsTest {
           "HTTP Basic with this service's own client credentials — the API's own mechanism");
       assertTrue(request.body().contains("\"contextKind\":\"agent-container\""), request.body());
       assertTrue(request.body().contains("\"contextId\":\"" + PROJECT + "\""), request.body());
+      // And what the context is ABOUT: the project claim qits-idp puts on every token this pair
+      // mints, which is what a resource service judges the agent container on. The same string as
+      // the context id here, and a different fact — see AgentCredentials.commission.
+      assertTrue(
+          request.body().contains("\"claims\":{\"project\":\"" + PROJECT + "\"}"), request.body());
     }
   }
 

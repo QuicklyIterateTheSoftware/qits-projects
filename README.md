@@ -120,6 +120,7 @@ container is a real one.
 |---|---|---|
 | `WorkspaceLookup` | qits-workspaces | no branch is workspace-backed: commit logs compare against the repository's main branch, the branch list reports nothing cleanupable, the "branch has child workspaces" delete guard stands down |
 | `WorkspaceLifecycle` | qits-workspaces | a cloned repository gets no default workspace; deleting one removes its origin, rows and aliases but reaps no containers or volumes — there are none |
+| `ReleasedBranchWorkspaces` | qits-workspaces (`workspacehost/HttpReleasedBranchWorkspaces` is the shipped adapter) | a released branch's workspace is never told its branch was deleted, so it stays ACTIVE holding a container, a volume and a credential until somebody abandons it by hand — exactly the behaviour before the port existed |
 | `TechnicalProcessRegistry` (+ `TechnicalProcess`, `RepoProcessLease`, `RepoReservation`, `TechnicalProcessFrame`) | qits-workspace-daemon | pull/push/sync still run, on the same worker thread, against the same origins — unnarrated, returning a null process id, with no single-flight guard |
 | `ProjectDomainRegistrar` | **nothing, today** — qits-platform-dns implemented it and was removed from the platform | a created project's domain is stored and registered nowhere, which is what a project whose dns lives at a registrar's control panel wants — and is the state every deployment is in |
 | `CommandOutputSink` | the service module's websocket | — (an SPI this context calls, not one it looks up) |

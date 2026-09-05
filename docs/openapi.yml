@@ -3725,4 +3725,4 @@ paths:
         - qits:admin
 info:
   title: qits-projects API
-  version: 2026.905.73500
+  version: 2026.905.141012

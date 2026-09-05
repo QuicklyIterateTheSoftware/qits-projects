@@ -20,11 +20,11 @@ import org.junit.jupiter.api.Test;
 /**
  * <b>What an octopus fold brought in, read against a real repository.</b>
  *
- * <p>The whole claim is the range: {@code <fold>^1..<fold>}. The first parent of the fold is the
- * branch it was folded ONTO, so the answer is exactly what the request's other sources contributed
- * — and it stays that answer for ever, because the parents of a commit do not move. Asked any other
- * way (against {@code main} as it stands now, say) the same request would report different commits
- * every time somebody else pushed, and nothing at all once the release itself reached {@code main}.
+ * <p>The whole claim is the base: the fold minus every released tag that does not contain it. On
+ * this platform {@code main} only advances by merging released tags, so "already shipped" IS
+ * "reachable from a release tag" — an answer that survives re-folds, first folds that
+ * fast-forwarded, and the release itself reaching {@code main}, none of which {@code ^1..} or a
+ * live read of {@code main} does.
  *
  * <p>Driven through real git rather than a stub, the idiom {@code RepositoryServiceTest} sets: a
  * fixture bare is cloned as a repository, the fold is made and pushed to the git host, and the
@@ -64,11 +64,13 @@ public class MergeRangeCommitsTest {
     // head instead and the fold's first parent is a source rather than the target.
     git.exec(work.toFile(), "git", "checkout", "-q", main);
     commit(work, "later.txt", "Move main on");
+    // The previous release: everything on main is shipped, and the tag is what says so.
+    git.exec(work.toFile(), "git", "tag", "2026.900.100000", main);
     git.exec(work.toFile(), "git", "checkout", "-q", "-b", "release/fold", main);
     git.exec(
         work.toFile(), "git", "merge", "-q", "-m", "Release request: fold", "lane-one", "lane-two");
     String fold = git.exec(work.toFile(), "git", "rev-parse", "HEAD").trim();
-    git.exec(work.toFile(), "git", "push", "-q", "origin", "release/fold");
+    git.exec(work.toFile(), "git", "push", "-q", "--tags", "origin", "release/fold");
     goCold(repo);
 
     CommitService.MergeRange range = commitService.listMergeRange(repo.id, fold);
@@ -81,10 +83,43 @@ public class MergeRangeCommitsTest {
         "the fold and exactly what its two sources brought: " + subjects);
     assertFalse(
         subjects.contains("Move main on"),
-        "^1 is the branch the fold was made onto, so its own history is outside the range");
+        "the release tag holds main as it stood, so its history is outside the range");
     assertFalse(
-        subjects.contains("Initial commit"),
-        "and that includes everything the branch already had");
+        subjects.contains("Initial commit"), "and that includes everything main already had");
+  }
+
+  /**
+   * <b>A re-folded request answers everything it merges, not only the last re-fold.</b> The first
+   * fold fast-forwards here (the target had nothing of its own), so there is not even a fold commit
+   * whose parents could be asked; the second fold's first parent is the first fold's head. A range
+   * built from parents reports {@code wave-two} alone — the released tag base reports both waves
+   * and still leaves out everything the previous release shipped.
+   */
+  @Test
+  public void aRefoldedRequestAnswersEveryFoldPastThePreviousRelease() throws Exception {
+    Repository repo = cloned("Refolded Range Project");
+    Path work = checkout(repo);
+    String main = repo.mainBranch;
+
+    git.exec(work.toFile(), "git", "tag", "2026.900.100000", main);
+    branchWithCommit(work, main, "wave-one", "one.txt", "Add one");
+    branchWithCommit(work, main, "wave-two", "two.txt", "Add two");
+    git.exec(work.toFile(), "git", "checkout", "-q", "-b", "release/refold", main);
+    git.exec(work.toFile(), "git", "merge", "-q", "-m", "Release request: first fold", "wave-one");
+    git.exec(work.toFile(), "git", "merge", "-q", "-m", "Release request: second fold", "wave-two");
+    String fold = git.exec(work.toFile(), "git", "rev-parse", "HEAD").trim();
+    git.exec(work.toFile(), "git", "push", "-q", "--tags", "origin", "release/refold");
+    goCold(repo);
+
+    CommitService.MergeRange range = commitService.listMergeRange(repo.id, fold);
+
+    assertTrue(range.present());
+    List<String> subjects = range.commits().stream().map(commit -> commit.message()).toList();
+    assertTrue(
+        subjects.containsAll(List.of("Add one", "Add two")),
+        "both folds' contributions, not only the last re-fold's: " + subjects);
+    assertFalse(
+        subjects.contains("Initial commit"), "what the previous release shipped stays out");
   }
 
   /**

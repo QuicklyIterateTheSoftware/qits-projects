@@ -6,11 +6,13 @@ import java.util.List;
  * What one release request folded in — the commits its octopus merge brought onto the backing
  * branch, which is the answer to "what is actually in this release".
  *
- * <p><b>The range is the merge's own, not a branch's.</b> It is read as {@code <mergedSha>^1..
- * <mergedSha>}: the first parent of the fold is the repository's default branch as it stood when the
- * fold was made, so what is left is exactly what the other participants brought. That stays true
- * after the release reaches {@code main} — the parents of a commit do not move — which is why the
- * question can still be asked of a request that concluded weeks ago.
+ * <p><b>The base is the released tags, not the fold's parents.</b> The list is everything reachable
+ * from {@code mergedSha} minus every release tag that does not contain it: {@code main} only ever
+ * advances by merging released tags, so "already shipped" is "reachable from a release tag". A
+ * parent-derived range would under-report a re-folded request down to its last re-fold, and a first
+ * fold that fast-forwarded has no fold commit to have parents at all. The tag base stays the same
+ * answer after the release reaches {@code main} — later tags contain the fold and are never
+ * subtracted — which is why the question can still be asked of a request that concluded weeks ago.
  *
  * <p><b>The version bump is deliberately not in it.</b> The release commits the rewritten manifests
  * <em>onto</em> the fold and tags that commit, so {@code releasedSha} is a child of {@code

@@ -149,13 +149,24 @@ public class CommitService {
   public record MergeRange(boolean present, List<CommitDto> commits) {}
 
   /**
-   * The commits a merge commit brought in: {@code git log <sha>^1..<sha>}.
+   * The commits a release request's fold merged: everything the fold reaches that no earlier
+   * release shipped.
    *
-   * <p><b>The first parent is the point.</b> An octopus fold's parents are, in order, the branch it
-   * was folded onto and then each participant; so {@code ^1} is the target as it stood at the fold
-   * and the range is exactly what the other heads contributed. Asking any other way — against {@code
-   * main} as it is now, say — would answer differently every time somebody else pushed, and would
-   * answer nothing at all once the release itself reached {@code main}.
+   * <p><b>The base is the released tags, not {@code ^1} and not {@code main}.</b> {@code ^1..}
+   * under-reports twice over: a re-folded request's first parent is its own <em>previous fold</em>
+   * (so the range shrinks to whatever the last re-fold added), and a first fold with nothing on the
+   * target fast-forwards onto a source head (so there is no fold commit to have parents at all).
+   * {@code main} as it stands now answers differently every time somebody else releases, and
+   * nothing at all once this release itself reaches it. What is stable is the platform's own
+   * invariant: {@code main} only ever advances by merging released tags — so "already shipped" IS
+   * "reachable from a release tag", and the honest range is the fold minus every tag that does not
+   * contain it. A tag that <em>does</em> contain the fold is this release itself or a later one,
+   * and subtracting it would erase the answer.
+   *
+   * <p>Two consequences are deliberate. A sibling release folded in as an implicit source is
+   * excluded — its tag does not contain this fold, so its commits read as shipped, which they are.
+   * And a repository that has never released answers its whole history, because its first release
+   * ships exactly that.
    *
    * <p><b>A missing object is an answer, never a 500.</b> The fold is probed with {@code cat-file
    * -e} first, because {@code git log} against an unknown rev exits non-zero the same way a real
@@ -171,48 +182,23 @@ public class CommitService {
       if (probe.exitCode() != 0) {
         return new MergeRange(false, List.of());
       }
-      // `--` terminates option parsing so the range is never read as a flag.
-      String output =
-          git.exec(
-              mirror.gitDir().toFile(),
-              "git",
-              "log",
-              "--name-only",
-              LOG_FORMAT,
-              mergedSha + "^1.." + mergedSha,
-              "--");
+      List<String> command = new ArrayList<>();
+      command.addAll(List.of("git", "log", "--name-only", LOG_FORMAT, mergedSha));
+      String shipped =
+          git.exec(mirror.gitDir().toFile(), "git", "tag", "--no-contains", mergedSha, "--");
+      for (String tag : shipped.split("\n")) {
+        if (!tag.isBlank()) {
+          // The full spelling, so a tag can never be read as anything else; the names are the
+          // platform's own calvers, but the range must not depend on that being true forever.
+          command.add("^refs/tags/" + tag.trim());
+        }
+      }
+      // `--` terminates option parsing so no rev is ever read as a flag.
+      command.add("--");
+      String output = git.exec(mirror.gitDir().toFile(), command.toArray(String[]::new));
       return new MergeRange(true, parseCommits(output));
     } catch (Exception e) {
       throw new InternalServerErrorException("Git log failed: " + e.getMessage());
-    }
-  }
-
-  /**
-   * Lists the files a commit changed relative to its diff base. The base is the explicit {@code
-   * parent} when given, otherwise the commit's own first parent ({@code --root} so a root commit
-   * still reports its added files). {@code parent} in the result is the resolved base ({@code null}
-   * for a root commit).
-   */
-  public CommitChangesDto listChanges(String repoId, String commit, String parent) {
-    requireRef(commit, "commit");
-    String base = normalizeParent(parent);
-    RepoMirror mirror = requireMirror(repoId);
-
-    List<String> cmd =
-        new ArrayList<>(List.of("git", "diff-tree", "-r", "--no-commit-id", "--name-status", "-M"));
-    if (base != null) {
-      cmd.add(base);
-    } else {
-      cmd.add("--root");
-    }
-    cmd.add(commit);
-    cmd.add("--"); // terminate options so refs/paths can't be read as flags
-
-    try {
-      String output = git.exec(mirror.gitDir().toFile(), cmd.toArray(String[]::new));
-      return new CommitChangesDto(commit, base, parseChanges(output));
-    } catch (Exception e) {
-      throw new InternalServerErrorException("Git diff-tree failed: " + e.getMessage());
     }
   }
 
